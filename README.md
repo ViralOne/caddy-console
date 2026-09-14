@@ -136,7 +136,7 @@ Without this, upstreams show as `n/a` in the health column (passive fail counts 
 3. Zero Trust → Tunnels → create tunnel, copy token to `CLOUDFLARE_TUNNEL_TOKEN`
 4. Tunnel public hostname: `ceditor.yourdomain.com` → `http://caddy-editor:9090`
 5. Zero Trust → Access → Applications → add policy (email OTP for your allowed emails)
-6. On that application's Overview page copy the **Application Audience (AUD) Tag** into `CF_ACCESS_AUD`, and put your team domain (`<team>.cloudflareaccess.com`, shown under Zero Trust → Settings) into `CF_ACCESS_TEAM_DOMAIN`
+6. Open the application, click on Application settings (tab) -> AUD tag into `CF_ACCESS_TEAM_DOMAIN`
 
 ## Local Dev
 
