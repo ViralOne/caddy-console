@@ -9,3 +9,5 @@ threads = int(os.environ.get("GUNICORN_THREADS", "4"))
 
 timeout = int(os.environ.get("GUNICORN_TIMEOUT", "90"))
 graceful_timeout = 30
+
+preload_app = True

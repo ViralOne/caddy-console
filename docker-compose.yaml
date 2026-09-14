@@ -7,13 +7,10 @@ services:
     env_file:
       - .env
     environment:
-      # Reach the caddy container's admin API for Save & Reload (overrides .env)
       - CADDY_API_URL=http://caddy:2019
     volumes:
-      # Editor and caddy must share the SAME Caddyfile
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy-backups:/backups
-      # Shared log dir so the editor's Logs panel can tail Caddy's access log
       - caddy-logs:/var/log/caddy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
@@ -25,7 +22,7 @@ services:
     image: caddy:2.11.3-alpine
     restart: unless-stopped
     ports:
-      - "8080:80"   # reach your test site locally at http://localhost:8080
+      - "8080:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy-data:/data
