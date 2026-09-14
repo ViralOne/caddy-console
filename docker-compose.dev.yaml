@@ -11,7 +11,7 @@ name: caddy-editor-dev
 services:
   # Stands in for Cloudflare Access, and is the only entrypoint you browse to.
   caddy-front:
-    image: caddy:2.11.3-alpine
+    image: caddy:2.11.4-alpine
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:80"
@@ -31,6 +31,8 @@ services:
       ALLOWED_EMAILS: dev@local
       SECRET_KEY: dev-only-not-a-real-secret-0123456789abcdef
       SESSION_COOKIE_SECURE: "false"
+      # --reload only works without app preloading (see gunicorn.conf.py).
+      GUNICORN_PRELOAD: "false"
       CADDYFILE_PATH: /etc/caddy/Caddyfile
       BACKUP_DIR: /backups
       AUDIT_LOG: /backups/audit.log
@@ -53,7 +55,7 @@ services:
 
   # The Caddy instance whose config the editor edits and reloads.
   caddy-target:
-    image: caddy:2.11.3-alpine
+    image: caddy:2.11.4-alpine
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"

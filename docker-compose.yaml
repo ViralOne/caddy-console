@@ -19,7 +19,7 @@ services:
       retries: 3
 
   caddy:
-    image: caddy:2.11.3-alpine
+    image: caddy:2.11.4-alpine
     restart: unless-stopped
     ports:
       - "8080:80"

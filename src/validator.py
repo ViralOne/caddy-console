@@ -119,6 +119,15 @@ def caddy_validate(content: str) -> tuple[bool, str]:
     return result
 
 
+def _is_local_address(addr: str) -> bool:
+    """Site addresses that are valid without a dot: localhost, *.localhost, [ipv6]."""
+    host = addr.split(",")[0].strip()
+    if host.startswith("["):
+        return True  # bracketed IPv6 literal, e.g. [::1]:8080
+    host = host.rsplit(":", 1)[0] if ":" in host else host
+    return host == "localhost" or host.endswith(".localhost")
+
+
 def smart_validate(content: str) -> list[str]:
     """Check site addresses look like real domains (caddy is too permissive)."""
     warnings = []
@@ -139,7 +148,7 @@ def smart_validate(content: str) -> list[str]:
         if brace_depth == 0 and not stripped.startswith("}") and not stripped.startswith("import "):
             addr = stripped.rstrip(" {")
             if addr and not DOMAIN_RE.match(addr) and not addr.startswith(":") and not addr.startswith("http") and not re.match(r'^\([a-zA-Z0-9_-]+\)$', addr):
-                if not addr.startswith("*.") and "." not in addr:
+                if not addr.startswith("*.") and "." not in addr and not _is_local_address(addr):
                     warnings.append(f"Line {i}: '{addr}' doesn't look like a valid domain")
 
         brace_depth += opens - closes

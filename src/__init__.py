@@ -4,8 +4,8 @@ import secrets
 
 from flask import Flask, jsonify, request
 
-from .auth import auth_bp, csrf_valid, oauth
-from .config import AUTH_MODE, BACKUP_DIR
+from .auth import auth_bp, cf_jwt_enabled, csrf_valid, oauth
+from .config import AUTH_MODE, BACKUP_DIR, SESSION_TIMEOUT_HOURS
 from .routes.editor import editor_bp
 from .routes.ops import ops_bp
 
@@ -23,17 +23,33 @@ def _persisted_secret_key() -> str:
     path = os.path.join(BACKUP_DIR, ".secret_key")
     generated = secrets.token_hex(32)
     try:
-        # Exclusive create so concurrent workers agree on one key.
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with open(path) as f:
+            existing = f.read().strip()
+        if existing:
+            return existing
+    except OSError:
+        pass
+    # Write the full key to a private temp file first, then link it into place.
+    # link() fails if the target exists, so concurrent workers can never observe
+    # a half-written key: whoever wins the link has already written everything.
+    tmp = f"{path}.{os.getpid()}.{secrets.token_hex(4)}"
+    try:
+        fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             os.write(fd, generated.encode())
         finally:
             os.close(fd)
-        return generated
-    except FileExistsError:
-        with open(path) as f:
-            existing = f.read().strip()
-        return existing or generated
+        try:
+            os.link(tmp, path)
+            return generated
+        except FileExistsError:
+            with open(path) as f:
+                return f.read().strip() or generated
+        finally:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
     except OSError:
         # Read-only volume: fall back to a per-process key. Single-worker only.
         return generated
@@ -57,9 +73,17 @@ def create_app():
     app.secret_key = secret_key
 
     app.config["PREFERRED_URL_SCHEME"] = "http"
-    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(
-        hours=int(os.environ.get("SESSION_TIMEOUT_HOURS", "8"))
-    )
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=SESSION_TIMEOUT_HOURS)
+    # A Caddyfile is kilobytes; anything near this is a mistake or abuse, and it
+    # would otherwise be handed straight to `caddy fmt`.
+    app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
+
+    if AUTH_MODE == "cloudflare" and not cf_jwt_enabled():
+        app.logger.warning(
+            "AUTH_MODE=cloudflare without CF_ACCESS_TEAM_DOMAIN/CF_ACCESS_AUD: trusting the "
+            "Cf-Access-Authenticated-User-Email header. Anything that can reach this port "
+            "directly can impersonate any user. Set both variables to verify the Access JWT."
+        )
 
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,

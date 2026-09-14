@@ -19,12 +19,27 @@ const caddyfileLanguage = StreamLanguage.define({
 // Shared editor state (referenced by other scripts via the shared global scope).
 let editorView;
 let originalContent = '';
+let originalLength = 0;
 let currentVersion = '';
 let lastSavedTime = null;
 let lastSavedBy = '';
 
 function getContent() { return editorView.state.doc.toString(); }
 function setContent(text) { editorView.dispatch({ changes: { from: 0, to: editorView.state.doc.length, insert: text } }); }
+
+// The last content known to match the file on disk. Always go through this so
+// the length shortcut in isDirty() stays correct.
+function setOriginal(text) { originalContent = text; originalLength = text.length; }
+
+// Cheap on the hot path: comparing lengths avoids building a multi-megabyte
+// string on every keystroke in a large file. Only equal-length edits fall
+// through to the full comparison.
+function isDirty() {
+  if (!editorView) return false;
+  const doc = editorView.state.doc;
+  if (doc.length !== originalLength) return true;
+  return doc.toString() !== originalContent;
+}
 
 function initEditor(content) {
   editorView = new EditorView({
@@ -36,7 +51,7 @@ function initEditor(content) {
         caddyfileLanguage,
         findHighlightExtension,
         EditorView.updateListener.of(update => {
-          if (update.docChanged) setDot(getContent() !== originalContent ? 'yellow' : 'green');
+          if (update.docChanged) setDot(isDirty() ? 'yellow' : 'green');
           if (update.selectionSet) {
             const pos = update.state.selection.main.head;
             const line = update.state.doc.lineAt(pos);
@@ -60,7 +75,7 @@ function initEditor(content) {
 }
 
 window.addEventListener('beforeunload', (e) => {
-  if (editorView && getContent() !== originalContent) { e.preventDefault(); e.returnValue = ''; }
+  if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
 });
 
 function updateLastSaved() {
@@ -78,6 +93,26 @@ function el(tag, cls, text) {
   if (cls) e.className = cls;
   if (text) e.textContent = text;
   return e;
+}
+
+// fetch + JSON with a useful error: non-2xx responses throw an Error whose
+// message is the server's `error`/`message` field (or the HTTP status).
+async function fetchJson(url, opts) {
+  const res = await fetch(url, opts);
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* not JSON (e.g. an HTML 500 page) */ }
+  if (!res.ok) {
+    const err = new Error((data && (data.error || data.message)) || `HTTP ${res.status}`);
+    err.status = res.status; err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+// Replace a container's content with a single error note.
+function showError(container, prefix, err) {
+  container.textContent = '';
+  container.appendChild(el('div', 'metrics-hint error', `${prefix}: ${err && err.message ? err.message : err}`));
 }
 
 function setStatus(msg, cls) { const el = document.getElementById('status-msg'); el.textContent = msg; el.className = 'status-msg ' + (cls||''); }

@@ -1,6 +1,8 @@
 services:
   caddy:
-    image: caddy:2.11.3-alpine
+    # Keep in step with the caddy-bin stage in Dockerfile: the editor validates
+    # with that binary, and it should match what actually loads the config.
+    image: caddy:2.11.4-alpine
     restart: unless-stopped
     ports:
       - "80:80"
@@ -11,6 +13,11 @@ services:
       - caddy-config:/config
       # Shared log dir so the editor's Logs panel can tail Caddy's access log
       - caddy-logs:/var/log/caddy
+    networks:
+      # `default` is where your proxied apps live (if they are containers);
+      # `editor` is the only way to reach caddy-editor and the admin API.
+      - default
+      - editor
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
       interval: 30s
@@ -29,6 +36,10 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy-backups:/backups
       - caddy-logs:/var/log/caddy
+    networks:
+      # Not on `default`: containers behind Caddy must not be able to reach the
+      # editor (in header-trust mode anything that can would be a full admin).
+      - editor
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
       interval: 30s
@@ -39,9 +50,17 @@ services:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - editor
     depends_on:
       caddy-editor:
         condition: service_healthy
+
+networks:
+  default:
+  # Editor, its tunnel, and Caddy only. Needs egress for the tunnel, so it
+  # can't be `internal: true`; isolation comes from what is attached to it.
+  editor:
 
 volumes:
   caddy-data:

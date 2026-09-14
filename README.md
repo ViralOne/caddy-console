@@ -26,6 +26,8 @@ Three containers:
 
 All three share the same `./Caddyfile` via volume mounts. When you save in the editor, it reloads Caddy via its admin API (`POST http://caddy:2019/load`).
 
+`docker-compose.prod.yaml` puts the editor and the tunnel on their own `editor` network. Caddy is on both `editor` and `default`, so containers you proxy to can sit on `default` and reach Caddy without being able to reach the editor or Caddy's admin API.
+
 ## Auth Modes
 
 Set `AUTH_MODE` in `.env`:
@@ -36,6 +38,8 @@ Set `AUTH_MODE` in `.env`:
 | `cloudflare` | Cloudflare Access handles auth before traffic reaches the app (email OTP) | Configured in CF Zero Trust dashboard (default 24h) |
 
 Both modes support `ALLOWED_DOMAIN` and `ALLOWED_EMAILS` as additional filters.
+
+**Cloudflare mode: set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`.** With both set, the app verifies the signed `Cf-Access-Jwt-Assertion` token (signature, issuer, audience, expiry) on every request and takes the identity from it. Without them it falls back to trusting the `Cf-Access-Authenticated-User-Email` header and logs a warning at startup. Header trust is only safe if literally nothing except the tunnel can reach port 9090; any other container on the same Docker network could set that header and get full access to your reverse proxy config.
 
 ## Production Deploy
 
@@ -132,6 +136,7 @@ Without this, upstreams show as `n/a` in the health column (passive fail counts 
 3. Zero Trust → Tunnels → create tunnel, copy token to `CLOUDFLARE_TUNNEL_TOKEN`
 4. Tunnel public hostname: `ceditor.yourdomain.com` → `http://caddy-editor:9090`
 5. Zero Trust → Access → Applications → add policy (email OTP for your allowed emails)
+6. On that application's Overview page copy the **Application Audience (AUD) Tag** into `CF_ACCESS_AUD`, and put your team domain (`<team>.cloudflareaccess.com`, shown under Zero Trust → Settings) into `CF_ACCESS_TEAM_DOMAIN`
 
 ## Local Dev
 
@@ -172,9 +177,11 @@ python3 -m unittest discover -s tests -t .      # caddy wrapper, cache, session 
 
 1. Formats config with `caddy fmt`
 2. Validates with `caddy validate`
-3. Backs up current Caddyfile to `/backups/`
-4. Writes new content to shared `./Caddyfile`
-5. Sends `POST http://caddy:2019/load` to reload Caddy live (zero downtime)
+3. Under a file lock (saves from different workers can't interleave): re-checks that the file on disk is still the version you loaded, backs it up to `/backups/`, writes the new content, prunes backups beyond `BACKUP_KEEP`
+4. Sends `POST http://caddy:2019/load` to reload Caddy live (zero downtime)
+5. If Caddy rejects the config (runtime-only problems `caddy validate` can't see, like a port already in use), the on-disk file is rolled back to the backup so disk and running config never diverge
+
+The editor validates with the Caddy binary baked into its image; keep that version in step with the `caddy` service in your compose file (both are `2.11.4` here).
 
 ## JS Editor (CodeMirror)
 
@@ -196,6 +203,8 @@ The bundle (`editor.bundle.js`) is committed — no build step needed on the ser
 | `GOOGLE_CLIENT_ID` | google mode | — | OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | google mode | — | OAuth client secret |
 | `CLOUDFLARE_TUNNEL_TOKEN` | cloudflare mode | — | Tunnel token |
+| `CF_ACCESS_TEAM_DOMAIN` | recommended (cloudflare mode) | — | `<team>.cloudflareaccess.com`; enables JWT verification together with `CF_ACCESS_AUD` |
+| `CF_ACCESS_AUD` | recommended (cloudflare mode) | — | Access application AUD tag |
 | `ALLOWED_DOMAIN` | no | — | Restrict to email domain |
 | `ALLOWED_EMAILS` | no | — | Comma-separated allowed emails |
 | `SESSION_TIMEOUT_HOURS` | no | `8` | Session lifetime (google mode) |
@@ -203,7 +212,11 @@ The bundle (`editor.bundle.js`) is committed — no build step needed on the ser
 | `CADDY_API_URL` | no | `http://caddy:2019` | Caddy admin API address |
 | `CADDYFILE_PATH` | no | `/etc/caddy/Caddyfile` | Path to Caddyfile |
 | `BACKUP_DIR` | no | `/backups` | Backup storage directory |
+| `BACKUP_KEEP` | no | `50` | Pre-save backups to keep; oldest are pruned after each save (`0` = keep all) |
+| `AUDIT_LOG_MAX_BYTES` | no | `5242880` | Rotate the audit log past this size; one rotated file is kept |
 | `CADDY_LOG_FILE` | no | `/var/log/caddy/access.log` | Path to Caddy access log (must match Caddyfile) |
+| `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
+| `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
 
 ## API Endpoints
 

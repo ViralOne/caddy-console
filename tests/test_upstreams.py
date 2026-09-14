@@ -2,12 +2,9 @@
 
 Run with:  python3 -m unittest discover -s tests -t . -v
 """
-import os
-import tempfile
 import unittest
 
-os.environ.setdefault("BACKUP_DIR", tempfile.mkdtemp(prefix="caddy-editor-test-"))
-os.environ.setdefault("AUTH_MODE", "cloudflare")
+import tests._env  # noqa: F401  (sets env before src is imported)
 
 from src.routes.ops import _walk_routes  # noqa: E402
 

@@ -7,8 +7,7 @@ import os
 import tempfile
 import unittest
 
-os.environ.setdefault("BACKUP_DIR", tempfile.mkdtemp(prefix="caddy-editor-test-"))
-os.environ.setdefault("AUTH_MODE", "cloudflare")
+import tests._env  # noqa: F401  (sets env before src is imported)
 
 from src import validator  # noqa: E402
 
@@ -135,6 +134,15 @@ class SmartValidateTest(unittest.TestCase):
             "http://a.example.com {\n\timport logme\n}\n\n"
             "*.wild.example.com {\n\trespond 200\n}\n\n"
             ":8080 {\n\trespond 200\n}\n"
+        )
+        self.assertEqual(validator.smart_validate(config), [])
+
+    def test_accepts_localhost_and_ipv6_literals(self):
+        config = (
+            "localhost {\n\trespond 200\n}\n\n"
+            "localhost:8443 {\n\trespond 200\n}\n\n"
+            "app.localhost {\n\trespond 200\n}\n\n"
+            "[::1]:9000 {\n\trespond 200\n}\n"
         )
         self.assertEqual(validator.smart_validate(config), [])
 

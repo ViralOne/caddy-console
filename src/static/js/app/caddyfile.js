@@ -1,19 +1,22 @@
 // Bootstrap: load the current user + Caddyfile, and tab switching.
 async function init() {
+  // A 401 here is handled by the fetch wrapper (redirects to sign-in).
   const res = await fetch('/api/me');
-  if (res.status === 401) { window.location.href = '/login'; return; }
+  if (res.status === 401) return;
+  if (!res.ok) { setStatus(`Cannot load user: HTTP ${res.status}`, 'err'); setDot('red'); return; }
   const user = await res.json();
   document.getElementById('user-info').textContent = user.email;
   await loadCaddyfile();
 }
 
 async function loadCaddyfile() {
-  const res = await fetch('/api/caddyfile');
-  if (res.status === 401) { window.location.href = '/login'; return; }
-  const data = await res.json();
-  originalContent = data.content;
+  let data;
+  try { data = await fetchJson('/api/caddyfile'); }
+  catch (e) { if (e.status !== 401) { setStatus(`Cannot load Caddyfile: ${e.message}`, 'err'); setDot('red'); } return; }
+  setOriginal(data.content);
   currentVersion = data.version || '';
   if (!editorView) initEditor(data.content); else setContent(data.content);
+  setDot('green');
   setStatus('Loaded', 'ok');
 }
 

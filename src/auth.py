@@ -1,16 +1,36 @@
 import hmac
+import logging
 import os
 import secrets
+import threading
+import time
+import warnings
 from datetime import datetime
 from functools import wraps
 
+import requests as http_client
 from authlib.integrations.flask_client import OAuth
 from flask import Blueprint, jsonify, redirect, render_template, request, session
 
+with warnings.catch_warnings():
+    # authlib.jose is deprecated in favour of joserfc but stays until authlib 2.0
+    # (pinned <2 in pyproject). Don't spam every worker's startup log about it.
+    warnings.simplefilter("ignore", DeprecationWarning)
+    from authlib.jose import JsonWebKey, JsonWebToken
+
 from .audit import log_action
-from .config import ALLOWED_DOMAIN, ALLOWED_EMAILS, AUTH_MODE, SERVER_URL, SESSION_TIMEOUT_HOURS
+from .config import (
+    ALLOWED_DOMAIN,
+    ALLOWED_EMAILS,
+    AUTH_MODE,
+    CF_ACCESS_AUD,
+    CF_ACCESS_TEAM_DOMAIN,
+    SERVER_URL,
+    SESSION_TIMEOUT_HOURS,
+)
 
 auth_bp = Blueprint("auth", __name__)
+log = logging.getLogger(__name__)
 
 # Remember the last signed-in account for 90 days so returning users can be
 # re-authenticated silently (prompt=none) and get the right account pre-selected.
@@ -35,7 +55,92 @@ def csrf_valid() -> bool:
     """Constant-time compare of the X-CSRF-Token header against the session token."""
     sent = request.headers.get("X-CSRF-Token", "")
     expected = session.get("csrf_token", "")
-    return bool(expected) and hmac.compare_digest(sent, expected)
+    if not expected:
+        return False
+    # compare_digest rejects non-ASCII str with a TypeError; bytes are always fine.
+    return hmac.compare_digest(sent.encode("utf-8"), expected.encode("utf-8"))
+
+
+# --- Cloudflare Access ---------------------------------------------------------
+#
+# Cloudflare Access puts a signed JWT in Cf-Access-Jwt-Assertion on every request
+# it lets through. Verifying it (signature, issuer, audience, expiry) is what
+# proves the request actually came through Access rather than from something
+# else on the Docker network that can set a header.
+
+CF_JWT_HEADER = "Cf-Access-Jwt-Assertion"
+CF_JWT_COOKIE = "CF_Authorization"
+CF_EMAIL_HEADER = "Cf-Access-Authenticated-User-Email"
+_JWKS_TTL = 3600.0
+
+
+def _cf_team_host() -> str:
+    """Normalise CF_ACCESS_TEAM_DOMAIN to a bare host like myteam.cloudflareaccess.com."""
+    host = CF_ACCESS_TEAM_DOMAIN
+    for prefix in ("https://", "http://"):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+    host = host.strip("/")
+    if host and "." not in host:
+        host = f"{host}.cloudflareaccess.com"
+    return host
+
+
+def cf_jwt_enabled() -> bool:
+    return bool(_cf_team_host() and CF_ACCESS_AUD)
+
+
+_jwt = JsonWebToken(["RS256"])
+_jwks_lock = threading.Lock()
+_jwks_cache: dict = {"keys": None, "fetched": 0.0}
+
+
+def _jwks(force: bool = False):
+    now = time.monotonic()
+    with _jwks_lock:
+        cached = _jwks_cache["keys"]
+        if cached is not None and not force and now - _jwks_cache["fetched"] < _JWKS_TTL:
+            return cached
+    resp = http_client.get(f"https://{_cf_team_host()}/cdn-cgi/access/certs", timeout=5)
+    resp.raise_for_status()
+    key_set = JsonWebKey.import_key_set({"keys": resp.json().get("keys", [])})
+    with _jwks_lock:
+        _jwks_cache["keys"] = key_set
+        _jwks_cache["fetched"] = time.monotonic()
+    return key_set
+
+
+def verify_cf_token(token: str) -> str | None:
+    """Return the email inside a valid Cloudflare Access JWT, else None."""
+    if not token:
+        return None
+    claims_options = {
+        "iss": {"essential": True, "value": f"https://{_cf_team_host()}"},
+        "aud": {"essential": True, "value": CF_ACCESS_AUD},
+        "exp": {"essential": True},
+        "email": {"essential": True},
+    }
+    # A key rotation shows up as an unknown kid; refresh the key set once.
+    for refresh in (False, True):
+        try:
+            claims = _jwt.decode(token, _jwks(force=refresh), claims_options=claims_options)
+            claims.validate(leeway=30)
+            return str(claims["email"]).strip().lower()
+        except Exception as e:  # JoseError, ValueError (unknown kid), network errors
+            if refresh:
+                log.warning("Cloudflare Access token rejected: %s: %s", type(e).__name__, e)
+                return None
+    return None
+
+
+def cloudflare_identity() -> str:
+    """Email of the Cloudflare-authenticated caller, or "" if unauthenticated."""
+    if cf_jwt_enabled():
+        token = request.headers.get(CF_JWT_HEADER) or request.cookies.get(CF_JWT_COOKIE, "")
+        return verify_cf_token(token) or ""
+    # Legacy mode: trust the header. Only safe when nothing but the tunnel can
+    # reach this port; create_app() logs a warning about this at startup.
+    return request.headers.get(CF_EMAIL_HEADER, "").strip().lower()
 
 
 oauth = OAuth()
@@ -52,9 +157,10 @@ if AUTH_MODE == "google":
 def is_allowed(email: str) -> bool:
     if not email:
         return False
-    if ALLOWED_EMAILS and email in ALLOWED_EMAILS:
+    email = email.lower()
+    if ALLOWED_EMAILS and email in {e.lower() for e in ALLOWED_EMAILS}:
         return True
-    if ALLOWED_DOMAIN and email.endswith(f"@{ALLOWED_DOMAIN}"):
+    if ALLOWED_DOMAIN and email.endswith(f"@{ALLOWED_DOMAIN.lower()}"):
         return True
     return False
 
@@ -63,14 +169,17 @@ def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if AUTH_MODE == "cloudflare":
-            email = request.headers.get("Cf-Access-Authenticated-User-Email", "")
+            email = cloudflare_identity()
             if not email:
                 if request.path.startswith("/api/"):
                     return jsonify({"error": "unauthorized"}), 401
                 return "Access denied. Not authenticated via Cloudflare Access.", 403
             if not is_allowed(email):
                 return jsonify({"error": f"access denied for {email}"}), 403
-            session["user"] = {"email": email, "name": email}
+            # Only touch the session when the identity changes; assigning every
+            # request would put a Set-Cookie on every log poll.
+            if session.get("user", {}).get("email") != email:
+                session["user"] = {"email": email, "name": email}
             return f(*args, **kwargs)
 
         if not session.get("user"):

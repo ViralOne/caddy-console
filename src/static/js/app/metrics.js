@@ -10,15 +10,21 @@ async function loadMetrics() {
   const body = document.getElementById('metrics-body');
   body.textContent = 'Loading metrics...';
 
-  const [metricsRes, trafficRes, upstreamsRes] = await Promise.all([
-    fetch('/api/metrics'),
-    fetch('/api/traffic'),
-    fetch('/api/upstreams'),
-  ]);
-
-  const metrics = await metricsRes.json();
-  const traffic = await trafficRes.json();
-  const upstreams = await upstreamsRes.json();
+  let metrics, traffic, upstreams;
+  try {
+    [metrics, traffic, upstreams] = await Promise.all([
+      fetchJson('/api/metrics'),
+      fetchJson('/api/traffic'),
+      fetchJson('/api/upstreams'),
+    ]);
+  } catch (e) {
+    // Without this the tab sat on "Loading metrics..." forever with an
+    // unhandled rejection in the console.
+    if (e.status === 401) return;
+    showError(body, 'Could not load metrics', e);
+    return;
+  }
+  traffic.sites = traffic.sites || {};
 
   body.textContent = '';
 
@@ -140,20 +146,17 @@ async function loadMetrics() {
     sitesSection.appendChild(el('div', 'metrics-hint', 'No traffic recorded yet. Metrics appear after requests flow through Caddy.'));
   } else {
     const serverDomains = traffic.server_domains || {};
+    const serverListen = traffic.server_listen || {};
     const sorted = Object.entries(traffic.sites).sort((a, b) => b[1].requests - a[1].requests);
     sorted.forEach(([server, data]) => {
       const card = el('div', 'site-metric-card');
 
       const headerDiv = el('div', 'site-metric-header');
       const domains = serverDomains[server];
-      const portMatch = domains && domains.length > 0 ? null : server;
-      let titleText;
-      if (domains && domains.length > 0) {
-        const isHTTPS = data.bytes_out > 0 || server === 'srv0';
-        titleText = (server === 'srv0' ? 'HTTPS (:443)' : server === 'srv1' ? 'HTTP (:80)' : server);
-      } else {
-        titleText = server;
-      }
+      // Server names (srv0, srv1) are assigned by the adapter in no fixed
+      // order, so label them with what they actually listen on.
+      const listen = serverListen[server];
+      const titleText = listen && listen.length ? `${server} · ${listen.join(', ')}` : server;
       headerDiv.appendChild(el('span', 'site-metric-name', titleText));
       if (data.error_rate > 0) {
         const errBadge = el('span', data.error_rate > 5 ? 'site-metric-err high' : 'site-metric-err low');
