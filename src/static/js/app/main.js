@@ -23,8 +23,12 @@ document.addEventListener('keydown', e => {
 });
 
 // Cmd/Ctrl+F opens the find/replace bar (capture phase to preempt the editor).
+// Cmd/Ctrl+F opens the find bar, but only where there is a document to search;
+// elsewhere the browser's own find is the useful behaviour.
 document.addEventListener('keydown', e => {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') { e.preventDefault(); e.stopPropagation(); toggleSearch(); }
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'f') return;
+  if (!document.getElementById('tab-editor').classList.contains('active')) return;
+  e.preventDefault(); e.stopPropagation(); toggleSearch();
 }, true);
 
 // --- Event delegation (CSP-safe: no inline handlers) ---

@@ -1,6 +1,6 @@
 // Side panels: open/close behaviour + Audit, Status, and Snippets loaders.
 import { clearPreview, loadBackups } from './backups.js';
-import { editorView, fetchJson, setDot, showError } from './core.js';
+import { editorView, fetchJson, setDot } from './core.js';
 export function togglePanel(name) {
   const panel = document.getElementById(`panel-${name}`); const isOpen = panel.classList.contains('open');
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('open'));
@@ -9,43 +9,13 @@ export function togglePanel(name) {
   panel.classList.add('open');
   const btn = document.getElementById(`panel-btn-${name}`);
   if (btn) btn.classList.add('panel-active');
-  if (name==='backups') loadBackups(); if (name==='audit') loadAudit(); if (name==='status') loadStatusPanel(); if (name==='snippets') loadSnippets();
+  if (name === 'backups') loadBackups();
+  if (name === 'snippets') loadSnippets();
 }
 export function closePanel(name) {
   document.getElementById(`panel-${name}`).classList.remove('open');
   document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
   if (name === 'backups') clearPreview();
-}
-
-export async function loadAudit() {
-  const list = document.getElementById('audit-list');
-  let data;
-  try { data = await fetchJson('/api/audit'); }
-  catch (e) { showError(list, 'Could not load audit log', e); return; }
-  list.textContent = '';
-  if (!data.entries.length) { list.textContent = 'No activity yet.'; return; }
-  data.entries.forEach(e => {
-    const item = document.createElement('div'); item.className = 'audit-item';
-    const action = document.createElement('span'); action.className = 'action'; action.textContent = e.action;
-    const user = document.createElement('span'); user.className = 'user'; user.textContent = ' ' + e.user;
-    const time = document.createElement('span'); time.className = 'time'; time.textContent = e.time + ' ' + (e.detail||'');
-    item.appendChild(action); item.appendChild(user); item.appendChild(document.createElement('br')); item.appendChild(time); list.appendChild(item);
-  });
-}
-
-export async function loadStatusPanel() {
-  const body = document.getElementById('status-body');
-  let data;
-  try { data = await fetchJson('/api/status'); }
-  catch (e) { showError(body, 'Could not load status', e); return; }
-  body.textContent = '';
-  [['Caddy Version',data.caddy_version],['Config Valid',data.config_valid?'Valid':'Invalid'],['Config Path',data.config_path],['Last Modified',data.last_modified]].forEach(([label,value]) => {
-    const card = document.createElement('div'); card.className = 'status-card';
-    const lbl = document.createElement('label'); lbl.textContent = label;
-    const val = document.createElement('div'); val.className = 'value'; val.textContent = value;
-    if (label === 'Config Valid') val.className = 'value ' + (data.config_valid ? 'ok' : 'bad');
-    card.appendChild(lbl); card.appendChild(val); body.appendChild(card);
-  });
 }
 
 export async function loadSnippets() {

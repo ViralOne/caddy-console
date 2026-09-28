@@ -84,17 +84,18 @@ function App() {
 
   const load = async () => {
     try {
-      const [sites, upstreams, traffic, status, metrics] = await Promise.all([
+      const [sites, upstreams, traffic, status, metrics, audit] = await Promise.all([
         fetch(`/api/sites?range=${RANGE}`).then(r => r.json()),
         fetch('/api/upstreams').then(r => r.json()),
         fetch('/api/traffic').then(r => r.json()),
         fetch('/api/status').then(r => r.json()),
         fetch('/api/metrics').then(r => r.json()),
+        fetch('/api/audit').then(r => r.json()),
       ]);
       // Caddy reports upstream health per address; fold it onto the upstream rows.
       const healthy = traffic.upstreams_healthy || {};
       const ups = (upstreams.upstreams || []).map(u => ({ ...u, healthy: healthy[u.address] }));
-      setData({ sites, upstreams: ups, status, metrics });
+      setData({ sites, upstreams: ups, status, metrics, audit });
       setError(sites.error || upstreams.error || null);
     } catch (e) {
       setError(e.message);
@@ -151,6 +152,7 @@ function App() {
             <span class="dash-muted">${shortVersion(cfg.caddy_version)}</span>
           </div>
           <div class="dash-kpi-line dash-muted" title=${cfg.last_modified || ''}>changed ${timeAgo(cfg.last_modified)}</div>
+          <div class="dash-kpi-line dash-path" title=${cfg.config_path || ''}>${cfg.config_path || ''}</div>
         </div>
       </div>
 
@@ -193,6 +195,25 @@ function App() {
               </div>`;
           })}
         </div>`}
+
+      <div class="section-title">
+        <span>Recent changes</span>
+        <span class="section-basis">from the editor's audit log</span>
+      </div>
+      ${(() => {
+        const entries = (data.audit?.entries || []).slice(0, 8);
+        if (!entries.length) return html`<div class="metrics-hint">No editor activity recorded yet.</div>`;
+        return html`
+          <div class="dash-table">
+            ${entries.map((a, i) => html`
+              <div class="dash-audit" key=${i}>
+                <span class="dash-audit-action">${a.action}</span>
+                <span class="dash-audit-user">${a.user}</span>
+                <span class="dash-audit-detail" title=${a.detail || ''}>${a.detail || ''}</span>
+                <span class="dash-audit-time">${a.time}</span>
+              </div>`)}
+          </div>`;
+      })()}
 
       <div class="metrics-footer">
         Read ${formatBytes(data.sites.window?.covered_bytes || 0)} of ${formatBytes(data.sites.window?.file_size || 0)} from the log · refreshes every ${REFRESH_MS / 1000}s

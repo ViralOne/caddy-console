@@ -11,25 +11,27 @@
 <body>
 
 <div class="header">
-  <h1>Caddy Editor</h1>
-  <button class="btn btn-validate" data-act="validate">Validate</button>
-  <button class="btn btn-save" data-act="save">Save &amp; Reload</button>
-  <div class="btn-group">
-    <button class="btn btn-secondary" data-act="find">Find</button>
-    <button class="btn btn-secondary" id="panel-btn-snippets" data-panel="snippets">Snippets</button>
-    <button class="btn btn-secondary" id="panel-btn-backups" data-panel="backups">Backups</button>
-    <button class="btn btn-secondary" id="panel-btn-audit" data-panel="audit">Audit</button>
-    <button class="btn btn-secondary" id="panel-btn-status" data-panel="status">Status</button>
-  </div>
+  <a class="brand" data-view="dashboard" href="/">Caddy Editor</a>
+
+  <nav class="tabs">
+    <a class="tab" data-view="dashboard" href="/">Dashboard</a>
+    <a class="tab" data-view="editor" href="/editor">Editor</a>
+    <a class="tab" data-view="explore" href="/explore">Explore</a>
+  </nav>
+
   <span class="spacer"></span>
+
+  <!-- Editor-only actions. Hidden on the other views, where none of them apply. -->
+  <div class="view-actions" data-for-view="editor">
+    <button class="btn btn-secondary btn-sm" data-act="find">Find</button>
+    <button class="btn btn-secondary btn-sm" id="panel-btn-snippets" data-panel="snippets">Snippets</button>
+    <button class="btn btn-secondary btn-sm" id="panel-btn-backups" data-panel="backups">Backups</button>
+    <button class="btn btn-validate" data-act="validate">Validate</button>
+    <button class="btn btn-save" data-act="save">Save &amp; Reload</button>
+  </div>
+
   <span class="user-info" id="user-info"></span>
   <a href="/logout"><button class="btn btn-logout">logout</button></a>
-</div>
-
-<div class="tabs">
-  <a class="tab" data-view="dashboard" href="/">Dashboard</a>
-  <a class="tab" data-view="editor" href="/editor">Editor</a>
-  <a class="tab" data-view="explore" href="/explore">Explore</a>
 </div>
 
 <div class="warnings" id="warnings"></div>
@@ -99,16 +101,8 @@
 </div>
 
 <!-- Audit Panel -->
-<div class="panel" id="panel-audit">
-  <div class="panel-header"><h3>Audit Log</h3><button class="panel-close" data-close="audit">&times;</button></div>
-  <div class="panel-body" id="audit-list"></div>
-</div>
 
 <!-- Status Panel -->
-<div class="panel" id="panel-status">
-  <div class="panel-header"><h3>Caddy Status</h3><button class="panel-close" data-close="status">&times;</button></div>
-  <div class="panel-body" id="status-body"></div>
-</div>
 
 <!-- Save Diff Modal -->
 <div class="modal-overlay" id="save-diff-modal">
