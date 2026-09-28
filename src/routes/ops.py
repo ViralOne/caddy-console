@@ -21,7 +21,6 @@ from ..config import (
     LOG_STATS_WINDOW_MB,
 )
 from ..eventindex import event_index
-from ..logstats import log_stats
 from ..validator import run_caddy
 
 ops_bp = Blueprint("ops", __name__)
@@ -246,26 +245,6 @@ def traffic():
         return jsonify({"error": f"{type(e).__name__}: {e}", "sites": {}})
 
 
-@ops_bp.route("/api/logstats", methods=["GET"])
-@login_required
-def logstats():
-    """Per-host traffic figures from the access log.
-
-    Complements /api/traffic, which can only report per server because Caddy's
-    metrics carry no host label. Never returns an error status: the panel is a
-    supplement to the Prometheus figures and must not take the tab down with it.
-    """
-    window_mb = _window_mb(request.args.get("window_mb"))
-    host = request.args.get("host") or None
-    try:
-        payload = log_stats.snapshot(window_mb * 1024 * 1024, host=host)
-    except OSError as e:
-        payload = {"error": f"Could not read the access log: {e}", "sites": {}, "exists": False}
-    payload["window_mb"] = window_mb
-    payload["window_max_mb"] = LOG_STATS_WINDOW_MAX_MB
-    return jsonify(payload)
-
-
 RANGES = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}
 
 
@@ -296,6 +275,20 @@ def explore():
     payload["window_mb"] = window_mb
     payload["window_max_mb"] = LOG_STATS_WINDOW_MAX_MB
     payload["ranges"] = list(RANGES)
+    return jsonify(payload)
+
+
+@ops_bp.route("/api/sites", methods=["GET"])
+@login_required
+def sites():
+    """Per-site traffic for the dashboard, from the access log."""
+    window_mb = _window_mb(request.args.get("window_mb"))
+    from_ts, to_ts = _range(request.args)
+    try:
+        payload = event_index.site_summary(window_mb * 1024 * 1024, from_ts, to_ts)
+    except OSError as e:
+        return jsonify({"error": str(e), "sites": [], "exists": False})
+    payload["window_mb"] = window_mb
     return jsonify(payload)
 
 

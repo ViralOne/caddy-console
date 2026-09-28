@@ -3,7 +3,7 @@ import {
   editorView, fetchJson, initEditor, setContent, setDot, setOriginal, setStatus, setVersion,
 } from './core.js';
 import { mountExplore } from './explore.js';
-import { loadMetrics } from './metrics.js';
+import { mountDashboard } from './dashboard.js';
 import { navigate, pathFor, viewFromPath } from './router.js';
 
 export async function init() {
@@ -36,7 +36,7 @@ export function showView(name, { push = true } = {}) {
   // Explore owns its query string; switching to any other view drops it so the
   // URL never advertises filters that are not in effect.
   if (push) navigate(view, view === 'explore' ? location.search : '');
-  if (view === 'dashboard') loadMetrics();
+  if (view === 'dashboard') mountDashboard();
   if (view === 'explore') mountExplore();
 }
 

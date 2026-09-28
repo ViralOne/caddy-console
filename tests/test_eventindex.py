@@ -293,6 +293,31 @@ class IndexTest(unittest.TestCase):
         overlap = {e["ts"] for e in first["entries"]} & {e["ts"] for e in second["entries"]}
         self.assertEqual(overlap, set())
 
+    def test_site_summary_groups_by_host(self):
+        self.write(
+            entry(ts=T0, host="a.example.com", status=200, duration=0.1, size=10),
+            entry(ts=T0 + 1, host="a.example.com", status=502, duration=0.3, size=20),
+            entry(ts=T0 + 2, host="b.example.com", status=200, duration=0.2, size=30),
+        )
+        r = self.index.site_summary(10 * MB)
+        by = {s["host"]: s for s in r["sites"]}
+        self.assertEqual(by["a.example.com"]["requests"], 2)
+        self.assertEqual(by["a.example.com"]["errors"], 1)
+        self.assertEqual(by["a.example.com"]["error_rate"], 50.0)
+        self.assertEqual(by["a.example.com"]["bytes_out"], 30)
+        self.assertEqual(by["b.example.com"]["requests"], 1)
+
+    def test_site_summary_is_sorted_busiest_first(self):
+        self.write(entry(host="quiet.example.com"), *[entry(host="busy.example.com") for _ in range(5)])
+        hosts = [s["host"] for s in self.index.site_summary(10 * MB)["sites"]]
+        self.assertEqual(hosts, ["busy.example.com", "quiet.example.com"])
+
+    def test_site_summary_series_sums_to_requests(self):
+        self.write(*[entry(ts=T0 + i * 60, host="a.example.com") for i in range(24)])
+        site = self.index.site_summary(10 * MB)["sites"][0]
+        self.assertEqual(sum(site["series"]), site["requests"])
+        self.assertEqual(len(site["series"]), 24)
+
     def test_raw_line_round_trips_by_offset(self):
         self.write(entry(ts=T0, uri="/first"), entry(ts=T0 + 1, uri="/second"))
         r = self.q()

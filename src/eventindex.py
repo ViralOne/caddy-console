@@ -472,6 +472,65 @@ class EventIndex:
             b[cls] = b.get(cls, 0) + 1
         return {"bucket_seconds": width, "buckets": [buckets[k] for k in sorted(buckets)]}
 
+    def site_summary(self, window_bytes, from_ts=None, to_ts=None, points=24):
+        """Per-host traffic summary for the dashboard.
+
+        One grouped pass rather than a query per host: a dozen sites would
+        otherwise mean a dozen scans of the whole index.
+        """
+        with self._lock:
+            exists, size = self._refresh(int(window_bytes))
+            n = len(self.ts)
+            lo = bisect.bisect_left(self.ts, from_ts) if from_ts is not None else 0
+            hi = bisect.bisect_right(self.ts, to_ts) if to_ts is not None else n
+
+            span_from = from_ts if from_ts is not None else (self.ts[lo] if lo < hi else 0)
+            span_to = to_ts if to_ts is not None else (self.ts[hi - 1] if lo < hi else 1)
+            step = max(1.0, (span_to - span_from) / max(1, points))
+
+            sites = {}
+            for i in range(lo, hi):
+                host = self.hosts.values[self.host_id[i]]
+                site = sites.get(host)
+                if site is None:
+                    site = sites[host] = {"requests": 0, "errors": 0, "bytes_out": 0,
+                                          "durations": [], "series": [0] * points}
+                site["requests"] += 1
+                status = self.status[i]
+                if 500 <= status < 600:
+                    site["errors"] += 1
+                site["bytes_out"] += self.size[i]
+                site["durations"].append(self.duration_ms[i])
+                # The newest event sits exactly on span_to and so computes
+                # `points`; it belongs in the last bucket, not outside the chart.
+                slot = min(points - 1, max(0, int((self.ts[i] - span_from) / step)))
+                site["series"][slot] += 1
+
+            out = []
+            for host, d in sites.items():
+                durations = sorted(d["durations"])
+                count = len(durations)
+                idx = max(0, -(-95 * count // 100) - 1)
+                out.append({
+                    "host": host,
+                    "requests": d["requests"],
+                    "errors": d["errors"],
+                    "error_rate": round(d["errors"] / d["requests"] * 100, 2) if d["requests"] else 0.0,
+                    "avg_latency_ms": round(sum(durations) / count, 1) if count else 0.0,
+                    "p95_latency_ms": round(durations[idx], 1) if count else 0.0,
+                    "bytes_out": d["bytes_out"],
+                    "series": d["series"],
+                })
+            out.sort(key=lambda s: -s["requests"])
+            return {
+                "exists": exists, "sites": out,
+                "from": span_from, "to": span_to, "points": points,
+                "indexed": n, "dropped": self._dropped, "skipped": self._skipped,
+                "window": {"bytes": int(window_bytes),
+                           "covered_bytes": max(0, self._pos - self._scan_start),
+                           "file_size": size},
+            }
+
     def _entry(self, i):
         return {
             "ts": self.ts[i],
