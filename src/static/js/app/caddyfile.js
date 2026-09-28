@@ -5,6 +5,7 @@ import {
 import { mountExplore } from './explore.js';
 import { mountDashboard } from './dashboard.js';
 import { navigate, pathFor, viewFromPath } from './router.js';
+import { initUserMenu } from './usermenu.js';
 
 export async function init() {
   // A 401 here is handled by the fetch wrapper (redirects to sign-in).
@@ -13,6 +14,7 @@ export async function init() {
   if (!res.ok) { setStatus(`Cannot load user: HTTP ${res.status}`, 'err'); setDot('red'); return; }
   const user = await res.json();
   document.getElementById('user-info').textContent = user.email;
+  initUserMenu(user);
   await loadCaddyfile();
 }
 

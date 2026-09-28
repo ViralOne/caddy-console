@@ -15,7 +15,16 @@ from flask import Blueprint, jsonify, render_template, request, session
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
 from ..caddy_api import get_servers, invalidate_servers_cache
-from ..config import BACKUP_DIR, BACKUP_KEEP, BACKUP_PREFIX, CADDY_API_URL, CADDY_LOG_FILE, CADDYFILE
+from ..config import (
+    AUTH_MODE,
+    BACKUP_DIR,
+    BACKUP_KEEP,
+    BACKUP_PREFIX,
+    CADDY_API_URL,
+    CADDY_LOG_FILE,
+    CADDYFILE,
+    SESSION_TIMEOUT_HOURS,
+)
 from ..validator import caddy_fmt, caddy_validate, smart_validate
 
 
@@ -251,7 +260,24 @@ def health():
 @editor_bp.route("/api/me")
 @login_required
 def me():
-    return jsonify({**session["user"], "csrf_token": get_or_create_csrf()})
+    """Identity plus how it was established, for the account menu.
+
+    Session lifetime differs by mode: login_required enforces
+    SESSION_TIMEOUT_HOURS only for google, while cloudflare returns early and
+    Access owns the session. Reporting an expiry in cloudflare mode would be a
+    number this app does not control, so it is null there.
+    """
+    expires_at = None
+    if AUTH_MODE == "google":
+        login_time = session.get("login_time")
+        if login_time:
+            expires_at = login_time + SESSION_TIMEOUT_HOURS * 3600
+    return jsonify({
+        **session["user"],
+        "csrf_token": get_or_create_csrf(),
+        "auth_mode": AUTH_MODE,
+        "session_expires_at": expires_at,
+    })
 
 
 @editor_bp.route("/api/caddyfile", methods=["GET"])
