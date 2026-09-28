@@ -1,12 +1,17 @@
 # Caddy Editor
 
-Web UI to manage your Caddyfile — edit, validate, format, save & reload with zero downtime. Includes traffic metrics from Caddy's Prometheus endpoint, upstream health monitoring, backup/restore with diff, and audit log.
+Web UI to manage your Caddyfile — edit, validate, format, save & reload with zero downtime. Includes a site health dashboard, a faceted log explorer, upstream health monitoring, backup/restore with diff, and an audit log.
 
 ## Features
 
-- **Editor Tab** — CodeMirror 6 with Caddyfile syntax highlighting, find/replace, Cmd+S to save, validate & format
-- **Metrics Tab** — total requests, error rate, in-flight, bandwidth, upstream health (requires `metrics` in global block)
-- **Logs Tab** — live-tailing Caddy access logs (requires global `log default` writing to shared volume)
+Three views, each with its own URL:
+
+- **Dashboard** (`/`) — one row per site: upstream health, requests, 5xx rate, p95 latency, bandwidth and an hourly sparkline. Every figure links into the explorer with that filter applied. Plus config status and recent editor changes.
+- **Editor** (`/editor`) — CodeMirror 6 with Caddyfile syntax highlighting, find/replace, Cmd+S to save, validate & format
+- **Explore** (`/explore`) — faceted search over the access log: a query bar (`host:… status:5xx path:/api`, free text, `-` to exclude), facet sidebar with live counts, a stacked status histogram you can drag to zoom, and an event stream. Per-field menus filter, exclude or copy. The whole state lives in the URL, so a view is shareable — including absolute timestamps.
+
+Everything else:
+
 - **Save & Reload** — writes Caddyfile and reloads Caddy via admin API (zero downtime)
 - **Backups** — automatic pre-save backups with preview, inline diff, and one-click restore
 - **Audit Log** — who saved what and when
@@ -70,26 +75,11 @@ docker compose -f docker-compose.prod.yaml up -d
 - The global block must include `admin 0.0.0.0:2019` so the editor can reload Caddy over the Docker network
 - Add `metrics` to the global block to enable traffic metrics in the Metrics tab
 
-## Feature Requirements
+## Access Log Setup
 
-Each tab beyond the Editor requires specific Caddyfile configuration:
-
-### Metrics Tab
-
-Add `metrics` to your Caddyfile global block:
-
-```caddyfile
-{
-    admin 0.0.0.0:2019
-    metrics
-}
-```
-
-Shows request counts, latency, error rates, and bandwidth per server group.
-
-### Logs Tab
-
-Access logs require a `log` directive **inside each site block**. Define a snippet once and import it in every site:
+The dashboard and the explorer both read Caddy's access log, so both need a `log`
+directive **inside each site block**. Define a snippet once and import it
+everywhere:
 
 ```caddyfile
 (access_log) {
@@ -113,20 +103,47 @@ app.yourdomain.com {
 }
 ```
 
-The `caddy-logs` volume is shared between the Caddy and editor containers (already configured in both compose files). Every site that imports `access_log` will write HTTP request entries to the shared file.
+The `caddy-logs` volume is shared between the Caddy and editor containers (already
+configured in both compose files). To change the path, set `CADDY_LOG_FILE` in
+`.env` (default: `/var/log/caddy/access.log`).
 
-To change the log path, set `CADDY_LOG_FILE` in `.env` (default: `/var/log/caddy/access.log`).
+**Strip the headers.** `format filter` with `wrap json` keeps every field these
+views use (ts, host, method, uri, status, duration, size, client_ip) and drops the
+header maps. Do not skip it:
 
-**Strip headers.** `format filter` with `wrap json` keeps the fields the Logs and Metrics tabs need (host, method, uri, status, duration, size, client_ip) and drops the header maps. Do not skip this:
+- Request headers carry session tokens and API keys in plaintext. Caddy redacts
+  `Cookie` automatically but nothing else, so a bare `format json` writes live
+  credentials to disk and then renders them in your browser.
+- Headers are roughly 90% of each entry. Dropping them takes an entry from ~4 KB
+  to ~300 bytes, so the same `roll_size` covers more than ten times the history.
 
-- Request headers carry session tokens and API keys in plaintext. Caddy redacts `Cookie` automatically but nothing else, so a bare `format json` writes live credentials to disk and renders them in the browser.
-- Headers are roughly 90% of each entry. Dropping them takes an entry from ~4 KB to ~300 bytes, so the same `roll_size` covers over ten times as much history.
+To keep one specific header, delete the others individually rather than the whole
+map — `request>headers>Authorization delete`. The filter encoder also supports
+`ip_mask` if you would rather not store full client IPs.
 
-To keep a specific header, delete the others individually instead of the whole map — for example `request>headers>Authorization delete`. The filter encoder also supports `ip_mask` if you would rather not store full client IPs.
+Two things to know:
 
-Changes to an existing `output file` block need a full restart of the Caddy container; a reload will not pick them up.
+- **Every entry needs `ts`.** The explorer indexes events by timestamp, so entries
+  without one are counted as skipped rather than shown. Caddy includes `ts` by
+  default; only a custom format could remove it.
+- **A global `log default` block is not enough.** It captures Caddy's runtime log
+  (startup, TLS, shutdown), not HTTP access logs. Per-site `log` directives are
+  required.
 
-**Note:** A global `log default` block only captures Caddy runtime logs (startup, TLS, shutdown) — not HTTP access logs. You must use per-site `log` directives for access logging.
+Changes to an existing `output file` block need a full restart of the Caddy
+container — a reload will not pick them up.
+
+### Prometheus metrics (optional)
+
+The dashboard's upstream health comes from Caddy's admin API. To also expose
+Prometheus metrics, add `metrics` to the global block:
+
+```caddyfile
+{
+    admin 0.0.0.0:2019
+    metrics
+}
+```
 
 ## Upstream Health Checks
 
@@ -229,6 +246,8 @@ The bundle (`editor.bundle.js`) is committed — no build step needed on the ser
 | `BACKUP_KEEP` | no | `50` | Pre-save backups to keep; oldest are pruned after each save (`0` = keep all) |
 | `AUDIT_LOG_MAX_BYTES` | no | `5242880` | Rotate the audit log past this size; one rotated file is kept |
 | `CADDY_LOG_FILE` | no | `/var/log/caddy/access.log` | Path to Caddy access log (must match Caddyfile) |
+| `CADDY_EXPLORE_WINDOW_MB` | no | `10` | How far back into the log to scan (max 100) |
+| `CADDY_EXPLORE_MAX_EVENTS` | no | `200000` | Events held in memory; ~38 B each retained |
 | `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
 | `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
 
@@ -248,7 +267,9 @@ The bundle (`editor.bundle.js`) is committed — no build step needed on the ser
 | `GET /api/traffic` | Caddy Prometheus metrics (parsed) |
 | `GET /api/upstreams` | Upstream backend status |
 | `GET /api/status` | Caddy version and config validity |
-| `GET /api/logs` | Tail Caddy access log (supports `?pos=` for incremental) |
+| `GET /api/explore` | Faceted log query: entries, facet counts, histogram, stats |
+| `GET /api/explore/raw` | One original log line, by byte offset |
+| `GET /api/sites` | Per-site traffic summary for the dashboard |
 | `POST /api/logs/ping` | Generate a test log entry by hitting Caddy |
 | `GET /api/audit` | Audit log entries |
 

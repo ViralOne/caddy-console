@@ -26,14 +26,13 @@ CF_ACCESS_AUD = os.environ.get("CF_ACCESS_AUD", "").strip()
 # How many pre-save backups to keep on disk (oldest are pruned after each save).
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "50"))
 
-# Per-site figures come from scanning the tail of the Caddy access log. This is
-# how far back that scan anchors; the Metrics panel can override it per request
-# up to the maximum. Keep it at or below the Caddyfile's roll_size, since only
-# the current (unrolled) file is read.
-LOG_STATS_WINDOW_MAX_MB = 100
-LOG_STATS_WINDOW_MB = min(
-    max(int(os.environ.get("CADDY_LOG_STATS_WINDOW_MB", "10")), 1),
-    LOG_STATS_WINDOW_MAX_MB,
+# How far back into the access log the dashboard and the explorer scan. The UI
+# can override it per request up to the maximum. Keep it at or below the
+# Caddyfile's roll_size, since only the current (unrolled) file is read.
+EXPLORE_WINDOW_MAX_MB = 100
+EXPLORE_WINDOW_MB = min(
+    max(int(os.environ.get("CADDY_EXPLORE_WINDOW_MB", "10")), 1),
+    EXPLORE_WINDOW_MAX_MB,
 )
 
 # Rotate the audit log once it grows past this size; one rotated file is kept.

@@ -84,18 +84,17 @@ function App() {
 
   const load = async () => {
     try {
-      const [sites, upstreams, traffic, status, metrics, audit] = await Promise.all([
+      const [sites, upstreams, traffic, status, audit] = await Promise.all([
         fetch(`/api/sites?range=${RANGE}`).then(r => r.json()),
         fetch('/api/upstreams').then(r => r.json()),
         fetch('/api/traffic').then(r => r.json()),
         fetch('/api/status').then(r => r.json()),
-        fetch('/api/metrics').then(r => r.json()),
         fetch('/api/audit').then(r => r.json()),
       ]);
       // Caddy reports upstream health per address; fold it onto the upstream rows.
       const healthy = traffic.upstreams_healthy || {};
       const ups = (upstreams.upstreams || []).map(u => ({ ...u, healthy: healthy[u.address] }));
-      setData({ sites, upstreams: ups, status, metrics, audit });
+      setData({ sites, upstreams: ups, status, audit });
       setError(sites.error || upstreams.error || null);
     } catch (e) {
       setError(e.message);

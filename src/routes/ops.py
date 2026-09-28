@@ -17,8 +17,8 @@ from ..config import (
     BACKUP_PREFIX,
     CADDY_API_URL,
     CADDYFILE,
-    LOG_STATS_WINDOW_MAX_MB,
-    LOG_STATS_WINDOW_MB,
+    EXPLORE_WINDOW_MAX_MB,
+    EXPLORE_WINDOW_MB,
 )
 from ..eventindex import event_index
 from ..validator import run_caddy
@@ -273,7 +273,7 @@ def explore():
         return jsonify({"error": f"Could not read the access log: {e}",
                         "exists": False, "entries": [], "total": 0})
     payload["window_mb"] = window_mb
-    payload["window_max_mb"] = LOG_STATS_WINDOW_MAX_MB
+    payload["window_max_mb"] = EXPLORE_WINDOW_MAX_MB
     payload["ranges"] = list(RANGES)
     return jsonify(payload)
 
@@ -336,12 +336,12 @@ def _clamp_int(raw, default, low, high):
 
 
 def _window_mb(raw):
-    """Clamp the requested window to 1..LOG_STATS_WINDOW_MAX_MB megabytes."""
+    """Clamp the requested window to 1..EXPLORE_WINDOW_MAX_MB megabytes."""
     try:
         requested = int(raw)
     except (TypeError, ValueError):
-        return LOG_STATS_WINDOW_MB
-    return max(1, min(requested, LOG_STATS_WINDOW_MAX_MB))
+        return EXPLORE_WINDOW_MB
+    return max(1, min(requested, EXPLORE_WINDOW_MAX_MB))
 
 
 def _server_maps():
