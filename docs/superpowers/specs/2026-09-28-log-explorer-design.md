@@ -143,6 +143,35 @@ The Overview KPI row is dropped: its traffic figures move to Explore, its editor
 figures are already in Editor Activity. That resolves findings 1, 3, 4 and 7 of
 the superseded spec by deletion rather than redesign.
 
+## Frontend framework: Preact + htm, vendored
+
+Explore carries far more derived state than anything else here — query, parsed
+filters, range, drag-select, follow, facet and row expansion, paging, in-flight
+request cancellation — all feeding one render. Hand-syncing the DOM stops paying
+at that point; the existing `toggleFailures` already resyncs by hand with
+`querySelectorAll(…).forEach(n => n.remove())`.
+
+**Decision: Preact + htm, vendored via the existing esbuild devDependency,
+committed like `editor.bundle.js`. Explore only; the editor, panels and backups
+stay vanilla.** No build step for app code, so `docker-compose.dev.yaml`'s
+bind-mount-and-refresh workflow keeps working.
+
+SolidJS was considered and is the better framework *if* a build step is on the
+table — fine-grained reactivity suits a stream that prepends rows every few
+seconds better than a VDOM diff. It was rejected because we are staying
+buildless, and Solid's buildless path (`solid-js/html`) is a poor trade by its
+own README: it "cannot leverage expression analysis, necessitating manual
+wrapping of expressions", so every reactive site needs a hand-written thunk
+(`title=${() => selectedClass()}`) and forgetting one silently freezes the value
+with no error. On a view whose entire job is live counts, that failure mode is
+unacceptable. It also "requires a larger, non-treeshakeable runtime" and is
+"slightly less efficient than JSX" — Solid's costs without its benefits. `htm`
+has no equivalent trap, since Preact re-renders and re-evaluates expressions.
+
+If the build-step constraint is ever lifted, revisit this: Solid + JSX becomes
+the stronger option, and a proper Node stage would also let us stop committing
+`editor.bundle.js` by hand.
+
 ## Frontend
 
 Native ES modules (landed in `1700c2a`). New modules:
