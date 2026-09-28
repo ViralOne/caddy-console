@@ -1,6 +1,6 @@
-# Caddy Editor
+# Caddy Console
 
-A web UI for a self-hosted Caddy: edit the Caddyfile, save and reload with no
+A console for a self-hosted Caddy: edit the Caddyfile, save and reload with no
 downtime, and see what your sites are actually doing — read from Caddy's own access
 log, with no database and nothing to keep in sync.
 
@@ -18,8 +18,11 @@ caused it.
 ## Explore — why is it broken?
 
 Faceted search over the access log. Type `host:… status:5xx path:/api`, or plain
-text, or `-` to exclude. Sidebar counts update with your filters, and a count always
-equals what clicking it returns. Drag the histogram to zoom into a spike.
+text, or prefix a term with `-` to exclude it — `-status:2xx` is everything that
+did not go well. Sidebar rows cycle through the same three states as you click
+them: off, only this (☑), everything but this (☒). Counts update with your filters,
+and a count always equals what clicking it returns. Drag the histogram to zoom
+into a spike.
 
 ![Explore](docs/screenshots/explore.png)
 
@@ -45,8 +48,8 @@ first, with an inline diff and one-click restore.
 ## Quick start
 
 ```bash
-git clone https://github.com/ViralOne/caddy-web-editor.git
-cd caddy-web-editor
+git clone https://github.com/ViralOne/caddy-console.git
+cd caddy-console
 cp .env.example .env          # set AUTH_MODE, SECRET_KEY, ALLOWED_EMAILS
 docker compose -f docker-compose.prod.yaml up -d
 ```

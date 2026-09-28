@@ -48,6 +48,19 @@ class ParseQueryTest(unittest.TestCase):
         self.assertEqual(f.not_classes, {"2xx"})
         self.assertEqual(f.not_hosts, {"noisy"})
 
+    def test_every_facet_key_can_be_negated(self):
+        f = parse_query("-host:a -method:get -status:404 -path:/api")
+        self.assertEqual(f.not_hosts, {"a"})
+        self.assertEqual(f.not_methods, {"GET"})
+        self.assertEqual(f.not_codes, {404})
+        self.assertEqual(f.not_paths, ["/api"])
+        # A negated term is a filter, not something to also search for as text.
+        self.assertEqual(f.text, [])
+
+    def test_a_bare_minus_word_is_still_free_text(self):
+        f = parse_query("-timeout")
+        self.assertEqual(f.text, ["-timeout"])
+
     def test_bare_words_are_free_text(self):
         f = parse_query("timeout /api/v2")
         self.assertEqual(f.text, ["timeout", "/api/v2"])
@@ -179,6 +192,58 @@ class IndexTest(unittest.TestCase):
     def test_negation_excludes(self):
         self.write(entry(status=200), entry(status=200), entry(status=502))
         self.assertEqual(self.q("-status:2xx")["total"], 1)
+
+    def test_negation_is_the_complement_of_inclusion(self):
+        # What a facet promises when it shows an ✗: everything the ☑ would not.
+        self.write(
+            entry(host="a.example.com", method="GET", status=200, uri="/api"),
+            entry(host="a.example.com", method="POST", status=404, uri="/api/v1"),
+            entry(host="b.example.com", method="GET", status=502, uri="/api"),
+            entry(host="c.example.com", method="HEAD", status=301, uri="/"),
+        )
+        total = self.q()["total"]
+        for term in ("host:a.example.com", "method:GET", "status:404",
+                     "status:5xx", "path:/api"):
+            self.assertEqual(self.q(term)["total"] + self.q("-" + term)["total"],
+                             total, term)
+
+    def test_negated_path_excludes_the_exact_path(self):
+        # Same grouping as the positive filter, so excluding a facet row removes
+        # exactly the events that row counted.
+        self.write(entry(uri="/api"), entry(uri="/api?x=1"),
+                   entry(uri="/api/v1"), entry(uri="/apikeys"))
+        self.assertEqual(self.q("-path:/api")["total"], 2)
+
+    def test_negated_terms_and_across_keys(self):
+        self.write(
+            entry(host="a.example.com", status=200),
+            entry(host="a.example.com", status=502),
+            entry(host="b.example.com", status=200),
+        )
+        self.assertEqual(self.q("-host:a.example.com -status:5xx")["total"], 1)
+
+    def test_excluding_a_code_narrows_an_included_class(self):
+        # "5xx, but not the 502s I already know about" — the reason a query mixes
+        # the two polarities for one key.
+        self.write(entry(status=500), entry(status=502), entry(status=502), entry(status=200))
+        self.assertEqual(self.q("status:5xx -status:502")["total"], 1)
+
+    def test_excluded_classes_and_codes_are_both_kept_out(self):
+        self.write(entry(status=200), entry(status=404), entry(status=502))
+        self.assertEqual(self.q("-status:2xx -status:404")["total"], 1)
+
+    def test_including_and_excluding_the_same_value_matches_nothing(self):
+        # Contradictory but not an error: the UI keeps one polarity per value, so
+        # this only happens when it is typed by hand.
+        self.write(entry(host="a.example.com"), entry(host="b.example.com"))
+        self.assertEqual(self.q("host:a.example.com -host:a.example.com")["total"], 0)
+
+    def test_an_excluded_facet_still_reports_its_own_count(self):
+        # The row you just excluded has to keep a truthful count, or clicking it
+        # again would be a leap in the dark.
+        self.write(*([entry(host="a.example.com")] * 3), entry(host="b.example.com"))
+        facet = {v["value"]: v["count"] for v in self.q("-host:a.example.com")["facets"]["host"]}
+        self.assertEqual(facet, {"a.example.com": 3, "b.example.com": 1})
 
     def test_free_text_matches_host_or_uri_case_insensitively(self):
         self.write(entry(host="nas.example.com", uri="/x"), entry(host="other.example.com", uri="/UGREEN/v1"))

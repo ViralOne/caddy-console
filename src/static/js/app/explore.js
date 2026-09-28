@@ -8,7 +8,7 @@
 // query rather than keeping parallel state, so the search box always explains
 // what is on screen.
 import { h, htm, render, useCallback, useEffect, useRef, useState } from '../explore-vendor.js';
-import { hasTerm, toggleTerm } from './explore-query.js';
+import { cycleTerm, setTermState, termState } from './explore-query.js';
 import { CLASSES, Histogram } from './histogram.js';
 import { JsonView } from './jsonview.js';
 import { exploreStateFromSearch, exploreStateToSearch, replaceSearch } from './router.js';
@@ -35,6 +35,15 @@ const FACET_GROUPS = [
 ];
 const DEBOUNCE_MS = 250;
 const FOLLOW_MS = 4000;
+
+// A facet row has three states, cycled by clicking it: not filtered, only this
+// value, everything but this value. The glyphs are the ballot-box family, so the
+// difference is a shape and not only a colour.
+const FACET_STATE = {
+  off: { mark: '☐', cls: '', hint: 'click to show only this' },
+  include: { mark: '☑', cls: ' on', hint: 'only this — click to exclude it instead' },
+  exclude: { mark: '☒', cls: ' excluded', hint: 'excluded — click to clear' },
+};
 
 const pad = (n) => String(n).padStart(2, '0');
 function clockTime(ts) {
@@ -263,10 +272,11 @@ function App() {
       flash(await copyText(field.value) ? 'Value copied' : 'Copy blocked by the browser');
     } else if (action === 'copy-term') {
       flash(await copyText(term) ? 'Copied ' + term : 'Copy blocked by the browser');
-    } else if (action === 'filter') {
-      setDraft(hasTerm(draft, key, field.value) ? draft : (draft ? draft + ' ' + term : term));
-    } else if (action === 'exclude') {
-      setDraft(draft ? draft + ' -' + term : '-' + term);
+    } else if (action === 'filter' || action === 'exclude') {
+      // Through setTermState rather than appended: picking "Exclude" for a value
+      // already filtered in has to flip it, not leave `host:a -host:a` behind.
+      setDraft(setTermState(draft, key, field.value,
+                            action === 'filter' ? 'include' : 'exclude'));
     } else if (action === 'replace') {
       setDraft(term);
     } else if (action === 'zoom') {
@@ -276,9 +286,9 @@ function App() {
     }
   };
 
-  const toggleFacet = (key, value) => {
+  const cycleFacet = (key, value) => {
     const qk = FACET_GROUPS.find(g => g.key === key)?.queryKey || key;
-    setDraft(toggleTerm(draft, qk, value));
+    setDraft(cycleTerm(draft, qk, value));
   };
   const pickRange = (key) => { setCustom(null); setRange(key); };
   const onDragRange = (from, to) => { setCustom({ from, to }); setFollow(false); };
@@ -292,7 +302,7 @@ function App() {
     <div class="explore">
       <div class="explore-bar">
         <input class="explore-input" type="text" spellcheck="false"
-               placeholder="host:nas.example.com status:5xx path:/api  —  or any text"
+               placeholder="host:app.example.com status:5xx -path:/health  —  or any text"
                value=${draft} onInput=${e => setDraft(e.target.value)} />
         ${draft && html`<button class="btn btn-secondary btn-sm" onClick=${() => setDraft('')}>Clear</button>`}
         ${custom
@@ -336,12 +346,13 @@ function App() {
                         <span class="facet-count">${v.count.toLocaleString()}</span>
                       </div>`;
                   }
-                  const on = hasTerm(draft, qk, v.value);
+                  const state = FACET_STATE[termState(draft, qk, v.value)];
                   return html`
-                    <button class=${'facet-row' + (on ? ' on' : '')} key=${v.value}
-                            onClick=${() => toggleFacet(group.key, v.value)}
-                            title=${v.value}>
-                      <span class="facet-check">${on ? '☑' : '☐'}</span>
+                    <button class=${'facet-row' + state.cls} key=${v.value}
+                            onClick=${() => cycleFacet(group.key, v.value)}
+                            title=${`${v.value} — ${state.hint}`}
+                            aria-label=${`${group.title} ${v.value}, ${state.hint}`}>
+                      <span class="facet-check" aria-hidden="true">${state.mark}</span>
                       <span class="facet-value">${v.value}</span>
                       <span class="facet-count">${v.count.toLocaleString()}</span>
                     </button>`;

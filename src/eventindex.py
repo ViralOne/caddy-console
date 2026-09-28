@@ -50,18 +50,18 @@ class Filters:
     """A parsed query. Same-key terms OR, different keys AND, `-` negates."""
 
     __slots__ = ("hosts", "methods", "codes", "classes", "paths", "text",
-                 "not_hosts", "not_methods", "not_codes", "not_classes")
+                 "not_hosts", "not_methods", "not_codes", "not_classes", "not_paths")
 
     def __init__(self):
         self.hosts = set(); self.methods = set(); self.codes = set()
         self.classes = set(); self.paths = []; self.text = []
         self.not_hosts = set(); self.not_methods = set()
-        self.not_codes = set(); self.not_classes = set()
+        self.not_codes = set(); self.not_classes = set(); self.not_paths = []
 
     def is_empty(self):
         return not any((self.hosts, self.methods, self.codes, self.classes, self.paths,
                         self.text, self.not_hosts, self.not_methods, self.not_codes,
-                        self.not_classes))
+                        self.not_classes, self.not_paths))
 
     def active_keys(self):
         """Which facet keys this query constrains, so facets can exclude their own."""
@@ -72,7 +72,7 @@ class Filters:
         # exclude both, or the OR between them would be half-applied.
         if self.codes or self.not_codes or self.classes or self.not_classes:
             keys.add("status"); keys.add("status_class")
-        if self.paths: keys.add("path")
+        if self.paths or self.not_paths: keys.add("path")
         return keys
 
 
@@ -107,8 +107,7 @@ def parse_query(q):
         elif key == "method":
             (f.not_methods if negated else f.methods).add(value.upper())
         elif key == "path":
-            # Negated paths are not supported; treat as text so nothing is lost.
-            (f.text.append(raw) if negated else f.paths.append(value))
+            (f.not_paths if negated else f.paths).append(value)
         elif key == "status":
             low = value.lower()
             if len(low) == 3 and low.endswith("xx") and low[0].isdigit():
@@ -142,6 +141,16 @@ class _Intern:
 
     def ids_containing(self, needle):
         return {i for i, low in enumerate(self.lowers) if needle in low}
+
+    def ids_matching_path(self, paths):
+        """Ids whose value, minus any query string, is one of `paths`.
+
+        Exact rather than a prefix, so a path facet's count is what filtering on
+        that row returns — in either polarity.
+        """
+        wanted = {p.lower().split("?", 1)[0] for p in paths}
+        return {i for i, low in enumerate(self.lowers)
+                if low.split("?", 1)[0] in wanted}
 
 
 class EventIndex:
@@ -388,11 +397,12 @@ class EventIndex:
         # Exact path, query string ignored — the same grouping the path facet
         # uses, so a facet count always equals what clicking it returns. Substring
         # search is what free text is for.
-        path_ids = None
-        if f.paths and skip_key != "path":
-            wanted = {p.lower().split("?", 1)[0] for p in f.paths}
-            path_ids = {i for i, low in enumerate(self.uris.lowers)
-                        if low.split("?", 1)[0] in wanted}
+        path_ids, not_path_ids = None, set()
+        if skip_key != "path":
+            if f.paths:
+                path_ids = self.uris.ids_matching_path(f.paths)
+            if f.not_paths:
+                not_path_ids = self.uris.ids_matching_path(f.not_paths)
 
         text_uri, text_host = [], []
         for t in f.text:
@@ -420,6 +430,7 @@ class EventIndex:
             if not_method_ids and m in not_method_ids: continue
             u = uid[i]
             if path_ids is not None and u not in path_ids: continue
+            if not_path_ids and u in not_path_ids: continue
             s = st[i]
             if want_status and not (s in codes or (classes and _status_class(s) in classes)):
                 continue

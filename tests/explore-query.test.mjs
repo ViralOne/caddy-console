@@ -6,7 +6,9 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 const SRC = path.join(import.meta.dirname, '..', 'src', 'static', 'js', 'app', 'explore-query.js');
-const { tokenize, term, hasTerm, toggleTerm, removeKey, activeKeys } = await import(SRC);
+const {
+  tokenize, term, hasTerm, termState, setTermState, cycleTerm, removeKey, activeKeys,
+} = await import(SRC);
 
 let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
@@ -35,28 +37,82 @@ check('finds a present term', () => assert.ok(hasTerm('host:a status:5xx', 'host
 check('is case-insensitive', () => assert.ok(hasTerm('HOST:A', 'host', 'a')));
 check('does not match a different value', () => assert.ok(!hasTerm('host:a', 'host', 'b')));
 check('does not match a prefix', () => assert.ok(!hasTerm('host:abc', 'host', 'ab')));
-
-console.log('\n--- toggleTerm ---');
-check('adds when absent', () => assert.equal(toggleTerm('', 'host', 'a'), 'host:a'));
-check('appends to an existing query', () => {
-  assert.equal(toggleTerm('status:5xx', 'host', 'a'), 'status:5xx host:a');
+check('an excluded value is not "included"', () => assert.ok(!hasTerm('-host:a', 'host', 'a')));
+check('matches a value that had to be quoted', () => {
+  // The token loses its quotes when tokenised, so matching on the rendered
+  // string would never fire for a value containing a space.
+  assert.ok(hasTerm('path:"/a b"', 'path', '/a b'));
 });
-check('removes when present', () => assert.equal(toggleTerm('host:a status:5xx', 'host', 'a'), 'status:5xx'));
-check('round-trips', () => {
-  const once = toggleTerm('status:5xx', 'host', 'a');
-  assert.equal(toggleTerm(once, 'host', 'a'), 'status:5xx');
+
+console.log('\n--- termState ---');
+check('off when absent', () => assert.equal(termState('status:5xx', 'host', 'a'), 'off'));
+check('include for a plain term', () => assert.equal(termState('host:a', 'host', 'a'), 'include'));
+check('exclude for a negated term', () => assert.equal(termState('-host:a', 'host', 'a'), 'exclude'));
+check('is case-insensitive in both polarities', () => {
+  assert.equal(termState('HOST:A', 'host', 'a'), 'include');
+  assert.equal(termState('-HOST:A', 'host', 'a'), 'exclude');
+});
+check('a different value is still off', () => assert.equal(termState('-host:a', 'host', 'b'), 'off'));
+
+console.log('\n--- setTermState ---');
+check('adds when absent', () => assert.equal(setTermState('', 'host', 'a', 'include'), 'host:a'));
+check('appends to an existing query', () => {
+  assert.equal(setTermState('status:5xx', 'host', 'a', 'include'), 'status:5xx host:a');
+});
+check('writes the negated form', () => assert.equal(setTermState('', 'host', 'a', 'exclude'), '-host:a'));
+check('off removes the term in either polarity', () => {
+  assert.equal(setTermState('host:a status:5xx', 'host', 'a', 'off'), 'status:5xx');
+  assert.equal(setTermState('-host:a status:5xx', 'host', 'a', 'off'), 'status:5xx');
+});
+check('flips polarity in place, so the query does not reorder', () => {
+  assert.equal(setTermState('host:a status:5xx', 'host', 'a', 'exclude'), '-host:a status:5xx');
+  assert.equal(setTermState('-host:a status:5xx', 'host', 'a', 'include'), 'host:a status:5xx');
+});
+check('is idempotent — setting the state it already has changes nothing', () => {
+  assert.equal(setTermState('-host:a', 'host', 'a', 'exclude'), '-host:a');
+  assert.equal(setTermState('host:a', 'host', 'a', 'include'), 'host:a');
+});
+check('collapses a duplicated value to one term', () => {
+  assert.equal(setTermState('host:a host:a', 'host', 'a', 'exclude'), '-host:a');
+});
+check('leaves the other values for the same key alone', () => {
+  assert.equal(setTermState('host:a host:b', 'host', 'a', 'exclude'), '-host:a host:b');
 });
 check('keeps free text untouched', () => {
-  assert.equal(toggleTerm('timeout', 'host', 'a'), 'timeout host:a');
+  assert.equal(setTermState('timeout', 'host', 'a', 'exclude'), 'timeout -host:a');
 });
 check('preserves quoting when reassembling', () => {
   // The value with a space must not silently split into two terms.
-  const q = toggleTerm('path:"/a b"', 'host', 'x');
+  const q = setTermState('path:"/a b"', 'host', 'x', 'include');
   assert.equal(q, 'path:"/a b" host:x');
   assert.deepEqual(tokenize(q), ['path:/a b', 'host:x']);
 });
-check('toggling one of two values for a key leaves the other', () => {
-  assert.equal(toggleTerm('host:a host:b', 'host', 'a'), 'host:b');
+check('quotes a negated value that needs it', () => {
+  assert.equal(setTermState('', 'path', '/a b', 'exclude'), '-path:"/a b"');
+});
+
+console.log('\n--- cycleTerm ---');
+check('unset -> include -> exclude -> unset', () => {
+  const a = cycleTerm('', 'host', 'a');
+  assert.equal(a, 'host:a');
+  const b = cycleTerm(a, 'host', 'a');
+  assert.equal(b, '-host:a');
+  assert.equal(cycleTerm(b, 'host', 'a'), '');
+});
+check('cycles one value without disturbing the rest of the query', () => {
+  let q = 'status:5xx timeout';
+  q = cycleTerm(q, 'host', 'a');
+  assert.equal(q, 'status:5xx timeout host:a');
+  q = cycleTerm(q, 'host', 'a');
+  assert.equal(q, 'status:5xx timeout -host:a');
+  q = cycleTerm(q, 'host', 'a');
+  assert.equal(q, 'status:5xx timeout');
+});
+check('three clicks return to the starting query', () => {
+  const start = 'method:GET';
+  let q = start;
+  for (let i = 0; i < 3; i++) q = cycleTerm(q, 'path', '/api/v1');
+  assert.equal(q, start);
 });
 
 console.log('\n--- removeKey ---');
@@ -79,6 +135,7 @@ check('reports constrained keys', () => {
 });
 check('counts negated terms as constraining', () => {
   assert.deepEqual([...activeKeys('-status:2xx')], ['status']);
+  assert.deepEqual([...activeKeys('-path:/api')], ['path']);
 });
 check('ignores free text and unknown keys', () => {
   assert.deepEqual([...activeKeys('timeout wat:x')], []);
