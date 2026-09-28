@@ -51,7 +51,7 @@ body {
 
 /* Main layout */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.tab-content { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+.tab-content { flex: 1; min-height: 0; display: none; flex-direction: column; overflow: hidden; }
 .tab-content.active { display: flex; }
 
 /* Editor */
@@ -169,16 +169,19 @@ body {
 .cm-find-row { background: var(--status-warn-bg) !important; }
 
 /* --- Explore tab --- */
-.explore { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+/* Explore mounts into #explore-root, which is a plain div in the template and so
+   needs the same flex treatment as the view itself, or the chain breaks here. */
+#explore-root { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.explore { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .explore-bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); background: var(--surface-raised); border-bottom: 1px solid var(--border); }
 .explore-input { flex: 1; min-width: 200px; padding: var(--space-2) var(--space-3); background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); color: var(--ink); font-family: var(--font-mono); font-size: var(--text-sm); outline: none; }
 .explore-input:focus { border-color: var(--accent); }
 .explore-input::placeholder { color: var(--ink-muted); }
 .explore-error { margin: var(--space-2) var(--space-4) 0; }
-.explore-body { flex: 1; display: flex; overflow: hidden; }
+.explore-body { flex: 1; min-height: 0; display: flex; overflow: hidden; }
 
 /* Facet sidebar */
-.explore-facets { width: 240px; flex-shrink: 0; overflow-y: auto; padding: var(--space-3); border-right: 1px solid var(--border); background: var(--bg); }
+.explore-facets { width: 240px; flex-shrink: 0; min-height: 0; overflow-y: auto; padding: var(--space-3); border-right: 1px solid var(--border); background: var(--bg); }
 .facet-group { margin-bottom: var(--space-4); }
 .facet-title { font-size: var(--text-sm); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-muted); margin-bottom: var(--space-2); }
 .facet-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: 3px var(--space-1); background: none; border: none; border-radius: var(--radius-sm); color: var(--ink-secondary); font-size: var(--text-sm); font-family: var(--font); cursor: pointer; text-align: left; }
@@ -194,7 +197,7 @@ body {
 .facet-row-static:hover { background: none; }
 
 /* Main column */
-.explore-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.explore-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
 /* Histogram */
 .hist { padding: var(--space-3) var(--space-4) 0; transition: opacity 0.18s ease; }
@@ -249,7 +252,7 @@ body {
 .tone-accent { color: var(--accent); }
 
 /* Event stream */
-.stream { flex: 1; overflow-y: auto; padding: 0 var(--space-4) var(--space-4); }
+.stream { flex: 1; min-height: 0; overflow-y: auto; padding: 0 var(--space-4) var(--space-4); }
 .stream-row { display: grid; grid-template-columns: 72px 38px minmax(120px, 1.2fr) 46px minmax(140px, 3fr) 62px; gap: var(--space-2); align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); font-family: var(--font-mono); font-size: var(--text-sm); cursor: pointer; }
 .stream-row:hover { background: var(--surface); }
 .stream-row.open { background: var(--surface); }
@@ -293,7 +296,7 @@ body {
 .stream-raw { margin-top: var(--space-1); padding: var(--space-2); background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: var(--text-sm); color: var(--ink-secondary); white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }
 
 /* --- Dashboard --- */
-.dash-scroll { flex: 1; overflow-y: auto; padding: var(--space-4); }
+.dash-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-4); }
 .dash { display: flex; flex-direction: column; gap: var(--space-4); }
 
 .dash-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-2); }
