@@ -2,6 +2,7 @@
 import {
   editorView, fetchJson, initEditor, setContent, setDot, setOriginal, setStatus, setVersion,
 } from './core.js';
+import { mountExplore } from './explore.js';
 import { startLogs, stopLogs } from './logs.js';
 import { loadMetrics } from './metrics.js';
 
@@ -34,5 +35,6 @@ export function switchTab(name, tabEl) {
   if (tabEl) tabEl.classList.add('active');
   else document.querySelector(`.tab[data-tab="${name}"]`)?.classList.add('active');
   if (name === 'metrics') loadMetrics();
+  if (name === 'explore') mountExplore();
   if (name === 'logs') startLogs();
 }

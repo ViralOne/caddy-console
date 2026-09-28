@@ -29,6 +29,7 @@
 <div class="tabs">
   <div class="tab active" data-tab="editor">Editor</div>
   <div class="tab" data-tab="metrics">Metrics</div>
+  <div class="tab" data-tab="explore">Explore</div>
   <div class="tab" data-tab="logs">Logs</div>
 </div>
 
@@ -53,6 +54,10 @@
     <div style="padding:16px;overflow-y:auto;flex:1" id="metrics-body">
       <div id="metrics-loading">Loading metrics...</div>
     </div>
+  </div>
+
+  <div class="tab-content" id="tab-explore">
+    <div id="explore-root"></div>
   </div>
 
   <div class="tab-content" id="tab-logs">

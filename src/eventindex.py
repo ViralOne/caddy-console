@@ -309,9 +309,11 @@ class EventIndex:
                     "from": from_ts, "to": to_ts,
                     "earliest_ts": self.ts[0] if n else None,
                     "latest_ts": self.ts[n - 1] if n else None,
-                    # The window is a byte budget, so a range can reach further
-                    # back than the log we actually read.
-                    "truncated": bool(n and from_ts is not None and from_ts < self.ts[0]),
+                    # True only when the byte window is what cut history short:
+                    # anchoring at 0 means the whole file was read, so an earlier
+                    # `from` just predates the log rather than exceeding it.
+                    "truncated": bool(n and self._scan_start > 0
+                                      and from_ts is not None and from_ts < self.ts[0]),
                 },
                 "window": {"bytes": int(window_bytes), "covered_bytes": max(0, self._pos - self._scan_start),
                            "file_size": size},

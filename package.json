@@ -4,7 +4,9 @@
   "description": "Web UI to edit your Caddyfile. Google OAuth, backup/restore with diff, validate before save.",
   "main": "index.js",
   "scripts": {
-    "build": "esbuild src/static/js/editor-src.js --bundle --format=iife --outfile=src/static/js/editor.bundle.js --minify"
+    "build": "npm run build:editor && npm run build:vendor",
+    "build:editor": "esbuild src/static/js/editor-src.js --bundle --format=iife --outfile=src/static/js/editor.bundle.js --minify",
+    "build:vendor": "esbuild src/static/js/explore-vendor-src.js --bundle --format=esm --outfile=src/static/js/explore-vendor.js --minify"
   },
   "repository": {
     "type": "git",
@@ -26,6 +28,8 @@
     "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.43.11",
     "codemirror": "^6.0.2",
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "htm": "^3.1.1",
+    "preact": "^10.29.8"
   }
 }

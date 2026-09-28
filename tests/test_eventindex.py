@@ -187,11 +187,21 @@ class IndexTest(unittest.TestCase):
         r = self.q(from_ts=T0 + 5 * 60, to_ts=T0 + 10 * 60)
         self.assertEqual(r["total"], 5)
 
-    def test_range_wider_than_the_data_is_flagged(self):
+    def test_range_predating_a_fully_read_log_is_not_truncation(self):
+        # The whole file was read, so there is no older history being withheld;
+        # saying otherwise would tell the user to read more of the log for
+        # events that do not exist.
         self.write(entry(ts=T0 + 1000))
         r = self.q(from_ts=T0, to_ts=T0 + 2000)
-        self.assertTrue(r["range"]["truncated"])
+        self.assertFalse(r["range"]["truncated"])
         self.assertAlmostEqual(r["range"]["earliest_ts"], T0 + 1000, places=3)
+
+    def test_truncation_is_flagged_when_the_byte_window_cut_history(self):
+        line = len(json.dumps(entry()) + "\n")
+        self.write(*[entry(ts=T0 + i) for i in range(100)])
+        r = self.q(window_bytes=line * 10, from_ts=T0, to_ts=T0 + 1000)
+        self.assertTrue(r["range"]["truncated"])
+        self.assertGreater(r["range"]["earliest_ts"], T0)
 
     # --- facets ---
 
