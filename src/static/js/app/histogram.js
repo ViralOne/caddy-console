@@ -165,21 +165,6 @@ export function Histogram({ histogram, total, onRange, loading, from, to }) {
             width=${Math.max(0.3, brush.w)} height=${HEIGHT} />`}
         </svg>
 
-        ${hovered && !drag && html`
-          <div class="hist-tip" style=${{ left: Math.min(88, Math.max(2, xOf(hovered.t))) + '%' }}>
-            <div class="hist-tip-time">${formatTick(hovered.t, width)} · ${formatSpan(width)} bucket</div>
-            ${CLASSES.filter(c => hovered[c.key]).map(c => html`
-              <div class="hist-tip-row">
-                <span class="hist-swatch" style=${{ background: c.token }}></span>
-                <span class="hist-tip-label">${c.label}</span>
-                <span class="hist-tip-count">${hovered[c.key].toLocaleString()}</span>
-              </div>`)}
-            <div class="hist-tip-row hist-tip-total">
-              <span class="hist-tip-label">total</span>
-              <span class="hist-tip-count">${hoveredTotal.toLocaleString()}</span>
-            </div>
-          </div>`}
-
         ${drag && html`
           <div class="hist-brush-label"
                style=${{ left: Math.min(80, Math.max(2, xOf(Math.min(drag.from, drag.to)))) + '%' }}>
@@ -190,6 +175,19 @@ export function Histogram({ histogram, total, onRange, loading, from, to }) {
       <div class="hist-axis">
         ${ticks.map(t => html`<span class="hist-tick" style=${{ left: t.pct + '%' }}>${t.label}</span>`)}
       </div>
-      <div class="hist-help">Drag across the chart to zoom into a range.</div>
+
+      <div class="hist-foot">
+        ${hovered && !drag
+          ? html`<div class="hist-tip" style=${{ left: Math.min(92, Math.max(8, xOf(hovered.t))) + '%' }}>
+                   <span class="hist-tip-time">${formatTick(hovered.t, width)}</span>
+                   <span class="hist-tip-sep">${formatSpan(width)}</span>
+                   ${CLASSES.filter(c => hovered[c.key]).map(c => html`
+                     <span class="hist-tip-cls">
+                       <span class="hist-swatch" style=${{ background: c.token }}></span>${c.label} ${hovered[c.key].toLocaleString()}
+                     </span>`)}
+                   <span class="hist-tip-total">${hoveredTotal.toLocaleString()} total</span>
+                 </div>`
+          : html`<span class="hist-help">Drag across the chart to zoom into a range.</span>`}
+      </div>
     </div>`;
 }
