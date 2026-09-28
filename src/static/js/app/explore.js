@@ -8,7 +8,7 @@
 // query rather than keeping parallel state, so the search box always explains
 // what is on screen.
 import { h, htm, render, useCallback, useEffect, useRef, useState } from '../explore-vendor.js';
-import { cycleTerm, setTermState, termState } from './explore-query.js';
+import { cycleTerm, placeholderFor, setTermState, termState } from './explore-query.js';
 import { CLASSES, Histogram } from './histogram.js';
 import { Icon } from './icons.js';
 import { JsonView } from './jsonview.js';
@@ -300,12 +300,17 @@ function App() {
   const rangeLabel = custom
     ? `${clockTime(custom.from)} – ${clockTime(custom.to)}`
     : (RANGES.find(r => r.key === range) || {}).label;
+  // The example in the search box uses the busiest host in the current window,
+  // so it is a query that would actually return something here. A baked-in
+  // hostname is both useless to the reader and, in a public repo, a small leak
+  // of whoever's machine the example was written on.
+  const hint = placeholderFor(data);
 
   return html`
     <div class="explore">
       <div class="explore-bar">
         <input class="explore-input" type="text" spellcheck="false"
-               placeholder="host:app.example.com status:5xx -path:/health  —  or any text"
+               placeholder=${hint}
                value=${draft} onInput=${e => setDraft(e.target.value)} />
         ${draft && html`<button class="btn btn-secondary btn-sm" onClick=${() => setDraft('')}>Clear</button>`}
         ${custom

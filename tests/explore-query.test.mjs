@@ -8,6 +8,7 @@ import path from 'node:path';
 const SRC = path.join(import.meta.dirname, '..', 'src', 'static', 'js', 'app', 'explore-query.js');
 const {
   tokenize, term, hasTerm, termState, setTermState, cycleTerm, removeKey, activeKeys,
+  placeholderFor,
 } = await import(SRC);
 
 let passed = 0;
@@ -139,6 +140,26 @@ check('counts negated terms as constraining', () => {
 });
 check('ignores free text and unknown keys', () => {
   assert.deepEqual([...activeKeys('timeout wat:x')], []);
+});
+
+console.log('\n--- placeholderFor ---');
+check('uses the busiest host in the window', () => {
+  const data = { facets: { host: [{ value: 'a.example.com', count: 9 }, { value: 'b.example.com', count: 2 }] } };
+  assert.equal(placeholderFor(data), 'host:a.example.com -status:2xx  \u2014  or any text');
+});
+check('never hardcodes a hostname when there is no data', () => {
+  for (const empty of [null, undefined, {}, { facets: {} }, { facets: { host: [] } }]) {
+    assert.match(placeholderFor(empty), /^host:\u2026 /);
+  }
+});
+check('skips the unnameable host so the example is filterable', () => {
+  // The empty host is a real facet value but not something you can type.
+  const data = { facets: { host: [{ value: '', count: 5 }, { value: 'real.example.com', count: 1 }] } };
+  assert.match(placeholderFor(data), /^host:real\.example\.com /);
+});
+check('quotes a host that would otherwise split', () => {
+  const data = { facets: { host: [{ value: 'weird host', count: 1 }] } };
+  assert.ok(placeholderFor(data).startsWith('host:"weird host"'));
 });
 
 console.log(`\n${passed} checks passed\n`);

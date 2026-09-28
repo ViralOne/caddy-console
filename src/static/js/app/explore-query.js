@@ -115,6 +115,23 @@ function requote(token) {
   return term(p.key, p.value, p.negated);
 }
 
+/** The example query shown in an empty search box.
+ *
+ * Built from the window on screen rather than a fixed string, so the example is
+ * a query that would actually return rows here. It also keeps a real hostname
+ * out of the source: in a public repo, a baked-in example host says whose
+ * machine the line was written on.
+ *
+ * Falls back to a placeholder host when there is nothing indexed yet, which is
+ * exactly when the box is most likely to be empty.
+ */
+export function placeholderFor(data) {
+  const hosts = (data && data.facets && data.facets.host) || [];
+  const busiest = hosts.find(v => v && v.value);
+  const host = busiest ? term('host', busiest.value) : 'host:…';
+  return `${host} -status:2xx  —  or any text`;
+}
+
 /** Which keys the query constrains — lets the UI show what is narrowing it. */
 export function activeKeys(query) {
   const keys = new Set();
