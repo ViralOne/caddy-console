@@ -1,289 +1,79 @@
 # Caddy Editor
 
-Web UI to manage your Caddyfile — edit, validate, format, save & reload with zero downtime. Includes a site health dashboard, a faceted log explorer, upstream health monitoring, backup/restore with diff, and an audit log.
+A web UI for a self-hosted Caddy: edit the Caddyfile, save and reload with no
+downtime, and see what your sites are actually doing — read from Caddy's own access
+log, with no database and nothing to keep in sync.
 
-## Features
+Three views, each with its own URL.
 
-Three views, each with its own URL:
+## Dashboard — is anything broken?
 
-- **Dashboard** (`/`) — one row per site: upstream health, requests, 5xx rate, p95 latency, bandwidth and an hourly sparkline. Every figure links into the explorer with that filter applied. Plus config status and recent editor changes.
-- **Editor** (`/editor`) — CodeMirror 6 with Caddyfile syntax highlighting, find/replace, Cmd+S to save, validate & format
-- **Explore** (`/explore`) — faceted search over the access log: a query bar (`host:… status:5xx path:/api`, free text, `-` to exclude), facet sidebar with live counts, a stacked status histogram you can drag to zoom, and an event stream. Per-field menus filter, exclude or copy. The whole state lives in the URL, so a view is shareable — including absolute timestamps. Ranges run from 30 minutes to 30 days; older ranges are served by reading Caddy's rolled archives, so **how far back you can look is whatever `roll_keep` / `roll_keep_for` in your Caddyfile has kept.**
+One row per site: upstream health, requests, 5xx rate, p95 latency, bandwidth and
+an hourly sparkline. **Every figure is a link** into the explorer with that filter
+already applied, so "torrent is at 21% errors" is one click from the requests that
+caused it.
 
-Everything else:
+![Dashboard](docs/screenshots/dashboard.png)
 
-- **Save & Reload** — writes Caddyfile and reloads Caddy via admin API (zero downtime)
-- **Backups** — automatic pre-save backups with preview, inline diff, and one-click restore
-- **Audit Log** — who saved what and when
-- **Snippets** — common Caddyfile patterns (reverse proxy, headers, rate limiting, etc.)
+## Explore — why is it broken?
 
-## Architecture
+Faceted search over the access log. Type `host:… status:5xx path:/api`, or plain
+text, or `-` to exclude. Sidebar counts update with your filters, and a count always
+equals what clicking it returns. Drag the histogram to zoom into a spike.
 
-```
-internet → Cloudflare Access (auth) → cloudflared tunnel → caddy-editor:9090
-internet → Cloudflare proxy (SSL)  → caddy:80/443       → your services
-```
+![Explore](docs/screenshots/explore.png)
 
-Three containers:
-- **caddy** — the reverse proxy serving your sites (ports 80/443)
-- **caddy-editor** — web UI to edit the Caddyfile (no port exposed, accessed via tunnel)
-- **cloudflared** — Cloudflare Tunnel connecting the editor to the internet securely
+The whole view lives in the URL — filters, range, absolute timestamps — so a link
+reproduces exactly what you were looking at. Ranges run from 30 minutes to 30 days;
+older ranges are served by reading Caddy's rolled `.gz` archives, so how far back
+you can look is simply how much `roll_keep` has kept.
 
-All three share the same `./Caddyfile` via volume mounts. When you save in the editor, it reloads Caddy via its admin API (`POST http://caddy:2019/load`).
+Expand an event for its fields, each with a menu to filter, exclude or copy — plus
+the original log line, formatted.
 
-`docker-compose.prod.yaml` puts the editor and the tunnel on their own `editor` network. Caddy is on both `editor` and `default`, so containers you proxy to can sit on `default` and reach Caddy without being able to reach the editor or Caddy's admin API.
+![Event detail](docs/screenshots/event-detail.png)
 
-## Auth Modes
+## Editor — fix it
 
-Set `AUTH_MODE` in `.env`:
+CodeMirror 6 with Caddyfile syntax highlighting, find and replace, and `Cmd+S` to
+save. **Validate** formats and checks the config without saving; **Save & Reload**
+writes the file and reloads Caddy through its admin API. Every save takes a backup
+first, with an inline diff and one-click restore.
 
-| Mode | How it works | Session duration |
-|------|-------------|-----------------|
-| `google` | Google OAuth login page (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) | `SESSION_TIMEOUT_HOURS` (default 8h) |
-| `cloudflare` | Cloudflare Access handles auth before traffic reaches the app (email OTP) | Configured in CF Zero Trust dashboard (default 24h) |
+![Editor](docs/screenshots/editor.png)
 
-Both modes support `ALLOWED_DOMAIN` and `ALLOWED_EMAILS` as additional filters.
-
-**Cloudflare mode: set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`.** With both set, the app verifies the signed `Cf-Access-Jwt-Assertion` token (signature, issuer, audience, expiry) on every request and takes the identity from it. Without them it falls back to trusting the `Cf-Access-Authenticated-User-Email` header and logs a warning at startup. Header trust is only safe if literally nothing except the tunnel can reach port 9090; any other container on the same Docker network could set that header and get full access to your reverse proxy config.
-
-## Production Deploy
+## Quick start
 
 ```bash
-mkdir caddy && cd caddy
-
-# Create your Caddyfile
-cat > Caddyfile << 'EOF'
-{
-    admin 0.0.0.0:2019
-    metrics
-}
-
-app.yourdomain.com {
-    reverse_proxy 10.0.0.1:8080
-}
-EOF
-
-# Create .env from example
-cp .env.example .env
-# Edit: set AUTH_MODE, CLOUDFLARE_TUNNEL_TOKEN, ALLOWED_EMAILS, SECRET_KEY
-
-# Start
+git clone https://github.com/ViralOne/caddy-web-editor.git
+cd caddy-web-editor
+cp .env.example .env          # set AUTH_MODE, SECRET_KEY, ALLOWED_EMAILS
 docker compose -f docker-compose.prod.yaml up -d
 ```
 
-**Important:**
-- The global block must include `admin 0.0.0.0:2019` so the editor can reload Caddy over the Docker network
+Two things to do next, both in [docs/setup.md](docs/setup.md):
 
-## Access Log Setup
+1. **Pick an auth mode** — Google OAuth, or Cloudflare Access in front of it.
+2. **Turn on access logging** with `format filter`, so the dashboard and explorer
+   have data — and so your logs do not contain plaintext session tokens.
 
-The dashboard and the explorer both read Caddy's access log, so both need a `log`
-directive **inside each site block**. Define a snippet once and import it
-everywhere:
+## Docs
 
-```caddyfile
-(access_log) {
-    log {
-        output file /var/log/caddy/access.log {
-            roll_size 10mb
-            roll_keep 3
-            roll_keep_for 168h
-        }
-        format filter {
-            wrap json
-            request>headers delete
-            resp_headers delete
-        }
-    }
-}
+| | |
+|---|---|
+| [Setup](docs/setup.md) | Deploying it, auth modes, access logging, retention, environment variables, API reference |
+| [Development](docs/development.md) | Local no-auth stack, seeding log data, tests, front-end build |
+| [Architecture](docs/architecture.md) | Why there is no database, how the log is indexed, why Preact for two views |
 
-app.yourdomain.com {
-    import access_log
-    reverse_proxy 10.0.0.1:8080
-}
-```
+## Also in here
 
-The `caddy-logs` volume is shared between the Caddy and editor containers (already
-configured in both compose files). To change the path, set `CADDY_LOG_FILE` in
-`.env` (default: `/var/log/caddy/access.log`).
+- **Backups** — taken before every save, with preview, inline diff and restore
+- **Audit log** — who changed what, surfaced on the dashboard
+- **Snippets** — common Caddyfile patterns to insert
+- **Upstream health** — from Caddy's active health checks
 
-**Strip the headers.** `format filter` with `wrap json` keeps every field these
-views use (ts, host, method, uri, status, duration, size, client_ip) and drops the
-header maps. Do not skip it:
+## Requirements
 
-- Request headers carry session tokens and API keys in plaintext. Caddy redacts
-  `Cookie` automatically but nothing else, so a bare `format json` writes live
-  credentials to disk and then renders them in your browser.
-- Headers are roughly 90% of each entry. Dropping them takes an entry from ~4 KB
-  to ~300 bytes, so the same `roll_size` covers more than ten times the history.
-
-To keep one specific header, delete the others individually rather than the whole
-map — `request>headers>Authorization delete`. The filter encoder also supports
-`ip_mask` if you would rather not store full client IPs.
-
-Two things to know:
-
-- **Every entry needs `ts`.** The explorer indexes events by timestamp, so entries
-  without one are counted as skipped rather than shown. Caddy includes `ts` by
-  default; only a custom format could remove it.
-- **A global `log default` block is not enough.** It captures Caddy's runtime log
-  (startup, TLS, shutdown), not HTTP access logs. Per-site `log` directives are
-  required.
-
-Changes to an existing `output file` block need a full restart of the Caddy
-container — a reload will not pick them up.
-
-### Prometheus metrics (optional)
-
-The dashboard's upstream health comes from Caddy's admin API. To also expose
-Prometheus metrics, add `metrics` to the global block:
-
-```caddyfile
-{
-    admin 0.0.0.0:2019
-    metrics
-}
-```
-
-## Upstream Health Checks
-
-To get health status for a backend, add `health_uri` inside the `reverse_proxy` block:
-
-```caddyfile
-app.yourdomain.com {
-    reverse_proxy 10.0.0.1:8080 {
-        health_uri /
-        health_interval 30s
-    }
-}
-```
-
-Without this, upstreams show as `n/a` in the health column (passive fail counts still work).
-
-## Cloudflare Setup
-
-1. Add your domain to Cloudflare (nameservers must point to CF)
-2. SSL/TLS mode → **Full** (Caddy uses local certs, CF handles public SSL)
-3. Zero Trust → Tunnels → create tunnel, copy token to `CLOUDFLARE_TUNNEL_TOKEN`
-4. Tunnel public hostname: `ceditor.yourdomain.com` → `http://caddy-editor:9090`
-5. Zero Trust → Access → Applications → add policy (email OTP for your allowed emails)
-6. Open the application, click on Application settings (tab) -> AUD tag into `CF_ACCESS_TEAM_DOMAIN`
-
-## Local Dev
-
-```bash
-cp .env.example .env   # fill in GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, ALLOWED_DOMAIN
-docker compose up -d --build
-# open http://localhost:9090
-```
-
-### No-OAuth dev stack
-
-To click through the UI without setting up Google OAuth:
-
-```bash
-./dev/run.sh up      # http://localhost:8888, signed in as dev@local
-./dev/run.sh down    # stop and remove volumes
-./dev/run.sh reset   # restore dev/run/Caddyfile from the seed
-./dev/run.sh big 600 # print a 600-site Caddyfile to stdout
-```
-
-`docker-compose.dev.yaml` starts three containers: a front Caddy that injects the
-`Cf-Access-Authenticated-User-Email` header the app's `AUTH_MODE=cloudflare`
-expects, the editor, and a second Caddy whose config the editor edits and
-reloads. The editor works on `dev/run/Caddyfile`, so your real Caddyfile is never
-touched.
-
-There is no authentication in this stack — every published port is bound to
-`127.0.0.1` for that reason. Never use it off localhost.
-
-### Tests
-
-```bash
-node tests/diff.test.mjs                        # diff correctness + performance
-python3 -m unittest discover -s tests -t .      # caddy wrapper, cache, session key
-```
-
-## How Save & Reload Works
-
-1. Formats config with `caddy fmt`
-2. Validates with `caddy validate`
-3. Under a file lock (saves from different workers can't interleave): re-checks that the file on disk is still the version you loaded, backs it up to `/backups/`, writes the new content, prunes backups beyond `BACKUP_KEEP`
-4. Sends `POST http://caddy:2019/load` to reload Caddy live (zero downtime)
-5. If Caddy rejects the config (runtime-only problems `caddy validate` can't see, like a port already in use), the on-disk file is rolled back to the backup so disk and running config never diverge
-
-The editor validates with the Caddy binary baked into its image; keep that version in step with the `caddy` service in your compose file (both are `2.11.4` here).
-
-## JS Editor (CodeMirror)
-
-The editor uses CodeMirror 6, bundled locally. To rebuild after changing `src/static/js/editor-src.js`:
-
-```bash
-npm install
-npm run build
-```
-
-The bundle (`editor.bundle.js`) is committed — no build step needed on the server.
-
-## Environment Variables
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `AUTH_MODE` | yes | `google` | Auth mode: `google` or `cloudflare` |
-| `SECRET_KEY` | yes | — | Flask session secret |
-| `GOOGLE_CLIENT_ID` | google mode | — | OAuth client ID |
-| `GOOGLE_CLIENT_SECRET` | google mode | — | OAuth client secret |
-| `CLOUDFLARE_TUNNEL_TOKEN` | cloudflare mode | — | Tunnel token |
-| `CF_ACCESS_TEAM_DOMAIN` | recommended (cloudflare mode) | — | `<team>.cloudflareaccess.com`; enables JWT verification together with `CF_ACCESS_AUD` |
-| `CF_ACCESS_AUD` | recommended (cloudflare mode) | — | Access application AUD tag |
-| `ALLOWED_DOMAIN` | no | — | Restrict to email domain |
-| `ALLOWED_EMAILS` | no | — | Comma-separated allowed emails |
-| `SESSION_TIMEOUT_HOURS` | no | `8` | Session lifetime (google mode) |
-| `SERVER_URL` | no | `http://localhost:9090` | OAuth callback base URL |
-| `CADDY_API_URL` | no | `http://caddy:2019` | Caddy admin API address |
-| `CADDYFILE_PATH` | no | `/etc/caddy/Caddyfile` | Path to Caddyfile |
-| `BACKUP_DIR` | no | `/backups` | Backup storage directory |
-| `BACKUP_KEEP` | no | `50` | Pre-save backups to keep; oldest are pruned after each save (`0` = keep all) |
-| `AUDIT_LOG_MAX_BYTES` | no | `5242880` | Rotate the audit log past this size; one rotated file is kept |
-| `CADDY_LOG_FILE` | no | `/var/log/caddy/access.log` | Path to Caddy access log (must match Caddyfile) |
-| `CADDY_EXPLORE_MAX_EVENTS` | no | `200000` | Events held in memory per range; ~38 B each |
-| `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
-| `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
-
-## API Endpoints
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /health` | Health check (no auth) |
-| `GET /api/caddyfile` | Get current Caddyfile content |
-| `POST /api/validate` | Validate + format config |
-| `POST /api/save` | Save and reload Caddy |
-| `GET /api/backups` | List backups |
-| `GET /api/backups/:name` | Get backup content |
-| `DELETE /api/backups/:name` | Delete a backup |
-| `GET /api/snippets` | Get snippet templates |
-| `GET /api/metrics` | Editor activity metrics |
-| `GET /api/traffic` | Caddy Prometheus metrics (parsed) |
-| `GET /api/upstreams` | Upstream backend status |
-| `GET /api/status` | Caddy version and config validity |
-| `GET /api/explore` | Faceted log query: entries, facet counts, histogram, stats |
-| `GET /api/explore/raw` | One original log line, by byte offset |
-| `GET /api/sites` | Per-site traffic summary for the dashboard |
-| `POST /api/logs/ping` | Generate a test log entry by hitting Caddy |
-| `GET /api/audit` | Audit log entries |
-
-## Commands
-
-```bash
-# Start
-docker compose -f docker-compose.prod.yaml up -d
-
-# Logs
-docker compose -f docker-compose.prod.yaml logs -f
-
-# Update (pull new image from GHCR)
-docker compose -f docker-compose.prod.yaml pull caddy-editor
-docker compose -f docker-compose.prod.yaml up -d caddy-editor
-
-# Restart caddy (only needed for admin address changes or image upgrades)
-docker compose -f docker-compose.prod.yaml restart caddy
-```
+Docker, and a Caddy instance with its admin API reachable (`admin 0.0.0.0:2019` in
+the global block). Nothing else: app code ships as plain ES modules, so there is no
+build step and a clone needs no npm.

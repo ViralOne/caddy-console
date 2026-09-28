@@ -15,5 +15,6 @@ dev/run/
 .playwright-mcp/
 .playwright-mcp/
 
-# Local screenshots from browser testing
+# Local screenshots from browser testing (the documented ones are kept)
 *.png
+!docs/screenshots/*.png
