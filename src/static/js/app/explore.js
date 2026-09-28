@@ -10,6 +10,7 @@
 import { h, htm, render, useCallback, useEffect, useRef, useState } from '../explore-vendor.js';
 import { hasTerm, toggleTerm } from './explore-query.js';
 import { CLASSES, Histogram } from './histogram.js';
+import { JsonView } from './jsonview.js';
 import { exploreStateFromSearch, exploreStateToSearch, replaceSearch } from './router.js';
 
 const html = htm.bind(h);
@@ -241,9 +242,16 @@ function App() {
     try {
       const res = await fetch(`/api/explore/raw?file=${fileId}&offset=${offset}`);
       const body = await res.json();
-      setRaw(prev => ({ ...prev, [offset]: body.line || body.error || '(unavailable)' }));
+      if (body.line) {
+        setRaw(prev => ({ ...prev, [offset]: body.line }));
+      } else {
+        // Failures are shown but not cached, so clicking again actually retries
+        // instead of re-displaying a stale error — it can succeed on a retry
+        // after the index reloads.
+        flash(body.error || 'Could not read that line');
+      }
     } catch (e) {
-      setRaw(prev => ({ ...prev, [offset]: e.message }));
+      flash(e.message);
     }
   };
 
@@ -438,7 +446,7 @@ function App() {
                                   onClick=${() => showRaw(e.file, e.offset)}>
                             ${raw[e.offset] !== undefined ? 'hide' : 'show original line'}
                           </button>
-                          ${raw[e.offset] !== undefined && html`<pre class="stream-raw">${raw[e.offset]}</pre>`}
+                          ${raw[e.offset] !== undefined && html`<${JsonView} text=${raw[e.offset]} />`}
                         </span>
                       </div>
                     </div>`}
