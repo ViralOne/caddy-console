@@ -1,7 +1,12 @@
 # Metrics page redesign: time-bucketed log stats, ES modules, design tokens
 
-Status: proposed
+Status: partly superseded by 2026-09-28-log-explorer-design.md
 Date: 2026-09-28
+
+> The design-token work below still stands. The per-minute bucket model, the
+> per-site table and the sparklines do not: a faceted explorer needs the matching
+> events per query rather than pre-aggregated counters, which also makes p95
+> exact instead of estimated. See the log-explorer spec.
 
 ## Why
 
