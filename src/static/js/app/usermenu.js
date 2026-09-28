@@ -120,6 +120,11 @@ export function initUserMenu(user) {
     if (open) refreshExpiry();
   };
 
+  // Set the closed state explicitly rather than relying on the markup starting
+  // without the class, so the trigger's aria-expanded and the panel can never
+  // disagree about whether the menu is open.
+  setOpen(false);
+
   button.addEventListener('click', (e) => { e.stopPropagation(); setOpen(!open); });
   document.addEventListener('click', (e) => { if (open && !host.contains(e.target)) setOpen(false); });
   document.addEventListener('keydown', (e) => { if (open && e.key === 'Escape') { e.stopPropagation(); setOpen(false); } });

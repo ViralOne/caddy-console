@@ -23,11 +23,17 @@
 
   <!-- Editor-only actions. Hidden on the other views, where none of them apply. -->
   <div class="view-actions" data-for-view="editor">
-    <button class="btn btn-secondary btn-sm" data-act="find">Find</button>
-    <button class="btn btn-secondary btn-sm" id="panel-btn-snippets" data-panel="snippets">Snippets</button>
-    <button class="btn btn-secondary btn-sm" id="panel-btn-backups" data-panel="backups">Backups</button>
-    <button class="btn btn-validate" data-act="validate">Validate</button>
-    <button class="btn btn-save" data-act="save">Save &amp; Reload</button>
+    <!-- Tools, grouped and quiet: they open things rather than change the file. -->
+    <div class="tool-group">
+      <button class="btn btn-tool" data-act="find" title="Find and replace (Cmd/Ctrl + F)">Find</button>
+      <button class="btn btn-tool" id="panel-btn-snippets" data-panel="snippets" title="Insert a Caddyfile snippet">Snippets</button>
+      <button class="btn btn-tool" id="panel-btn-backups" data-panel="backups" title="Browse and restore backups">Backups</button>
+    </div>
+    <!-- One primary action. Validate supports it, so it is outlined, not filled. -->
+    <button class="btn btn-outline" data-act="validate" title="Check and format without saving">Validate</button>
+    <button class="btn btn-primary" data-act="save" id="btn-save" title="Save and reload Caddy (Cmd/Ctrl + S)">
+      <span id="save-label">Save &amp; Reload</span>
+    </button>
   </div>
 
   <div class="user-menu" id="user-menu"></div>
@@ -66,8 +72,9 @@
   <span class="status-dot green" id="status-dot"></span>
   <span class="status-msg" id="status-msg">Loading...</span>
   <span class="spacer"></span>
-  <span class="last-saved" id="last-saved"></span>
-  <span id="cursor-pos" style="color:#555">Ln 1, Col 1</span>
+  <span class="footer-meta" id="last-saved"></span>
+  <span class="footer-meta" id="doc-stats"></span>
+  <span class="footer-meta" id="cursor-pos">Ln 1, Col 1</span>
 </div>
 
 <!-- Snippets Panel -->

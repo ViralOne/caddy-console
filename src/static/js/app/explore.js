@@ -297,7 +297,7 @@ function App() {
                    ${RANGES.map(r => html`<option value=${r.key}>${r.label}</option>`)}
                  </select>`}
         ${note && html`<span class="explore-note">${note}</span>`}
-        <button class=${'btn btn-sm ' + (follow ? 'btn-validate' : 'btn-secondary')}
+        <button class=${'btn btn-sm ' + (follow ? 'btn-primary' : 'btn-secondary')}
                 disabled=${!!custom}
                 title=${custom ? 'Pinned to a selected range — pick a preset range to follow again' : 'Stream new matching events'}
                 onClick=${() => setFollow(f => !f)}>${follow ? '● Live' : 'Live'}</button>

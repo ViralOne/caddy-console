@@ -26,10 +26,23 @@ body {
 .btn { padding: var(--space-2) var(--space-3); border: none; border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-sm); font-weight: 500; transition: background 0.15s, color 0.15s, border-color 0.15s; }
 .btn:active { transform: scale(0.96); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.btn-validate { background: var(--accent); color: var(--accent-ink); }
-.btn-validate:hover { background: var(--accent-hover); }
-.btn-save { background: var(--status-good); color: var(--accent-ink); }
-.btn-save:hover { filter: brightness(1.12); }
+/* Exactly one filled button per view. Save & Reload was green, which also broke
+   the rule that status colours only ever encode state. */
+.btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+/* Nothing to save reads as a quiet, disabled button — dirty state where your eyes
+   already are, rather than only in a footer dot. */
+.btn-primary:disabled { background: none; color: var(--ink-muted); border: 1px solid var(--border); cursor: default; font-weight: 500; }
+
+.btn-outline { background: none; color: var(--accent); border: 1px solid var(--accent); }
+.btn-outline:hover { background: var(--accent-quiet); }
+
+/* Tools sit in one segmented group, visually separate from document actions. */
+.tool-group { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.btn-tool { background: var(--surface); color: var(--ink-secondary); border: none; border-right: 1px solid var(--border); border-radius: 0; padding: var(--space-1) var(--space-3); }
+.btn-tool:last-child { border-right: none; }
+.btn-tool:hover { background: var(--surface-raised); color: var(--ink); }
+.btn-tool.panel-active { background: var(--accent-quiet); color: var(--accent); }
 .btn-tab { background: var(--surface); color: var(--ink-muted); border: 1px solid var(--border); }
 .btn-tab:hover { background: var(--surface-raised); color: var(--ink); }
 .btn-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
@@ -102,7 +115,7 @@ body {
 .menu-action { display: block; padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--ink-secondary); text-decoration: none; }
 .menu-action:hover { background: var(--surface); color: var(--ink); }
 .spacer { flex: 1; }
-.last-saved { font-size: var(--text-sm); color: var(--ink-muted); }
+.footer-meta { font-size: var(--text-sm); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 
 /* Panels */
 .panel { position: fixed; right: 0; top: 0; bottom: 0; width: 400px; background: var(--surface-raised); border-left: 1px solid var(--border); overflow-y: auto; z-index: 50; transform: translateX(100%); transition: transform 0.2s; display: flex; flex-direction: column; }
