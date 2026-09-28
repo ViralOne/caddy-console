@@ -43,7 +43,7 @@ export async function loadStatusPanel() {
     const card = document.createElement('div'); card.className = 'status-card';
     const lbl = document.createElement('label'); lbl.textContent = label;
     const val = document.createElement('div'); val.className = 'value'; val.textContent = value;
-    if (label === 'Config Valid') val.style.color = data.config_valid ? '#66bb6a' : '#ef5350';
+    if (label === 'Config Valid') val.className = 'value ' + (data.config_valid ? 'ok' : 'bad');
     card.appendChild(lbl); card.appendChild(val); body.appendChild(card);
   });
 }

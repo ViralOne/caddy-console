@@ -41,14 +41,14 @@ export async function loadMetrics() {
   const bytesOut = traffic.totals ? traffic.totals.bytes_out : 0;
   const errorRate = totalReqs > 0 ? (totalErrs / totalReqs * 100).toFixed(1) : '0.0';
 
-  overviewGrid.appendChild(metricCard('Total Requests', totalReqs.toLocaleString(), '#4fc3f7'));
-  overviewGrid.appendChild(metricCard('Error Rate', errorRate + '%', parseFloat(errorRate) > 5 ? '#ef5350' : '#66bb6a'));
-  overviewGrid.appendChild(metricCard('In Flight', inFlight.toString(), '#ce93d8'));
-  overviewGrid.appendChild(metricCard('Bandwidth In', formatBytes(bytesIn), '#ffa726'));
-  overviewGrid.appendChild(metricCard('Bandwidth Out', formatBytes(bytesOut), '#4fc3f7'));
-  overviewGrid.appendChild(metricCard('Sites', metrics.site_count.toString(), '#66bb6a'));
-  overviewGrid.appendChild(metricCard('Total Saves', metrics.total_saves.toString(), '#90a4ae'));
-  overviewGrid.appendChild(metricCard('Backups', metrics.backup_count.toString(), '#607d8b'));
+  overviewGrid.appendChild(metricCard('Total Requests', totalReqs.toLocaleString(), ''));
+  overviewGrid.appendChild(metricCard('Error Rate', errorRate + '%', parseFloat(errorRate) > 5 ? 'critical' : 'good'));
+  overviewGrid.appendChild(metricCard('In Flight', inFlight.toString(), ''));
+  overviewGrid.appendChild(metricCard('Bandwidth In', formatBytes(bytesIn), ''));
+  overviewGrid.appendChild(metricCard('Bandwidth Out', formatBytes(bytesOut), ''));
+  overviewGrid.appendChild(metricCard('Sites', metrics.site_count.toString(), ''));
+  overviewGrid.appendChild(metricCard('Total Saves', metrics.total_saves.toString(), ''));
+  overviewGrid.appendChild(metricCard('Backups', metrics.backup_count.toString(), ''));
 
   overviewSection.appendChild(overviewGrid);
   body.appendChild(overviewSection);
@@ -93,8 +93,7 @@ export async function loadMetrics() {
       const flightCell = el('span', 'upstream-cell');
       flightCell.textContent = inFlight.toString();
       flightCell.title = 'Requests being proxied to this upstream at this instant. Not a cumulative total — see Per-Site Traffic below for totals.';
-      if (inFlight > 0) flightCell.style.color = '#ce93d8';
-      else flightCell.className += ' upstream-muted';
+      flightCell.className += inFlight > 0 ? ' busy' : ' upstream-muted';
       row.appendChild(flightCell);
 
       // Without fail_duration, Caddy never records a failure here, so showing a
@@ -103,7 +102,7 @@ export async function loadMetrics() {
       if (u.passive_health) {
         failCell.textContent = (u.fails || 0).toString();
         failCell.title = 'Failed requests remembered within fail_duration.';
-        if (u.fails > 0) failCell.style.color = '#ef5350';
+        if (u.fails > 0) failCell.className += ' failing';
       } else {
         const badge = el('span', 'health-badge unknown has-tooltip', 'n/a');
         badge.appendChild(el('span', 'badge-tooltip', 'Not measured. Caddy only counts failures when passive health checks are enabled, which needs fail_duration (default 0 = off). Add inside reverse_proxy { }:\n\nfail_duration 30s\nmax_fails 3\nunhealthy_status 5xx'));
@@ -173,11 +172,11 @@ export async function loadMetrics() {
       }
 
       const stats = el('div', 'site-metric-stats');
-      stats.appendChild(statPill('Requests', data.requests.toLocaleString(), '#4fc3f7'));
-      stats.appendChild(statPill('Avg Latency', data.avg_latency_ms + ' ms', data.avg_latency_ms > 1000 ? '#ef5350' : data.avg_latency_ms > 300 ? '#ffa726' : '#66bb6a'));
-      stats.appendChild(statPill('5xx Errors', data.errors.toString(), data.errors > 0 ? '#ef5350' : '#66bb6a'));
-      stats.appendChild(statPill('In', formatBytes(data.bytes_in), '#90a4ae'));
-      stats.appendChild(statPill('Out', formatBytes(data.bytes_out), '#90a4ae'));
+      stats.appendChild(statPill('Requests', data.requests.toLocaleString(), ''));
+      stats.appendChild(statPill('Avg Latency', data.avg_latency_ms + ' ms', latencyTone(data.avg_latency_ms)));
+      stats.appendChild(statPill('5xx Errors', data.errors.toString(), data.errors > 0 ? 'critical' : 'good'));
+      stats.appendChild(statPill('In', formatBytes(data.bytes_in), ''));
+      stats.appendChild(statPill('Out', formatBytes(data.bytes_out), ''));
       card.appendChild(stats);
 
       sitesSection.appendChild(card);
@@ -198,10 +197,10 @@ export async function loadMetrics() {
   const activitySection = el('div', 'metrics-section');
   activitySection.appendChild(el('div', 'section-title', 'Editor Activity'));
   const actGrid = el('div', 'metrics-grid');
-  actGrid.appendChild(metricCard('Saves Today', metrics.saves_today.toString(), '#ffa726'));
-  actGrid.appendChild(metricCard('Total Logins', metrics.total_logins.toString(), '#ce93d8'));
-  actGrid.appendChild(metricCard('Unique Users', metrics.unique_users.toString(), '#4fc3f7'));
-  actGrid.appendChild(metricCard('Config Lines', metrics.config_lines.toString(), '#607d8b'));
+  actGrid.appendChild(metricCard('Saves Today', metrics.saves_today.toString(), ''));
+  actGrid.appendChild(metricCard('Total Logins', metrics.total_logins.toString(), ''));
+  actGrid.appendChild(metricCard('Unique Users', metrics.unique_users.toString(), ''));
+  actGrid.appendChild(metricCard('Config Lines', metrics.config_lines.toString(), ''));
   activitySection.appendChild(actGrid);
   if (metrics.last_modified) {
     activitySection.appendChild(el('div', 'metrics-footer', 'Last config change: ' + metrics.last_modified));
@@ -243,7 +242,6 @@ async function renderLogStats() {
   section.textContent = '';
 
   const header = el('div', 'section-title');
-  header.style.cssText = 'display:flex;align-items:center;gap:8px';
   header.appendChild(el('span', null, 'By Site'));
   header.appendChild(logStatsWindowPicker());
   section.appendChild(header);
@@ -280,7 +278,6 @@ async function renderLogStats() {
     if (failing > 0) {
       const toggle = el('span', 'logstats-toggle');
       toggle.textContent = `▸ ${failing.toLocaleString()} failing`;
-      toggle.style.cssText = 'cursor:pointer;color:#90a4ae;font-size:10px;margin-left:auto';
       toggle.title = 'Show which paths are returning 4xx/5xx for this site.';
       headerDiv.style.cursor = 'pointer';
       headerDiv.onclick = () => toggleFailures(host, card, toggle);
@@ -294,10 +291,10 @@ async function renderLogStats() {
     if (breakdown.length) card.appendChild(el('div', 'site-metric-domains', breakdown.join('  ·  ')));
 
     const stats_ = el('div', 'site-metric-stats');
-    stats_.appendChild(statPill('Requests', data.requests.toLocaleString(), '#4fc3f7'));
-    stats_.appendChild(statPill('Avg', data.avg_latency_ms + ' ms', latencyColor(data.avg_latency_ms)));
-    stats_.appendChild(statPill('p95', data.p95_latency_ms + ' ms', latencyColor(data.p95_latency_ms)));
-    stats_.appendChild(statPill('Out', formatBytes(data.bytes_out), '#90a4ae'));
+    stats_.appendChild(statPill('Requests', data.requests.toLocaleString(), ''));
+    stats_.appendChild(statPill('Avg', data.avg_latency_ms + ' ms', latencyTone(data.avg_latency_ms)));
+    stats_.appendChild(statPill('p95', data.p95_latency_ms + ' ms', latencyTone(data.p95_latency_ms)));
+    stats_.appendChild(statPill('Out', formatBytes(data.bytes_out), ''));
     card.appendChild(stats_);
 
     if (data.slowest && data.slowest.uri) {
@@ -318,8 +315,8 @@ function failureCount(classes) {
   return (c['4xx'] || 0) + (c['5xx'] || 0);
 }
 
-function statusColor(status) {
-  return status >= 500 ? '#ef5350' : status >= 400 ? '#ffa726' : '#90a4ae';
+function statusTone(status) {
+  return status >= 500 ? 'critical' : status >= 400 ? 'warn' : 'other';
 }
 
 // Expand one site at a time: collapsing the others keeps the panel scannable
@@ -337,7 +334,6 @@ async function toggleFailures(host, card, toggle) {
   });
 
   const box = el('div', 'logstats-failures');
-  box.style.cssText = 'margin-top:8px;border-top:1px solid #2a2a2a;padding-top:6px';
   box.appendChild(el('div', 'metrics-hint', 'Loading...'));
   card.appendChild(box);
   toggle.textContent = toggle.textContent.replace('▸', '▾');
@@ -376,8 +372,8 @@ function drawFailures(box, rows, detail, limit) {
   if (hidden > 0) {
     const tail = rows.slice(limit).reduce((n, f) => n + f.count, 0);
     const more = el('div', 'metrics-hint');
+    more.className = 'metrics-hint clickable';
     more.textContent = `▸ ${hidden.toLocaleString()} more paths (${tail.toLocaleString()} failures) — show all`;
-    more.style.cursor = 'pointer';
     more.onclick = () => drawFailures(box, rows, detail, rows.length);
     box.appendChild(more);
   }
@@ -390,33 +386,23 @@ function drawFailures(box, rows, detail, limit) {
 
 function failureRow(f) {
   const row = el('div', 'logstats-failure-row');
-  row.style.cssText = 'display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:ui-monospace,monospace';
-
-  const code = el('span', null, String(f.status));
-  code.style.cssText = `color:${statusColor(f.status)};min-width:28px`;
-  row.appendChild(code);
-
-  const count = el('span', null, '×' + f.count.toLocaleString());
-  count.style.cssText = 'color:#777;min-width:48px;text-align:right';
-  row.appendChild(count);
-
-  // Long paths must not push the count off the card.
-  const path = el('span', null, f.path || '(no path)');
-  path.style.cssText = 'color:#ccc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  row.appendChild(el('span', 'logstats-failure-status ' + statusTone(f.status), String(f.status)));
+  row.appendChild(el('span', 'logstats-failure-count', '×' + f.count.toLocaleString()));
+  // .logstats-failure-path ellipsises, so a long path can't push the count off.
+  const path = el('span', 'logstats-failure-path', f.path || '(no path)');
   path.title = f.path || '(no path)';
   row.appendChild(path);
-
   return row;
 }
 
-function latencyColor(ms) {
-  return ms > 1000 ? '#ef5350' : ms > 300 ? '#ffa726' : '#66bb6a';
+function latencyTone(ms) {
+  return ms > 1000 ? 'critical' : ms > 300 ? 'warn' : 'good';
 }
 
 function logStatsWindowPicker() {
   const select = document.createElement('select');
   select.id = 'logstats-window';
-  select.style.cssText = 'background:#1e1e1e;color:#ccc;border:1px solid #333;border-radius:3px;font-size:10px;padding:2px 4px';
+  select.className = 'select-inline';
   select.title = 'How far back into the access log to scan.';
   LOGSTATS_WINDOWS.forEach(mb => {
     const opt = document.createElement('option');
@@ -449,23 +435,23 @@ function logStatsFooter(stats) {
   return footer;
 }
 
-function metricCard(label, value, color) {
+// `tone` is '' (plain ink), 'good', 'warn' or 'critical'. Colour here means
+// state and nothing else — it is never decoration to tell cards apart.
+function metricCard(label, value, tone) {
   const card = el('div', 'metric-card');
   const lbl = el('div', 'metric-label', label);
-  const val = el('div', 'metric-value');
+  const val = el('div', 'metric-value' + (tone ? ' ' + tone : ''));
   val.textContent = value;
-  val.style.color = color;
   card.appendChild(lbl);
   card.appendChild(val);
   return card;
 }
 
-function statPill(label, value, color) {
+function statPill(label, value, tone) {
   const pill = el('span', 'stat-pill');
   pill.appendChild(el('span', 'stat-pill-label', label));
-  const val = el('span', 'stat-pill-value');
+  const val = el('span', 'stat-pill-value' + (tone ? ' ' + tone : ''));
   val.textContent = value;
-  val.style.color = color;
   pill.appendChild(val);
   return pill;
 }

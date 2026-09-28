@@ -29,10 +29,10 @@ function _showCount(matches, current) {
   const label = document.getElementById('match-count');
   if (matches.length === 0) {
     label.textContent = _query() ? 'no matches' : '';
-    label.style.color = _query() ? '#ef5350' : '#666';
+    label.className = _query() ? 'match-count none' : 'match-count';
     return;
   }
-  label.style.color = '#8b949e';
+  label.className = 'match-count';
   if (current < 0) {
     label.textContent = `${matches.length} match${matches.length !== 1 ? 'es' : ''}`;
   } else {

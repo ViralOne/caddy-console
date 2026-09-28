@@ -79,8 +79,9 @@ export function initEditor(content) {
         EditorView.theme({
           '&': { height: '100%' },
           '.cm-scroller': { overflow: 'auto' },
-          '.cm-content': { fontFamily: "'JetBrains Mono','Fira Code','Consolas',monospace", fontSize: '13px' },
-          '.cm-gutters': { background: '#0d1117', borderRight: '1px solid #21262d' },
+          // CodeMirror injects these as real CSS, so the tokens resolve.
+          '.cm-content': { fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)' },
+          '.cm-gutters': { background: 'var(--bg)', borderRight: '1px solid var(--border)' },
         }),
       ],
     }),

@@ -18,13 +18,12 @@ export async function loadBackups() {
   if (!data.backups.length) { list.textContent = 'No backups yet.'; return; }
   data.backups.forEach(b => {
     const card = document.createElement('div'); card.className = 'snippet-card';
-    const row = document.createElement('div'); row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;width:100%';
-    const left = document.createElement('div'); left.style.cursor = 'pointer'; left.style.flex = '1'; left.onclick = () => previewBackup(b);
+    const row = document.createElement('div'); row.className = 'backup-row';
+    const left = document.createElement('div'); left.className = 'backup-row-main'; left.onclick = () => previewBackup(b);
     const name = document.createElement('div'); name.className = 'name'; name.textContent = b.replace('Caddyfile.','');
     const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = 'Click to preview';
     left.appendChild(name); left.appendChild(desc);
-    const delBtn = document.createElement('button'); delBtn.className = 'btn btn-danger'; delBtn.textContent = 'Delete';
-    delBtn.style.cssText = 'padding:3px 8px;font-size:10px;margin-left:8px';
+    const delBtn = document.createElement('button'); delBtn.className = 'btn btn-danger btn-sm'; delBtn.textContent = 'Delete';
     delBtn.onclick = async (e) => {
       e.stopPropagation();
       if (!confirm(`Delete backup ${b.replace('Caddyfile.','')}?`)) return;

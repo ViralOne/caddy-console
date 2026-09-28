@@ -20,13 +20,13 @@ export function renderDiffInto(container, oldText, newText) {
   for (const op of ops) {
     const d = document.createElement('div');
     if (op.type === 'equal') { d.style.cssText = 'color:#555'; d.textContent = ` ${String(aLn).padStart(3)} ${op.line}`; aLn++; bLn++; }
-    else if (op.type === 'delete') { d.style.cssText = 'color:#ef5350;background:#3d1b1b'; d.textContent = `-${String(aLn).padStart(3)} ${op.line}`; aLn++; changes++; }
-    else { d.style.cssText = 'color:#66bb6a;background:#1b3d1b'; d.textContent = `+${String(bLn).padStart(3)} ${op.line}`; bLn++; changes++; }
+    else if (op.type === 'delete') { d.className = 'diff-del'; d.textContent = `-${String(aLn).padStart(3)} ${op.line}`; aLn++; changes++; }
+    else { d.className = 'diff-ins'; d.textContent = `+${String(bLn).padStart(3)} ${op.line}`; bLn++; changes++; }
     frag.appendChild(d);
   }
   if (changes === 0) {
     const d = document.createElement('div');
-    d.style.cssText = 'color:#8b949e;font-style:italic';
+    d.className = 'diff-meta';
     d.textContent = '(no differences)';
     frag.appendChild(d);
   }

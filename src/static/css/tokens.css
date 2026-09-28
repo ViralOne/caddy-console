@@ -1,0 +1,74 @@
+/* Design tokens.
+ *
+ * The app used to carry two unrelated palettes: navy chrome (#1a1a2e, #16213e,
+ * #0f3460) wrapping slate content (#0d1117, #161b22, #21262d), 41 distinct hex
+ * values across 162 lines plus 19 more hardcoded in JS. The slate family wins
+ * because it already covered most of the surface area; chrome is retinted to
+ * match.
+ *
+ * Every colour, size and space in the app comes from here. If a component needs
+ * a value that isn't a token, the token set is wrong — don't inline a hex.
+ */
+:root {
+  /* --- Surfaces, darkest to lightest --- */
+  --bg: #0d1117;              /* app + editor background, deepest layer */
+  --surface: #161b22;         /* inputs, pills, inset areas */
+  --surface-raised: #1c2128;  /* header, tabs, footer, side panels, modals */
+  --border: #262c36;
+  --border-strong: #30363d;   /* focus rings, emphasised dividers */
+
+  /* --- Ink. All at least 4.5:1 on --bg. --ink-muted replaces #546e7a and
+   *     #607d8b, which were below that. --- */
+  --ink: #e6edf3;
+  --ink-secondary: #adbac7;
+  --ink-muted: #8b949e;
+
+  /* --- Accent: interactive affordances only, never data --- */
+  --accent: #58a6ff;
+  --accent-hover: #79c0ff;
+  --accent-ink: #0d1117;      /* text on an accent fill */
+  --accent-quiet: #1f2d3d;    /* accent-tinted fill for active states */
+
+  /* --- Status. Reserved: these four never encode anything but state, and
+   *     never stand in for a series colour. Each ships with a label or icon,
+   *     so colour is never the only signal. --- */
+  --status-good: #3fb950;
+  --status-warn: #d29922;
+  --status-serious: #db6d28;
+  --status-critical: #f85149;
+  --status-good-bg: #12261a;
+  --status-warn-bg: #2b2412;
+  --status-critical-bg: #2d1416;
+  /* Not measured / unknown. #6e7681 was the obvious pick but measures 4.12:1 on
+     --bg and less on the --surface badges that use it, so it fails normal-text
+     contrast; this passes on both. */
+  --status-none: #8b949e;
+
+  /* --- Type. Four steps, each at least 1.25x the last (12 / 15 / 19 / 24),
+   *     replacing nine ad-hoc sizes from 9px to 22px. The old 9-10px uppercase
+   *     labels move up to --text-sm; nothing renders below 12px. --- */
+  --text-sm: 12px;
+  --text-md: 15px;
+  --text-lg: 19px;
+  --text-xl: 24px;
+  --leading-tight: 1.35;
+  --leading: 1.55;
+
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+
+  /* --- Space --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  /* --- Shape --- */
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-pill: 999px;
+
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+}

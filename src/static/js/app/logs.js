@@ -19,7 +19,7 @@ async function pollLogs() {
       if (!logsFileExisted) {
         body.textContent = '';
         const hint = el('div', 'metrics-hint');
-        hint.style.whiteSpace = 'pre-wrap';
+        hint.style.whiteSpace = 'pre-wrap';  // the snippet below is preformatted
         // The filter wrapper is part of the suggestion on purpose: a bare
         // `format json` writes every request header, including auth tokens,
         // to disk and then into this panel.
@@ -53,8 +53,7 @@ function updateLogsStatus(size, lineCount) {
     status.appendChild(info);
     const spacer = el('span', 'spacer');
     status.appendChild(spacer);
-    const btn = el('button', 'btn btn-secondary', 'Ping Caddy');
-    btn.style.cssText = 'padding:2px 8px;font-size:10px';
+    const btn = el('button', 'btn btn-secondary btn-sm', 'Ping Caddy');
     btn.onclick = async () => { btn.textContent = '...'; try { await fetch('/api/logs/ping', {method:'POST'}); } catch(e){} btn.textContent = 'Ping Caddy'; };
     status.appendChild(btn);
   }
