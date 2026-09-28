@@ -10,6 +10,7 @@
 import { h, htm, render, useCallback, useEffect, useRef, useState } from '../explore-vendor.js';
 import { hasTerm, toggleTerm } from './explore-query.js';
 import { CLASSES, Histogram } from './histogram.js';
+import { exploreStateFromSearch, exploreStateToSearch, replaceSearch } from './router.js';
 
 const html = htm.bind(h);
 
@@ -30,14 +31,6 @@ const FACET_GROUPS = [
 ];
 const DEBOUNCE_MS = 250;
 const FOLLOW_MS = 4000;
-const STORE_KEY = 'explorePrefs';
-
-function loadPrefs() {
-  try { return JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { return {}; }
-}
-function savePrefs(p) {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(p)); } catch (e) { /* private mode */ }
-}
 
 const pad = (n) => String(n).padStart(2, '0');
 function clockTime(ts) {
@@ -65,20 +58,27 @@ function latencyTone(ms) {
 }
 
 function App() {
-  const prefs = loadPrefs();
-  const [query, setQuery] = useState('');
-  const [draft, setDraft] = useState('');          // what's in the input right now
-  const [range, setRange] = useState(prefs.range || '24h');
-  const [windowMb, setWindowMb] = useState(WINDOWS.includes(prefs.windowMb) ? prefs.windowMb : 10);
-  const [custom, setCustom] = useState(null);      // {from, to} from a histogram drag
-  const [follow, setFollow] = useState(false);
+  // The URL is the source of truth for everything shareable, so a pasted link
+  // reproduces the sender's view exactly — filters, range and timestamps.
+  const initial = exploreStateFromSearch();
+  const [query, setQuery] = useState(initial.q);
+  const [draft, setDraft] = useState(initial.q);   // what's in the input right now
+  const [range, setRange] = useState(initial.range);
+  const [windowMb, setWindowMb] = useState(initial.windowMb);
+  const [custom, setCustom] = useState(initial.custom);  // {from, to}, pinned absolute
+  const [follow, setFollow] = useState(initial.live);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
+  const [raw, setRaw] = useState({});              // offset -> original log line
   const inflight = useRef(null);
 
-  useEffect(() => savePrefs({ range, windowMb }), [range, windowMb]);
+  // replaceState, not pushState: a history entry per keystroke would make Back
+  // feel broken.
+  useEffect(() => {
+    replaceSearch(exploreStateToSearch({ q: query, range, windowMb, custom, live: follow }));
+  }, [query, range, windowMb, custom, follow]);
 
   // Debounce the input: one request when typing settles, not one per keystroke.
   useEffect(() => {
@@ -119,6 +119,17 @@ function App() {
     const t = setInterval(load, FOLLOW_MS);
     return () => clearInterval(t);
   }, [follow, custom, load]);
+
+  const showRaw = async (offset) => {
+    if (raw[offset] !== undefined) { setRaw({ ...raw, [offset]: undefined }); return; }
+    try {
+      const res = await fetch('/api/explore/raw?offset=' + offset);
+      const body = await res.json();
+      setRaw({ ...raw, [offset]: body.line || body.error || '(unavailable)' });
+    } catch (e) {
+      setRaw({ ...raw, [offset]: e.message });
+    }
+  };
 
   const toggleFacet = (key, value) => {
     const qk = FACET_GROUPS.find(g => g.key === key)?.queryKey || key;
@@ -209,6 +220,9 @@ function App() {
           ${data?.range?.truncated && html`
             <div class="metrics-hint">The selected range reaches further back than the ${windowMb} MB read from the log. Earliest event available: ${clockTime(data.range.earliest_ts)}. Read more of the log to see further back.</div>`}
 
+          ${data?.skipped > 0 && data?.indexed === 0 && html`
+            <div class="metrics-hint error">${data.skipped.toLocaleString()} log lines were read but none could be indexed — every entry needs a "ts" field and a request host. Check the log format against the README snippet.</div>`}
+
           ${data?.dropped > 0 && html`
             <div class="metrics-hint">${data.dropped.toLocaleString()} oldest events dropped to stay within the in-memory cap, so counts cover less than the bytes read.</div>`}
 
@@ -236,6 +250,14 @@ function App() {
                       <dt>duration</dt><dd>${e.duration_ms} ms</dd>
                       <dt>size</dt><dd>${formatBytesShort(e.size)}</dd>
                       <dt>client</dt><dd>${e.client_ip || '(none)'}</dd>
+                      <dt>raw</dt>
+                      <dd>
+                        <button class="btn btn-secondary btn-sm"
+                                onClick=${ev => { ev.stopPropagation(); showRaw(e.offset); }}>
+                          ${raw[e.offset] !== undefined ? 'hide' : 'show original line'}
+                        </button>
+                        ${raw[e.offset] !== undefined && html`<pre class="stream-raw">${raw[e.offset]}</pre>`}
+                      </dd>
                     </dl>`}
                 </div>`;
             })}

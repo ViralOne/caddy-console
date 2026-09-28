@@ -3,15 +3,14 @@
 // these imports.
 import './csrf.js';  // patches window.fetch before init() issues any request
 import { closePreview, restoreFromPreview, rollbackFromPreview, showPreviewTab, clearPreview } from './backups.js';
-import { init, switchTab } from './caddyfile.js';
-import { stopLogs } from './logs.js';
+import { init, showView, syncViewFromUrl } from './caddyfile.js';
 import { closePanel, togglePanel } from './panels.js';
+import { interceptLinks, onNavigate } from './router.js';
 import { closeSearch, doSearch, replaceAll, replaceOne, searchNext, searchPrev, toggleSearch } from './search.js';
 import { doSave, doValidate, resolveSaveModal } from './validate.js';
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
-  stopLogs();
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('open'));
   document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
   clearPreview();
@@ -30,9 +29,8 @@ document.addEventListener('keydown', e => {
 
 // --- Event delegation (CSP-safe: no inline handlers) ---
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-act],[data-panel],[data-tab],[data-close],[data-ptab]');
+  const t = e.target.closest('[data-act],[data-panel],[data-close],[data-ptab]');
   if (!t) return;
-  if (t.dataset.tab) { switchTab(t.dataset.tab, t); return; }
   if (t.dataset.panel) { togglePanel(t.dataset.panel); return; }
   if (t.dataset.close) { closePanel(t.dataset.close); return; }
   if (t.dataset.ptab) { showPreviewTab(t.dataset.ptab); return; }
@@ -61,4 +59,9 @@ document.getElementById('search-input').addEventListener('keydown', e => {
   if (e.shiftKey) searchPrev(); else searchNext();
 });
 
+// Links marked data-view route in-app; Back/Forward re-reads the path.
+interceptLinks(view => showView(view, { push: false }));
+onNavigate(view => showView(view, { push: false }));
+
+syncViewFromUrl();
 init();

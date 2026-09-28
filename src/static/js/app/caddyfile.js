@@ -3,8 +3,8 @@ import {
   editorView, fetchJson, initEditor, setContent, setDot, setOriginal, setStatus, setVersion,
 } from './core.js';
 import { mountExplore } from './explore.js';
-import { startLogs, stopLogs } from './logs.js';
 import { loadMetrics } from './metrics.js';
+import { navigate, pathFor, viewFromPath } from './router.js';
 
 export async function init() {
   // A 401 here is handled by the fetch wrapper (redirects to sign-in).
@@ -27,14 +27,19 @@ export async function loadCaddyfile() {
   setStatus('Loaded', 'ok');
 }
 
-export function switchTab(name, tabEl) {
-  stopLogs();
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+/** Show a view. `push` is false when responding to the URL (initial load, Back). */
+export function showView(name, { push = true } = {}) {
+  const view = ['dashboard', 'editor', 'explore'].includes(name) ? name : 'dashboard';
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === view));
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelector(`.tab-content#tab-${name}`).classList.add('active');
-  if (tabEl) tabEl.classList.add('active');
-  else document.querySelector(`.tab[data-tab="${name}"]`)?.classList.add('active');
-  if (name === 'metrics') loadMetrics();
-  if (name === 'explore') mountExplore();
-  if (name === 'logs') startLogs();
+  document.querySelector(`.tab-content#tab-${view}`).classList.add('active');
+  // Explore owns its query string; switching to any other view drops it so the
+  // URL never advertises filters that are not in effect.
+  if (push) navigate(view, view === 'explore' ? location.search : '');
+  if (view === 'dashboard') loadMetrics();
+  if (view === 'explore') mountExplore();
+}
+
+export function syncViewFromUrl() {
+  showView(viewFromPath(), { push: false });
 }

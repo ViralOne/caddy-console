@@ -155,6 +155,9 @@ class EventIndex:
         self.status = array("h")
         self.duration_ms = array("f")
         self.size = array("q")
+        # Byte offset of the line this event came from. 8 bytes per event buys a
+        # raw-line view without retaining the line itself.
+        self.offset = array("q")
         self.host_id = array("i")
         self.method_id = array("i")
         self.uri_id = array("i")
@@ -217,10 +220,10 @@ class EventIndex:
                     if not dropped:
                         dropped = True  # partial line at the byte anchor
                         continue
-                    self._add(line)
+                    self._add(line, consumed - (nl + 1))
         return consumed
 
-    def _add(self, raw):
+    def _add(self, raw, offset=0):
         if not raw.strip():
             return
         try:
@@ -245,6 +248,7 @@ class EventIndex:
         duration = e.get("duration")
         size = e.get("size")
         self.ts.append(float(ts))
+        self.offset.append(offset)
         self.status.append(int(status) if isinstance(status, int) and 0 <= status <= 32767 else 0)
         self.duration_ms.append(float(duration) * 1000.0 if isinstance(duration, (int, float)) else 0.0)
         self.size.append(int(size) if isinstance(size, (int, float)) else 0)
@@ -268,7 +272,7 @@ class EventIndex:
             return
         cut = over + max(1, self._max // 10)
         cut = min(cut, len(self.ts))
-        for col in (self.ts, self.status, self.duration_ms, self.size,
+        for col in (self.ts, self.status, self.duration_ms, self.size, self.offset,
                     self.host_id, self.method_id, self.uri_id, self.client_id):
             del col[:cut]
         self._dropped += cut
@@ -478,7 +482,22 @@ class EventIndex:
             "duration_ms": round(self.duration_ms[i], 3),
             "size": self.size[i],
             "client_ip": self.clients.values[self.client_id[i]],
+            "offset": self.offset[i],
         }
+
+    def raw_line(self, offset):
+        """The original log line at `offset`, for the raw view in Explore.
+
+        Read on demand rather than retained: at ~378 bytes per entry, keeping
+        every line would cost as much memory as the log file itself.
+        """
+        with self._lock:
+            if offset < self._scan_start or offset >= self._pos:
+                return None  # outside what is currently indexed
+            with open(self._path, "rb") as f:
+                f.seek(offset)
+                line = f.readline()
+        return line.decode("utf-8", errors="replace").rstrip("\n")
 
 
 event_index = EventIndex()

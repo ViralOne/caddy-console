@@ -293,6 +293,19 @@ class IndexTest(unittest.TestCase):
         overlap = {e["ts"] for e in first["entries"]} & {e["ts"] for e in second["entries"]}
         self.assertEqual(overlap, set())
 
+    def test_raw_line_round_trips_by_offset(self):
+        self.write(entry(ts=T0, uri="/first"), entry(ts=T0 + 1, uri="/second"))
+        r = self.q()
+        newest = r["entries"][0]
+        raw = self.index.raw_line(newest["offset"])
+        self.assertIn('"/second"', raw)
+        self.assertEqual(json.loads(raw)["request"]["uri"], "/second")
+
+    def test_raw_line_outside_the_window_is_none(self):
+        self.write(entry(ts=T0))
+        self.q()
+        self.assertIsNone(self.index.raw_line(10 ** 9))
+
     def test_max_events_drops_oldest_and_reports_it(self):
         idx = EventIndex(self.path, max_events=20)
         self.write(*[entry(ts=T0 + i) for i in range(30)])

@@ -27,16 +27,15 @@
 </div>
 
 <div class="tabs">
-  <div class="tab active" data-tab="editor">Editor</div>
-  <div class="tab" data-tab="metrics">Metrics</div>
-  <div class="tab" data-tab="explore">Explore</div>
-  <div class="tab" data-tab="logs">Logs</div>
+  <a class="tab" data-view="dashboard" href="/">Dashboard</a>
+  <a class="tab" data-view="editor" href="/editor">Editor</a>
+  <a class="tab" data-view="explore" href="/explore">Explore</a>
 </div>
 
 <div class="warnings" id="warnings"></div>
 
 <div class="main">
-  <div class="tab-content active" id="tab-editor">
+  <div class="tab-content" id="tab-editor">
     <div class="search-bar" id="search-bar">
       <input type="text" id="search-input" placeholder="Find... (Enter next, Shift+Enter previous, Esc to close)">
       <button class="btn btn-secondary btn-sm" data-act="search-prev" title="Previous match (Shift+Enter)">&uarr;</button>
@@ -50,7 +49,7 @@
     <div class="editor-wrap" id="cm-editor" style="flex:1"></div>
   </div>
 
-  <div class="tab-content" id="tab-metrics">
+  <div class="tab-content" id="tab-dashboard">
     <div style="padding:16px;overflow-y:auto;flex:1" id="metrics-body">
       <div id="metrics-loading">Loading metrics...</div>
     </div>
@@ -60,10 +59,6 @@
     <div id="explore-root"></div>
   </div>
 
-  <div class="tab-content" id="tab-logs">
-    <div class="logs-status" id="logs-status"></div>
-    <div class="logs-body" id="logs-body"></div>
-  </div>
 </div>
 
 <div class="footer">

@@ -216,40 +216,6 @@ class SavePathTest(AppTestCase):
         self.assertIn("from=Caddyfile.20260101-000000", entries[0]["detail"])
 
 
-class LogsTailTest(AppTestCase):
-    def tearDown(self):
-        super().tearDown()
-        if os.path.exists(env.LOG_FILE):
-            os.remove(env.LOG_FILE)
-
-    def _logs(self, pos=None):
-        url = "/api/logs" if pos is None else f"/api/logs?pos={pos}"
-        return self.client.get(url, headers=AUTH).get_json()
-
-    def test_partial_last_line_waits_for_the_next_poll(self):
-        with open(env.LOG_FILE, "wb") as f:
-            f.write(b'{"a":1}\n{"b":2}\n{"c":')
-        d = self._logs()
-        self.assertEqual(d["lines"], ['{"a":1}', '{"b":2}'])
-        self.assertEqual(d["pos"], len(b'{"a":1}\n{"b":2}\n'))
-        with open(env.LOG_FILE, "ab") as f:
-            f.write(b'3}\n')
-        d2 = self._logs(d["pos"])
-        self.assertEqual(d2["lines"], ['{"c":3}'])
-
-    def test_initial_read_drops_the_partial_first_line(self):
-        with open(env.LOG_FILE, "wb") as f:
-            f.write(b"x" * 9000 + b"\nfull line\n")
-        d = self._logs()
-        self.assertEqual(d["lines"], ["full line"])
-
-    def test_rotation_resets_to_the_tail(self):
-        with open(env.LOG_FILE, "wb") as f:
-            f.write(b"one\ntwo\n")
-        d = self._logs(pos=10_000)  # client pos is beyond the (new, smaller) file
-        self.assertEqual(d["lines"], ["one", "two"])
-
-
 class AuditLogTest(unittest.TestCase):
     def setUp(self):
         reset_backup_dir()

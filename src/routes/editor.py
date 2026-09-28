@@ -232,7 +232,12 @@ def _apply_config(content: str, user: str, source: str, expected_version: str | 
     }), 500
 
 
+# Every view is the same document; the client reads location.pathname to decide
+# which one to show. Listed explicitly rather than with a catch-all so an unknown
+# path still 404s instead of silently rendering the app.
 @editor_bp.route("/")
+@editor_bp.route("/editor")
+@editor_bp.route("/explore")
 @login_required
 def index():
     return render_template("index.html", csrf_token=get_or_create_csrf())
@@ -371,49 +376,6 @@ def restore_backup(name):
         return jsonify({"ok": False, "message": f"Backup is not valid, not restored: {message}"}), 400
 
     return _apply_config(content, user, "restore", detail=f"from={safe_name}")
-
-
-@editor_bp.route("/api/logs", methods=["GET"])
-@login_required
-def get_logs():
-    """Tail the Caddy log file for the Logs panel (polled by the client).
-
-    Pass ?pos=<byte-offset> to fetch only new content since the last poll.
-    Without pos, returns roughly the last 8 KB. Only complete lines are
-    returned; a partially written last line is left for the next poll.
-    """
-    path = CADDY_LOG_FILE
-    if not os.path.isfile(path):
-        return jsonify({"exists": False, "path": path, "lines": [], "pos": 0})
-
-    size = os.path.getsize(path)
-    pos = request.args.get("pos", type=int)
-
-    MAX_CHUNK = 131072  # 128 KB cap per poll
-    if pos is None or pos < 0 or pos > size:
-        # First poll, or the file was rotated/truncated: start near the end.
-        start = max(0, size - 8192)
-    else:
-        start = pos
-    if size - start > MAX_CHUNK:
-        start = size - MAX_CHUNK
-    resumed = pos is not None and start == pos
-
-    with open(path, "rb") as f:
-        f.seek(start)
-        chunk = f.read(size - start)
-
-    cut = chunk.rfind(b"\n")
-    if cut == -1:
-        # No complete line yet; don't advance so the next poll picks it up.
-        return jsonify({"exists": True, "path": path, "lines": [], "pos": start, "size": size})
-    new_pos = start + cut + 1
-    lines = chunk[:cut + 1].decode("utf-8", errors="replace").splitlines()
-    # If we didn't resume exactly where the client left off we started mid-line.
-    if not resumed and start > 0 and lines:
-        lines = lines[1:]
-
-    return jsonify({"exists": True, "path": path, "lines": lines, "pos": new_pos, "size": size})
 
 
 @editor_bp.route("/api/logs/ping", methods=["POST"])

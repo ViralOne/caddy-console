@@ -5,7 +5,6 @@
 // body issues a request while evaluating, and main.js runs init() only after all
 // imports have finished.
 import { setDot, setStatus } from './core.js';
-import { stopLogs } from './logs.js';
 
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 const _origFetch = window.fetch.bind(window);
@@ -25,7 +24,6 @@ window.fetch = async (url, opts = {}) => {
     // Every API call would otherwise fail in its own confusing way ("config is
     // invalid: undefined"). Stop background polling, tell the user, go sign in.
     _sessionExpired = true;
-    stopLogs();
     setStatus('Session expired — sign in again', 'err');
     setDot('red');
     alert('Your session has expired. Sign in again to continue.\n\nIf you have unsaved changes, copy them somewhere first.');

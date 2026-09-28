@@ -299,6 +299,22 @@ def explore():
     return jsonify(payload)
 
 
+@ops_bp.route("/api/explore/raw", methods=["GET"])
+@login_required
+def explore_raw():
+    """One original log line, addressed by the byte offset the index recorded."""
+    offset = request.args.get("offset", type=int)
+    if offset is None or offset < 0:
+        return jsonify({"error": "offset required"}), 400
+    try:
+        line = event_index.raw_line(offset)
+    except OSError as e:
+        return jsonify({"error": str(e)}), 200
+    if line is None:
+        return jsonify({"error": "That line is outside the range currently read from the log."})
+    return jsonify({"line": line})
+
+
 def _range(args):
     """Resolve from/to. Explicit timestamps win, then a named range, else all."""
     explicit_from = _float_or_none(args.get("from"))
