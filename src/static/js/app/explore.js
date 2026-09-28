@@ -47,6 +47,38 @@ function formatBytesShort(n) {
   const i = Math.floor(Math.log(n) / Math.log(1024));
   return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + units[i];
 }
+// Which query key each field maps to. Fields absent from this map are
+// copy-only: offering "Filter by" for a field the backend cannot filter would
+// be a menu item that silently does nothing.
+const FIELD_KEYS = { host: 'host', method: 'method', path: 'path', status: 'status' };
+
+function pathOf(uri) {
+  return (uri || '').split('?', 1)[0];
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    // Blocked outside a secure context, or permission refused.
+    return false;
+  }
+}
+
+function fieldsOf(e) {
+  return [
+    { label: 'time', display: new Date(e.ts * 1000).toISOString(), value: String(e.ts), zoom: e.ts },
+    { label: 'host', display: e.host, value: e.host },
+    { label: 'method', display: e.method, value: e.method },
+    { label: 'path', display: e.uri, value: pathOf(e.uri) },
+    { label: 'status', display: String(e.status), value: String(e.status) },
+    { label: 'duration', display: formatMs(e.duration_ms), value: String(e.duration_ms) },
+    { label: 'size', display: formatBytesShort(e.size), value: String(e.size) },
+    { label: 'client', display: e.client_ip || '(none)', value: e.client_ip || '' },
+  ];
+}
+
 function statusTone(status) {
   if (status >= 500) return 'critical';
   if (status >= 400) return 'warn';
@@ -72,7 +104,21 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
   const [raw, setRaw] = useState({});              // offset -> original log line
+  const [fieldMenu, setFieldMenu] = useState(null);  // "<rowKey>|<field label>"
+  const [note, setNote] = useState('');            // transient confirmation
   const inflight = useRef(null);
+
+  // Any click that is not on a field menu closes it.
+  useEffect(() => {
+    if (!fieldMenu) return;
+    const close = (ev) => { if (!ev.target.closest('.field-menu, .field-trigger')) setFieldMenu(null); };
+    const esc = (ev) => { if (ev.key === 'Escape') setFieldMenu(null); };
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('click', close); document.removeEventListener('keydown', esc); };
+  }, [fieldMenu]);
+
+  const flash = (msg) => { setNote(msg); setTimeout(() => setNote(''), 1800); };
 
   // replaceState, not pushState: a history entry per keystroke would make Back
   // feel broken.
@@ -131,6 +177,27 @@ function App() {
     }
   };
 
+  const fieldAction = async (action, field) => {
+    const key = FIELD_KEYS[field.label];
+    const term = key ? `${key}:${/[\s"]/.test(field.value) ? '"' + field.value + '"' : field.value}` : '';
+    setFieldMenu(null);
+    if (action === 'copy-value') {
+      flash(await copyText(field.value) ? 'Value copied' : 'Copy blocked by the browser');
+    } else if (action === 'copy-term') {
+      flash(await copyText(term) ? 'Copied ' + term : 'Copy blocked by the browser');
+    } else if (action === 'filter') {
+      setDraft(hasTerm(draft, key, field.value) ? draft : (draft ? draft + ' ' + term : term));
+    } else if (action === 'exclude') {
+      setDraft(draft ? draft + ' -' + term : '-' + term);
+    } else if (action === 'replace') {
+      setDraft(term);
+    } else if (action === 'zoom') {
+      // ±5 minutes around the event, which is usually the useful neighbourhood.
+      setCustom({ from: Math.floor(field.zoom) - 300, to: Math.ceil(field.zoom) + 300 });
+      setFollow(false);
+    }
+  };
+
   const toggleFacet = (key, value) => {
     const qk = FACET_GROUPS.find(g => g.key === key)?.queryKey || key;
     setDraft(toggleTerm(draft, qk, value));
@@ -163,6 +230,7 @@ function App() {
                 onChange=${e => setWindowMb(Number(e.target.value))}>
           ${WINDOWS.map(mb => html`<option value=${String(mb)}>read ${mb} MB</option>`)}
         </select>
+        ${note && html`<span class="explore-note">${note}</span>`}
         <button class=${'btn btn-sm ' + (follow ? 'btn-validate' : 'btn-secondary')}
                 disabled=${!!custom}
                 title=${custom ? 'Pinned to a selected range — pick a preset range to follow again' : 'Stream new matching events'}
@@ -242,23 +310,48 @@ function App() {
                   <span class="stream-uri" title=${e.uri}>${e.uri}</span>
                   <span class=${'stream-dur tone-' + latencyTone(e.duration_ms)}>${formatMs(e.duration_ms)}</span>
                   ${open && html`
-                    <dl class="stream-detail">
-                      <dt>time</dt><dd>${new Date(e.ts * 1000).toISOString()}</dd>
-                      <dt>host</dt><dd>${e.host}</dd>
-                      <dt>request</dt><dd>${e.method} ${e.uri}</dd>
-                      <dt>status</dt><dd>${e.status}</dd>
-                      <dt>duration</dt><dd>${e.duration_ms} ms</dd>
-                      <dt>size</dt><dd>${formatBytesShort(e.size)}</dd>
-                      <dt>client</dt><dd>${e.client_ip || '(none)'}</dd>
-                      <dt>raw</dt>
-                      <dd>
-                        <button class="btn btn-secondary btn-sm"
-                                onClick=${ev => { ev.stopPropagation(); showRaw(e.offset); }}>
-                          ${raw[e.offset] !== undefined ? 'hide' : 'show original line'}
-                        </button>
-                        ${raw[e.offset] !== undefined && html`<pre class="stream-raw">${raw[e.offset]}</pre>`}
-                      </dd>
-                    </dl>`}
+                    <div class="stream-detail" onClick=${ev => ev.stopPropagation()}>
+                      ${fieldsOf(e).map(f => {
+                        const id = key + '|' + f.label;
+                        const filterable = !!FIELD_KEYS[f.label];
+                        return html`
+                          <div class="field-row" key=${f.label}>
+                            <button class="field-trigger" title=${'Actions for ' + f.label}
+                                    aria-haspopup="true" aria-expanded=${String(fieldMenu === id)}
+                                    onClick=${() => setFieldMenu(fieldMenu === id ? null : id)}>⋮</button>
+                            <span class="field-label">${f.label}</span>
+                            <span class="field-value">${f.display}</span>
+                            ${fieldMenu === id && html`
+                              <div class="field-menu" role="menu">
+                                <button role="menuitem" onClick=${() => fieldAction('copy-value', f)}>Copy value</button>
+                                ${filterable && html`
+                                  <button role="menuitem" onClick=${() => fieldAction('copy-term', f)}>Copy ${FIELD_KEYS[f.label]}:${f.value}</button>`}
+                                ${filterable && html`
+                                  <div class="field-menu-group">
+                                    <button role="menuitem" onClick=${() => fieldAction('filter', f)}>Filter by <b>${FIELD_KEYS[f.label]}:${f.value}</b></button>
+                                    <button role="menuitem" onClick=${() => fieldAction('exclude', f)}>Exclude <b>${FIELD_KEYS[f.label]}:${f.value}</b></button>
+                                    <button role="menuitem" onClick=${() => fieldAction('replace', f)}>Replace query with <b>${FIELD_KEYS[f.label]}:${f.value}</b></button>
+                                  </div>`}
+                                ${f.zoom && html`
+                                  <div class="field-menu-group">
+                                    <button role="menuitem" onClick=${() => fieldAction('zoom', f)}>Zoom to ±5 min around this event</button>
+                                  </div>`}
+                                ${!filterable && !f.zoom && html`
+                                  <div class="field-menu-note">Not a filterable field</div>`}
+                              </div>`}
+                          </div>`;
+                      })}
+                      <div class="field-row field-row-raw">
+                        <span class="field-label">raw</span>
+                        <span class="field-value">
+                          <button class="btn btn-secondary btn-sm"
+                                  onClick=${() => showRaw(e.offset)}>
+                            ${raw[e.offset] !== undefined ? 'hide' : 'show original line'}
+                          </button>
+                          ${raw[e.offset] !== undefined && html`<pre class="stream-raw">${raw[e.offset]}</pre>`}
+                        </span>
+                      </div>
+                    </div>`}
                 </div>`;
             })}
             ${data && data.total > (data.entries || []).length && html`
