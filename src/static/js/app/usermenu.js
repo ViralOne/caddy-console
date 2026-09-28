@@ -105,7 +105,6 @@ export function initUserMenu(user) {
   logout.setAttribute('role', 'menuitem');
   logout.append(iconEl('logout'), document.createTextNode('Log out'));
 
-  // Which build you are running, where you look when something behaves oddly.
   const version = document.createElement('div');
   version.className = 'menu-version';
   version.textContent = `Caddy Console ${user.version || ''}`.trim();

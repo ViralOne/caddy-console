@@ -1,6 +1,7 @@
-# Keep this version in step with the `caddy` service image in the compose files:
-# this binary runs `caddy fmt` / `caddy validate` on what the other one loads.
-FROM caddy:2.11.4-alpine AS caddy-bin
+# Override to match your Caddy if you rely on the fallback, e.g. a DNS-01 build:
+#   docker build --build-arg CADDY_IMAGE=ghcr.io/caddybuilds/caddy-cloudflare:2.11.4-alpine .
+ARG CADDY_IMAGE=caddy:2.11.4-alpine
+FROM ${CADDY_IMAGE} AS caddy-bin
 
 FROM python:3.14-alpine
 

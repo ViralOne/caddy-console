@@ -1,7 +1,9 @@
 services:
   caddy:
-    # Keep in step with the caddy-bin stage in Dockerfile: the console validates
-    # with that binary, and it should match what actually loads the config.
+    # Running a custom build (a DNS-01 plugin, say) is fine: the console
+    # validates through this container's admin API, so whatever modules it has
+    # are the modules a config is checked against.
+    #   image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.4-alpine
     image: caddy:2.11.4-alpine
     restart: unless-stopped
     ports:

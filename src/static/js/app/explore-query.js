@@ -31,9 +31,8 @@ export function term(key, value, negated = false) {
 
 /** A token as the server reads it: a known `key:value`, or free text.
  *
- * Tokenising has already stripped the quotes, so values are compared here rather
- * than as rendered strings — otherwise `path:"/a b"` would never match the value
- * `/a b` it was built from.
+ * Compares parsed values, not rendered strings: tokenising strips the quotes, so
+ * `path:"/a b"` would never match the `/a b` it was built from.
  */
 function parseToken(token) {
   const negated = token.startsWith('-') && token.length > 1;
@@ -50,11 +49,7 @@ function isSameTerm(token, key, value) {
   return p.key === key.toLowerCase() && p.value.toLowerCase() === value.toLowerCase();
 }
 
-/** How the query treats `key:value`: 'off', 'include' or 'exclude'.
- *
- * The three states are what a facet row renders, so include and exclude have to
- * be distinguishable rather than collapsed into "present".
- */
+/** How the query treats `key:value`: 'off', 'include' or 'exclude'. */
 export function termState(query, key, value) {
   for (const token of tokenize(query)) {
     if (isSameTerm(token, key, value)) return parseToken(token).negated ? 'exclude' : 'include';
@@ -69,8 +64,7 @@ export function hasTerm(query, key, value) {
 
 /** Put `key:value` into `state`, replacing whichever polarity is there now.
  *
- * A value is one term in one polarity: switching from include to exclude rewrites
- * it in place rather than stacking `host:a -host:a`, which would match nothing.
+ * Rewritten in place rather than stacked: `host:a -host:a` would match nothing.
  */
 export function setTermState(query, key, value, state) {
   const next = state === 'include' ? term(key, value)
@@ -80,8 +74,7 @@ export function setTermState(query, key, value, state) {
   let placed = false;
   for (const token of tokenize(query)) {
     if (isSameTerm(token, key, value)) {
-      // Replaced where it already sat, so cycling a facet does not shuffle the
-      // query text under the cursor. A repeat of the same value is dropped.
+      // In place, so cycling a facet does not shuffle the query under the cursor.
       if (next && !placed) { out.push(next); placed = true; }
       continue;
     }
@@ -115,15 +108,10 @@ function requote(token) {
   return term(p.key, p.value, p.negated);
 }
 
-/** The example query shown in an empty search box.
+/** The example query for an empty search box, built from the window on screen.
  *
- * Built from the window on screen rather than a fixed string, so the example is
- * a query that would actually return rows here. It also keeps a real hostname
- * out of the source: in a public repo, a baked-in example host says whose
- * machine the line was written on.
- *
- * Falls back to a placeholder host when there is nothing indexed yet, which is
- * exactly when the box is most likely to be empty.
+ * Derived rather than fixed so the example would actually return rows, and so no
+ * real hostname is baked into a public repo.
  */
 export function placeholderFor(data) {
   const hosts = (data && data.facets && data.facets.host) || [];

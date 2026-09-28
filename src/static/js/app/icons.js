@@ -1,11 +1,8 @@
 // Icons, as <use> references into the sprite inlined by templates/_icons.html.
 //
-// Two entry points because the app has two rendering styles: `Icon` for the
-// Preact views, `iconEl` for the plain-DOM chrome. Both emit the same element,
-// so an icon looks identical wherever it is used.
-//
-// Names are checked against ICONS at call time: a typo in an icon name is
-// otherwise an invisible empty box, and finding that by eye is miserable.
+// Two entry points for the app's two rendering styles: `Icon` for the Preact
+// views, `iconEl` for the plain-DOM chrome. Names are validated because a typo
+// otherwise renders an invisible empty box.
 import { h, htm } from '../explore-vendor.js';
 
 const html = htm.bind(h);
@@ -22,11 +19,8 @@ function idFor(name) {
   return `#i-${name}`;
 }
 
-/** An icon for the Preact views.
- *
- * `title` makes it a labelled image; without one it is decoration and hidden
- * from assistive tech, because the text beside it already says what it is.
- */
+/** An icon for the Preact views. With no `title` it is decoration, and hidden
+ *  from assistive tech. */
 export function Icon({ name, size, title, class: cls }) {
   const px = size || 16;
   return html`
@@ -53,8 +47,6 @@ export function iconEl(name, { size = 16, title = '', cls = '' } = {}) {
     svg.setAttribute('aria-hidden', 'true');
   }
   const use = document.createElementNS(NS, 'use');
-  // setAttribute, not setAttributeNS with the xlink namespace: every browser the
-  // app supports reads the plain href, and the xlink form is deprecated.
   use.setAttribute('href', idFor(name));
   svg.appendChild(use);
   return svg;

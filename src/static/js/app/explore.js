@@ -37,11 +37,8 @@ const FACET_GROUPS = [
 const DEBOUNCE_MS = 250;
 const FOLLOW_MS = 4000;
 
-// A facet row has three states, cycled by clicking it: not filtered, only this
-// value, everything but this value. Each has its own shape, so the difference
-// never rests on colour alone. Drawn as icons rather than the ☐/☑/☒ characters
-// they replaced: those three render at wildly different weights and widths
-// depending on the platform's emoji font, so a column of them never lined up.
+// Clicking a facet row cycles it: not filtered, only this value, everything but
+// it. Icons rather than ☐/☑/☒, whose width varies by platform font.
 const FACET_STATE = {
   off: { icon: 'box', cls: '', hint: 'click to show only this' },
   include: { icon: 'box-check', cls: ' on', hint: 'only this — click to exclude it instead' },
@@ -276,8 +273,7 @@ function App() {
     } else if (action === 'copy-term') {
       flash(await copyText(term) ? 'Copied ' + term : 'Copy blocked by the browser');
     } else if (action === 'filter' || action === 'exclude') {
-      // Through setTermState rather than appended: picking "Exclude" for a value
-      // already filtered in has to flip it, not leave `host:a -host:a` behind.
+      // setTermState, not append: Exclude on an included value must flip it.
       setDraft(setTermState(draft, key, field.value,
                             action === 'filter' ? 'include' : 'exclude'));
     } else if (action === 'replace') {
@@ -300,10 +296,6 @@ function App() {
   const rangeLabel = custom
     ? `${clockTime(custom.from)} – ${clockTime(custom.to)}`
     : (RANGES.find(r => r.key === range) || {}).label;
-  // The example in the search box uses the busiest host in the current window,
-  // so it is a query that would actually return something here. A baked-in
-  // hostname is both useless to the reader and, in a public repo, a small leak
-  // of whoever's machine the example was written on.
   const hint = placeholderFor(data);
 
   return html`

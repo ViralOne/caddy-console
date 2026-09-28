@@ -145,8 +145,8 @@ class _Intern:
     def ids_matching_path(self, paths):
         """Ids whose value, minus any query string, is one of `paths`.
 
-        Exact rather than a prefix, so a path facet's count is what filtering on
-        that row returns — in either polarity.
+        Exact rather than a prefix, so a path facet's count equals what filtering
+        on that row returns.
         """
         wanted = {p.lower().split("?", 1)[0] for p in paths}
         return {i for i, low in enumerate(self.lowers)

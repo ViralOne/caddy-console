@@ -1,8 +1,5 @@
-<!-- Tab icon: the app mark knocked out of a filled badge.
-     A badge rather than bare strokes because a favicon sits on whatever colour
-     the browser chrome happens to be, and a thin arch disappears on a dark tab
-     strip. #1f6feb is the accent one step darker than the UI's --accent, which
-     keeps white above 4.5:1 on it. -->
+<!-- Tab icon: the mark on a badge, because a thin arch disappears on a dark tab
+     strip. #1f6feb keeps white above 4.5:1. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"
      role="img" aria-label="Caddy Console">
   <rect width="32" height="32" rx="7" fill="#1f6feb"/>

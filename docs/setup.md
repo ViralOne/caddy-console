@@ -132,6 +132,38 @@ History is whatever Caddy has kept. `roll_size × roll_keep` caps the disk used 
 about 60 MB or 7 days. The explorer reads rolled `.gz` archives too, so raising
 `roll_keep` directly extends how far back you can search.
 
+## Running a custom Caddy build
+
+Plugin builds work as-is. If your Caddyfile uses a DNS provider for DNS-01 —
+
+```
+tls {
+	dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+}
+```
+
+— point the `caddy` service at a build that carries the module and nothing else
+changes:
+
+```yaml
+image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.4-alpine
+```
+
+Validation is done by that container, through its admin API (`POST /adapt`), so
+whatever modules it has are the modules your config is checked against. The
+console also ships a plain Caddy binary, but only for `caddy fmt` and as a
+fallback when the admin API is unreachable.
+
+If you rely on that fallback and your config needs a plugin, build the console
+image against a matching Caddy:
+
+```bash
+docker build --build-arg CADDY_IMAGE=ghcr.io/caddybuilds/caddy-cloudflare:2.11.4-alpine .
+```
+
+Without it, the fallback reports `module not registered: dns.providers.cloudflare`
+for a config that loads fine.
+
 ## Upstream health checks
 
 Health status on the dashboard comes from Caddy's active health checks. Without

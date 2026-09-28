@@ -149,3 +149,80 @@ class SmartValidateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdaptValidationTest(unittest.TestCase):
+    """Validation goes through the running Caddy, so plugins always match.
+
+    Validating a `tls { dns cloudflare }` config with the bundled plain binary
+    reports "module not registered" for a config that loads fine.
+    """
+
+    def setUp(self):
+        validator._cache.clear()
+        self._real_post = validator.http_client.post
+        self._real_run = validator.run_caddy
+        self.posts = []
+        self.ran = []
+
+        def fake_run(argv, timeout=None):
+            self.ran.append(argv)
+            return (0, "", "")
+
+        validator.run_caddy = fake_run
+
+    def tearDown(self):
+        validator.http_client.post = self._real_post
+        validator.run_caddy = self._real_run
+        validator._cache.clear()
+
+    def _respond(self, status, body=""):
+        posts = self.posts
+
+        class Resp:
+            status_code = status
+            text = body
+
+        def fake_post(url, **kw):
+            posts.append((url, kw))
+            return Resp()
+
+        validator.http_client.post = fake_post
+
+    def test_adapt_success_is_valid_and_skips_the_local_binary(self):
+        self._respond(200, '{"apps":{}}')
+        ok, message = validator.caddy_validate("example.com {\n}\n")
+        self.assertTrue(ok, message)
+        self.assertTrue(self.posts, "should have asked the running Caddy")
+        self.assertTrue(self.posts[0][0].endswith("/adapt"))
+        self.assertEqual(self.posts[0][1]["headers"]["Content-Type"], "text/caddyfile")
+        self.assertEqual(self.ran, [], "must not fall back when /adapt answered")
+
+    def test_adapt_rejection_is_reported_verbatim(self):
+        # What the user actually sees when a directive is wrong.
+        self._respond(400, "getting module named 'dns.providers.cloudflare'")
+        ok, message = validator.caddy_validate("x")
+        self.assertFalse(ok)
+        self.assertIn("dns.providers.cloudflare", message)
+
+    def test_unreachable_admin_api_falls_back_to_the_local_binary(self):
+        def boom(url, **kw):
+            raise validator.http_client.RequestException("connection refused")
+
+        validator.http_client.post = boom
+        ok, _ = validator.caddy_validate("y")
+        self.assertTrue(ok)
+        self.assertTrue(self.ran, "should have fallen back to the binary")
+        self.assertIn("validate", self.ran[0])
+
+    def test_a_rejection_is_not_confused_with_an_outage(self):
+        # A 400 is an answer about the config; only a transport failure is not.
+        self._respond(400, "bad")
+        validator.caddy_validate("z")
+        self.assertEqual(self.ran, [])
+
+    def test_adapt_results_are_cached_like_the_binary_path(self):
+        self._respond(200, "{}")
+        validator.caddy_validate("same")
+        validator.caddy_validate("same")
+        self.assertEqual(len(self.posts), 1)

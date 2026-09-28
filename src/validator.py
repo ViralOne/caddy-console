@@ -6,6 +6,10 @@ import tempfile
 import threading
 import time
 
+import requests as http_client
+
+from .config import CADDY_API_URL
+
 DOMAIN_RE = re.compile(
     r'^(\*\.)?([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$'
 )
@@ -97,12 +101,55 @@ def caddy_fmt(content: str) -> str:
     return formatted
 
 
+def _adapt_via_admin_api(content: str):
+    """Validate against the running Caddy via POST /adapt, which never loads it.
+
+    The bundled binary is plain Caddy, but the Caddy being configured is often a
+    custom build, and validating locally then rejects configs that load fine:
+    "module not registered: dns.providers.cloudflare". Asking the server that
+    will load the config makes the plugin set match by construction.
+
+    Returns (is_valid, message), or None if the API was unreachable — an outage
+    must fall through to the binary rather than read as a bad config.
+    """
+    try:
+        resp = http_client.post(
+            f"{CADDY_API_URL}/adapt",
+            data=content.encode(),
+            headers={"Content-Type": "text/caddyfile"},
+            timeout=CADDY_TIMEOUT,
+        )
+    except Exception:
+        return None
+    if resp.status_code == 200:
+        return (True, "Config is valid")
+    return (False, _admin_error(resp))
+
+
+def _admin_error(resp) -> str:
+    """The admin API reports errors as {"error": "..."}; show just the message."""
+    try:
+        message = resp.json().get("error")
+    except Exception:
+        message = None
+    return (message or resp.text or "").strip() or f"caddy rejected the config (HTTP {resp.status_code})"
+
+
 def caddy_validate(content: str) -> tuple[bool, str]:
-    """Run caddy validate and return (is_valid, message)."""
+    """Validate a Caddyfile and return (is_valid, message).
+
+    Prefers the running Caddy's adapter, falling back to the bundled binary when
+    the admin API is unreachable.
+    """
     key = _cache_key("validate", content)
     cached = _cache_get(key)
     if cached is not None:
         return cached
+
+    remote = _adapt_via_admin_api(content)
+    if remote is not None:
+        _cache_put(key, remote)
+        return remote
 
     rc, stdout, stderr = _run_on_temp_config(
         content,

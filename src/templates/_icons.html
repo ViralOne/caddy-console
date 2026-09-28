@@ -1,12 +1,6 @@
-<!-- Icon sprite, inlined once per page.
-     Inlined rather than referenced as /static/img/icons.svg because an external
-     <use href> costs a second request and has a long history of browser quirks;
-     inline, a <use> is just a DOM lookup.
-
-     Every symbol is drawn on the same 24 grid with a 2px stroke and round caps,
-     so they sit at one optical weight beside 15px text. Strokes inherit
-     currentColor from .icon, which is why a facet row's state colour reaches its
-     checkbox without a second rule. Filled parts opt in explicitly. -->
+<!-- Icon sprite, inlined once per page so a <use> is a DOM lookup rather than a
+     second request. Every symbol shares the 24 grid and 2px stroke, so they sit
+     at one optical weight beside 15px text, and inherit currentColor. -->
 <svg class="icon-sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
   <defs>
 
@@ -23,8 +17,7 @@
       <path d="M15.8 15.8 21 21"/>
     </symbol>
 
-    <!-- Facet states: off, only this, everything but this. Three distinct
-         shapes, so the meaning does not rest on colour alone. -->
+    <!-- Facet states: three shapes, so meaning never rests on colour alone. -->
     <symbol id="i-box" viewBox="0 0 24 24">
       <rect x="4" y="4" width="16" height="16" rx="3.5"/>
     </symbol>
@@ -62,8 +55,7 @@
     <symbol id="i-filter" viewBox="0 0 24 24">
       <path d="M4.5 5.5h15l-6 7.2v5.8l-3 1.5v-7.3z"/>
     </symbol>
-    <!-- Live: a source emitting. The centre is filled so "on" reads at a
-         glance, which is the whole job of this one. -->
+    <!-- Live: filled centre, so "on" reads at a glance. -->
     <symbol id="i-live" viewBox="0 0 24 24">
       <circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>
       <path d="M7.9 7.9a5.8 5.8 0 0 0 0 8.2M16.1 7.9a5.8 5.8 0 0 1 0 8.2"/>
