@@ -10,7 +10,7 @@
 }
 
 :80 {
-	reverse_proxy caddy-editor:9090 {
+	reverse_proxy caddy-console:9090 {
 		header_up Cf-Access-Authenticated-User-Email dev@local
 	}
 }

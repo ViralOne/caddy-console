@@ -1,29 +1,29 @@
 # Setup
 
-How to get Caddy Editor running against a real Caddy instance. If you just want
+How to get Caddy Console running against a real Caddy instance. If you just want
 to poke at it locally, see [development.md](development.md) instead.
 
 ## What you end up with
 
 ```
-internet → Cloudflare Access (auth) → cloudflared tunnel → caddy-editor:9090
+internet → Cloudflare Access (auth) → cloudflared tunnel → caddy-console:9090
 internet → Cloudflare proxy (SSL)  → caddy:80/443       → your services
 ```
 
 Three containers:
 
 - **caddy** — the reverse proxy serving your sites (ports 80/443)
-- **caddy-editor** — the web UI (no port published; reached through the tunnel)
-- **cloudflared** — the tunnel that exposes the editor without opening a port
+- **caddy-console** — the web UI (no port published; reached through the tunnel)
+- **cloudflared** — the tunnel that exposes the console without opening a port
 
 All three share the same `./Caddyfile` through volume mounts. Saving in the UI
 rewrites that file and reloads Caddy through its admin API
 (`POST http://caddy:2019/load`), so there is no downtime and no container restart.
 
-`docker-compose.prod.yaml` puts the editor and the tunnel on their own `editor`
-network. Caddy sits on both `editor` and `default`, so the containers you proxy to
+`docker-compose.prod.yaml` puts the console and the tunnel on their own `console`
+network. Caddy sits on both `console` and `default`, so the containers you proxy to
 can live on `default` and be reachable by Caddy **without** being able to reach the
-editor or Caddy's admin API.
+console or Caddy's admin API.
 
 ## 1. Start it
 
@@ -93,7 +93,7 @@ app.yourdomain.com {
 }
 ```
 
-The `caddy-logs` volume is shared between the Caddy and editor containers, which
+The `caddy-logs` volume is shared between the Caddy and console containers, which
 both compose files already configure. To use a different path, set
 `CADDY_LOG_FILE` in `.env` to match your Caddyfile.
 
@@ -174,7 +174,7 @@ dashboard uses for server-level counters:
 1. Add your domain to Cloudflare (nameservers must point to CF)
 2. SSL/TLS mode → **Full** (Caddy uses local certs, CF handles public SSL)
 3. Zero Trust → Tunnels → create tunnel, copy token to `CLOUDFLARE_TUNNEL_TOKEN`
-4. Tunnel public hostname: `ceditor.yourdomain.com` → `http://caddy-editor:9090`
+4. Tunnel public hostname: `caddy-console.yourdomain.com` → `http://caddy-console:9090`
 5. Zero Trust → Access → Applications → add policy (email OTP for your allowed emails)
 6. Open the application, click on Application settings (tab) -> AUD tag into `CF_ACCESS_TEAM_DOMAIN`
 
@@ -213,8 +213,8 @@ docker compose -f docker-compose.prod.yaml up -d
 docker compose -f docker-compose.prod.yaml logs -f
 
 # Update (pull new image from GHCR)
-docker compose -f docker-compose.prod.yaml pull caddy-editor
-docker compose -f docker-compose.prod.yaml up -d caddy-editor
+docker compose -f docker-compose.prod.yaml pull caddy-console
+docker compose -f docker-compose.prod.yaml up -d caddy-console
 
 # Restart caddy (only needed for admin address changes or image upgrades)
 docker compose -f docker-compose.prod.yaml restart caddy

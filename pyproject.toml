@@ -1,5 +1,5 @@
 [project]
-name = "caddy-editor"
+name = "caddy-console"
 version = "0.1.0"
 description = "Minimal web UI to edit Caddyfile with Google OAuth"
 requires-python = ">=3.10"

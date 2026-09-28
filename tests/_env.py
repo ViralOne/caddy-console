@@ -7,7 +7,7 @@ so the tests never touch /etc/caddy or /backups.
 import os
 import tempfile
 
-ROOT = tempfile.mkdtemp(prefix="caddy-editor-test-")
+ROOT = tempfile.mkdtemp(prefix="caddy-console-test-")
 BACKUP_DIR = os.path.join(ROOT, "backups")
 CADDYFILE = os.path.join(ROOT, "Caddyfile")
 AUDIT_LOG = os.path.join(BACKUP_DIR, "audit.log")

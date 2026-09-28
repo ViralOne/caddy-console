@@ -1,5 +1,5 @@
 # Starting config for the local dev stack. dev/run.sh copies this to
-# dev/run/Caddyfile, which is the file the editor actually reads and writes, so
+# dev/run/Caddyfile, which is the file the console actually reads and writes, so
 # saving in the UI never dirties this seed.
 {
 	admin 0.0.0.0:2019

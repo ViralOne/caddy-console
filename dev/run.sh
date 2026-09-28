@@ -18,12 +18,12 @@ case "${1:-up}" in
   up)
     seed
     "${COMPOSE[@]}" up -d --build
-    printf 'waiting for the editor to come up'
+    printf 'waiting for the console to come up'
     for _ in $(seq 1 60); do
       if curl -sf -o /dev/null "$URL/health"; then
         echo " ok"
         echo
-        echo "  editor      $URL"
+        echo "  console     $URL"
         echo "  dev target  http://localhost:8081  (try: curl -H 'Host: hello.example.com' http://localhost:8081)"
         echo "  config      dev/run/Caddyfile"
         echo
@@ -34,7 +34,7 @@ case "${1:-up}" in
       sleep 1
     done
     echo " timed out"
-    "${COMPOSE[@]}" logs --tail 40 caddy-editor
+    "${COMPOSE[@]}" logs --tail 40 caddy-console
     exit 1
     ;;
   down)

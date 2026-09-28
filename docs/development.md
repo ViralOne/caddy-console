@@ -18,15 +18,15 @@ Then open <http://localhost:8888>. It starts three containers:
 | Container | Role |
 |---|---|
 | `caddy-front` | Stands in for Cloudflare Access; the only thing you browse to |
-| `caddy-editor` | The app, with `--reload` and `./src` bind-mounted |
+| `caddy-console` | The app, with `--reload` and `./src` bind-mounted |
 | `caddy-target` | The Caddy whose config you are editing, on :8081 |
 
-`dev/run/Caddyfile` is the file the editor reads and writes, copied from
+`dev/run/Caddyfile` is the file the console reads and writes, copied from
 `dev/Caddyfile.seed` on first run — so saving in the UI never dirties the seed.
 
 Python edits reload automatically. CSS, template and JS edits need a browser
 refresh; **Jinja caches templates outside debug mode**, so a change to
-`index.html` needs `docker compose -f docker-compose.dev.yaml restart caddy-editor`.
+`index.html` needs `docker compose -f docker-compose.dev.yaml restart caddy-console`.
 
 ## Seeding log data
 

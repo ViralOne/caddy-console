@@ -1,5 +1,5 @@
 {
-  "name": "caddy-editor",
+  "name": "caddy-console",
   "version": "1.0.0",
   "description": "Web UI to edit your Caddyfile. Google OAuth, backup/restore with diff, validate before save.",
   "main": "index.js",
@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ViralOne/caddy-web-editor.git"
+    "url": "git+https://github.com/ViralOne/caddy-console.git"
   },
   "keywords": [],
   "author": "",
@@ -18,9 +18,9 @@
   "//type": "ESM so Node can import the browser modules under src/static/js/app directly in tests; nothing here is CommonJS.",
   "type": "module",
   "bugs": {
-    "url": "https://github.com/ViralOne/caddy-web-editor/issues"
+    "url": "https://github.com/ViralOne/caddy-console/issues"
   },
-  "homepage": "https://github.com/ViralOne/caddy-web-editor#readme",
+  "homepage": "https://github.com/ViralOne/caddy-console#readme",
   "devDependencies": {
     "@codemirror/commands": "^6.11.0",
     "@codemirror/language": "^6.12.4",

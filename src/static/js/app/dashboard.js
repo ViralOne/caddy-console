@@ -205,7 +205,7 @@ function App() {
 
       <div class="section-title">
         <span>Recent changes</span>
-        <span class="section-basis">from the editor's audit log</span>
+        <span class="section-basis">from this console's audit log</span>
       </div>
       ${(() => {
         const entries = (data.audit?.entries || []).slice(0, 8);

@@ -5,8 +5,8 @@
 #
 # There is no real authentication here: caddy-front injects the identity header
 # that Cloudflare Access would normally set, so anyone who can reach the port is
-# a logged-in editor. Every published port is therefore bound to 127.0.0.1.
-name: caddy-editor-dev
+# a logged-in console user. Every published port is therefore bound to 127.0.0.1.
+name: caddy-console-dev
 
 services:
   # Stands in for Cloudflare Access, and is the only entrypoint you browse to.
@@ -18,9 +18,9 @@ services:
     volumes:
       - ./dev/Caddyfile.front:/etc/caddy/Caddyfile:ro
     depends_on:
-      - caddy-editor
+      - caddy-console
 
-  caddy-editor:
+  caddy-console:
     build: .
     restart: unless-stopped
     # --reload picks up Python edits; the bind mount below makes CSS/JS/template
@@ -40,7 +40,7 @@ services:
       CADDY_LOG_FILE: /var/log/caddy/access.log
       SERVER_URL: http://localhost:8888
     volumes:
-      # The editor and caddy-target must share the same Caddyfile.
+      # The console and caddy-target must share the same Caddyfile.
       - ./dev/run/Caddyfile:/etc/caddy/Caddyfile
       - ./dev/run/backups:/backups
       - caddy-logs:/var/log/caddy
@@ -53,7 +53,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # The Caddy instance whose config the editor edits and reloads.
+  # The Caddy instance whose config the console edits and reloads.
   caddy-target:
     image: caddy:2.11.4-alpine
     restart: unless-stopped
