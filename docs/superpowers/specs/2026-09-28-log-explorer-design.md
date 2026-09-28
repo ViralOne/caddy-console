@@ -76,17 +76,33 @@ existing incremental scan (same anchor, same offset resume, same rebuild rules):
 | `size` | `array('q')` | |
 | `host_id`, `method_id`, `uri_id` | `array('i')` | interned via `{str: int}` |
 
-Roughly 30 bytes per event, so 200k events is about 6 MB — cheap enough to hold
-the whole window and query it repeatedly. Columnar rather than a list of tuples
-because Python object overhead would make the same data ~140 bytes per event.
+The columns themselves are 38 bytes per event. **Measured** against a generated
+100 MB log (277,305 entries, 378 B/entry, twelve hosts): the index holds all of
+them, peak RSS grows 55 MB during the build (≈209 B/event, most of it transient
+JSON-parsing garbage rather than retained data) and the build takes 4.6 s.
+Columnar rather than a list of tuples because Python object overhead would make
+the retained data ~140 bytes per event instead of 38.
 
 `MAX_EVENTS` (default 200k, configurable) caps retention. When the window holds
 more, the oldest are dropped and the response says so, so a count is never
 silently short.
 
-A query is then a single pass of integer comparisons over the arrays —
-tens of milliseconds for 200k events — producing a match index list, from which
-facets, histogram, summary stats and the page of entries are all derived.
+A query is then a single pass of integer comparisons over the arrays, producing
+a match index list from which facets, histogram, summary stats and the page of
+entries are all derived. **Measured** at 277k indexed events:
+
+| query | time | matches |
+|---|---|---|
+| (unfiltered) | 278 ms | 277,304 |
+| `status:5xx` | 168 ms | 7,676 |
+| `host:nas.example.com status:5xx` | 73 ms | 631 |
+| `path:/api` | 153 ms | 83,298 |
+| free text `ugreen` | 71 ms | 27,847 |
+| 1h range | 0.5 ms | 0 |
+
+Narrower queries are cheaper because facet counting dominates, and a bisected
+time range is nearly free. At the default 10 MB window (~28k events) everything
+is comfortably under 30 ms; the figures above are the 100 MB worst case.
 
 **Exact percentiles come free.** Because a query has the matching durations in
 hand, p95 is computed directly. The superseded spec's 12-bin latency histogram
@@ -221,11 +237,17 @@ reproduce the three-views-of-one-dataset problem this spec exists to remove.
 
 ## Risks
 
-- **Memory.** A 100 MB window of slim entries is roughly 350k events, above the
-  200k default cap. Either the cap drops events (reported) or it is raised at a
-  known cost of ~30 bytes per event. Worth measuring on the real log before
-  choosing the default.
-- **Query cost grows with the index.** 200k events per query is fine; if the cap
-  is raised a lot, filtering needs revisiting (bitmap indexes per facet value).
+- **Memory, measured.** A 100 MB window is ~277k events, above the 200k default
+  cap, so selecting 100 MB drops roughly the oldest 28% (reported as `dropped`).
+  The default 10 MB window is ~28k events and nowhere near the cap. Raising the
+  cap costs ~38 bytes per event retained and rather more at peak.
+- **First query after a rebuild blocks.** Building the index from a 100 MB window
+  takes 4.6 s, and it happens on window change, rotation, or re-anchor. At the
+  10 MB default it is ~0.5 s. If this becomes annoying, build off the request
+  thread and serve a "warming" response rather than making the user wait.
+- **Unfiltered queries are the slow case** (278 ms at 277k events) because facet
+  counting dominates; filtered ones are 70-170 ms. Fine behind a 250 ms debounce
+  at realistic window sizes, but if the cap is raised a lot, facet counting needs
+  bitmap indexes per value rather than per-query dict counting.
 - **Scope.** This deletes three working features in stage 4. If stage 3 stalls,
   stop before stage 4 rather than leaving the app with neither.

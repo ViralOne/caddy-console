@@ -44,3 +44,8 @@ AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", str(5 * 1024 * 1
 BACKUP_PREFIX = "Caddyfile."
 
 os.makedirs(BACKUP_DIR, exist_ok=True)
+
+# Events the explorer keeps in memory from the scanned window. Columnar storage
+# costs roughly 30 bytes each, so the default is about 6 MB. Past this the oldest
+# are dropped and the response reports how many, rather than quietly under-counting.
+EXPLORE_MAX_EVENTS = int(os.environ.get("CADDY_EXPLORE_MAX_EVENTS", "200000"))

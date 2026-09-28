@@ -2,6 +2,7 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime
 
 import requests as http_client
@@ -19,6 +20,7 @@ from ..config import (
     LOG_STATS_WINDOW_MAX_MB,
     LOG_STATS_WINDOW_MB,
 )
+from ..eventindex import event_index
 from ..logstats import log_stats
 from ..validator import run_caddy
 
@@ -262,6 +264,66 @@ def logstats():
     payload["window_mb"] = window_mb
     payload["window_max_mb"] = LOG_STATS_WINDOW_MAX_MB
     return jsonify(payload)
+
+
+RANGES = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}
+
+
+@ops_bp.route("/api/explore", methods=["GET"])
+@login_required
+def explore():
+    """Faceted query over the access log: entries, facets, histogram, stats.
+
+    Never returns a non-2xx for a bad query — a typo in the search box should
+    show zero results, not an error page.
+    """
+    args = request.args
+    window_mb = _window_mb(args.get("window_mb"))
+    from_ts, to_ts = _range(args)
+    try:
+        payload = event_index.query(
+            args.get("q", ""),
+            window_bytes=window_mb * 1024 * 1024,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            limit=_clamp_int(args.get("limit"), 200, 1, 1000),
+            before_ts=_float_or_none(args.get("before_ts")),
+            facet_limit=_clamp_int(args.get("facet_limit"), 50, 1, 200),
+        )
+    except OSError as e:
+        return jsonify({"error": f"Could not read the access log: {e}",
+                        "exists": False, "entries": [], "total": 0})
+    payload["window_mb"] = window_mb
+    payload["window_max_mb"] = LOG_STATS_WINDOW_MAX_MB
+    payload["ranges"] = list(RANGES)
+    return jsonify(payload)
+
+
+def _range(args):
+    """Resolve from/to. Explicit timestamps win, then a named range, else all."""
+    explicit_from = _float_or_none(args.get("from"))
+    explicit_to = _float_or_none(args.get("to"))
+    if explicit_from is not None or explicit_to is not None:
+        return explicit_from, explicit_to
+    seconds = RANGES.get(args.get("range", ""))
+    if seconds is None:
+        return None, None
+    now = time.time()
+    return now - seconds, now
+
+
+def _float_or_none(raw):
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clamp_int(raw, default, low, high):
+    try:
+        return max(low, min(int(raw), high))
+    except (TypeError, ValueError):
+        return default
 
 
 def _window_mb(raw):
