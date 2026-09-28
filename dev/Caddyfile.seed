@@ -11,8 +11,16 @@
 		output file /var/log/caddy/access.log {
 			roll_size 10mb
 			roll_keep 3
+			roll_keep_for 168h
 		}
-		format json
+		# Headers are ~90% of each entry and carry auth tokens in plaintext, so
+		# both maps are dropped. The dev stack runs this so the syntax is
+		# exercised on every `dev/run.sh up`.
+		format filter {
+			wrap json
+			request>headers delete
+			resp_headers delete
+		}
 	}
 }
 

@@ -1,8 +1,7 @@
 // Correctness + performance tests for src/static/js/app/diff.js
 //
-// diff.js is a classic browser script, so we load it by evaluating its source
-// with a stubbed `document`. Run with: node tests/diff.test.mjs
-import fs from 'node:fs';
+// diff.js is an ES module, so it is imported directly against a stubbed global
+// `document`. Run with: node tests/diff.test.mjs
 import path from 'node:path';
 import assert from 'node:assert/strict';
 
@@ -21,17 +20,18 @@ function loadDiff() {
       return c;
     },
   });
-  const document = {
+  // diff.js only touches the DOM inside its functions, so a global stub is
+  // enough and the module can be imported normally.
+  globalThis.document = {
     createElement: () => makeEl(),
     createDocumentFragment: () => makeEl(true),
     getElementById: () => makeEl(),
   };
-  const src = fs.readFileSync(SRC, 'utf8');
-  const factory = new Function('document', `${src}\nreturn { diffLines, renderDiffInto };`);
-  return { ...factory(document), document, makeEl };
+  return { makeEl };
 }
 
-const { diffLines, renderDiffInto, makeEl } = loadDiff();
+const { makeEl } = loadDiff();
+const { diffLines, renderDiffInto } = await import(SRC);
 
 // --- Reference implementation: the original O(n*m) LCS. Slow but known-correct,
 // and it produces a provably minimal number of changes.

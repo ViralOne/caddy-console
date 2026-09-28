@@ -3,53 +3,10 @@
 // Every match is highlighted, the current one is emphasised, and its whole row
 // is tinted and scrolled to the middle of the viewport so it's obvious where the
 // editor jumped to.
-const { Decoration, StateEffect, StateField, RangeSetBuilder } = window.CM;
+import { editorView, getContent, setDot, setStatus } from './core.js';
+import { searchHighlightField, setSearchState } from './search-highlight.js';
 
-// The full match list plus which one is current. Ranges are mapped through
-// document changes so the highlights survive an edit or a Replace.
-const setSearchState = StateEffect.define();
-
-const searchHighlightField = StateField.define({
-  create: () => ({ matches: [], current: -1 }),
-  update(value, tr) {
-    for (const e of tr.effects) if (e.is(setSearchState)) return e.value;
-    if (!tr.docChanged || value.matches.length === 0) return value;
-    const matches = [];
-    for (const m of value.matches) {
-      const from = tr.changes.mapPos(m.from, 1), to = tr.changes.mapPos(m.to, -1);
-      if (to > from) matches.push({ from, to });
-    }
-    return { matches, current: Math.min(value.current, matches.length - 1) };
-  },
-});
-
-const matchMark = Decoration.mark({ class: 'cm-find-match' });
-const currentMark = Decoration.mark({ class: 'cm-find-match-current' });
-const currentLine = Decoration.line({ class: 'cm-find-row' });
-
-const searchHighlighter = EditorView.decorations.compute([searchHighlightField], (state) => {
-  const { matches, current } = state.field(searchHighlightField);
-  if (matches.length === 0) return Decoration.none;
-  const builder = new RangeSetBuilder();
-  // A RangeSetBuilder needs ranges added in document order, and a line
-  // decoration at the start of a line sorts before a mark inside it.
-  const currentFrom = current >= 0 && matches[current] ? matches[current].from : -1;
-  const lineStart = currentFrom >= 0 ? state.doc.lineAt(currentFrom).from : -1;
-  let linePlaced = false;
-  for (let i = 0; i < matches.length; i++) {
-    const m = matches[i];
-    if (!linePlaced && lineStart >= 0 && lineStart <= m.from) {
-      builder.add(lineStart, lineStart, currentLine);
-      linePlaced = true;
-    }
-    builder.add(m.from, m.to, i === current ? currentMark : matchMark);
-  }
-  if (!linePlaced && lineStart >= 0) builder.add(lineStart, lineStart, currentLine);
-  return builder.finish();
-});
-
-// Registered from initEditor().
-const findHighlightExtension = [searchHighlightField, searchHighlighter];
+const { EditorView } = window.CM;
 
 function _query() { return document.getElementById('search-input').value; }
 
@@ -100,17 +57,17 @@ function _goto(matches, index) {
 
 // Recompute matches as the user types, keeping the highlight on the match
 // nearest the cursor without yanking the viewport around.
-window.doSearch = function() {
+export function doSearch() {
   const matches = _findMatches(_query());
   const cursor = editorView.state.selection.main.from;
   let current = matches.findIndex(m => m.from >= cursor);
   if (current === -1) current = matches.length ? 0 : -1;
   editorView.dispatch({ effects: setSearchState.of({ matches, current }) });
   _showCount(matches, current);
-};
+}
 
-window.searchNext = function() { _step(1); };
-window.searchPrev = function() { _step(-1); };
+export function searchNext() { _step(1); }
+export function searchPrev() { _step(-1); }
 
 function _step(dir) {
   let { matches, current } = _state();
@@ -128,28 +85,28 @@ function _step(dir) {
   _goto(matches, next);
 }
 
-window.toggleSearch = function() {
+export function toggleSearch() {
   const bar = document.getElementById('search-bar');
   bar.classList.toggle('open');
   if (bar.classList.contains('open')) {
     const input = document.getElementById('search-input');
     input.focus();
     input.select();
-    if (input.value) window.doSearch();
+    if (input.value) doSearch();
   } else {
-    window.closeSearch();
+    closeSearch();
   }
-};
+}
 
-window.closeSearch = function() {
+export function closeSearch() {
   document.getElementById('search-bar').classList.remove('open');
   document.getElementById('match-count').textContent = '';
   if (!editorView) return;  // editor never initialised (e.g. load failed)
   editorView.dispatch({ effects: setSearchState.of({ matches: [], current: -1 }) });
   editorView.focus();
-};
+}
 
-window.replaceOne = function() {
+export function replaceOne() {
   const q = _query(); if (!q) return;
   const r = document.getElementById('replace-input').value;
   const sel = editorView.state.selection.main;
@@ -170,10 +127,10 @@ window.replaceOne = function() {
     _showCount(matches, -1);
     return;
   }
-  window.searchNext();
-};
+  searchNext();
+}
 
-window.replaceAll = function() {
+export function replaceAll() {
   const q = _query(); if (!q) return;
   const r = document.getElementById('replace-input').value;
   const matches = _findMatches(q);
@@ -184,5 +141,5 @@ window.replaceAll = function() {
   });
   setDot('yellow');
   setStatus(`Replaced ${matches.length} match${matches.length !== 1 ? 'es' : ''}`, 'info');
-  window.doSearch();
-};
+  doSearch();
+}

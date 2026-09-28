@@ -5,12 +5,21 @@ import threading
 from datetime import datetime
 
 import requests as http_client
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from ..audit import iter_entries, tail_lines
 from ..auth import login_required
 from ..caddy_api import get_servers
-from ..config import AUDIT_LOG, BACKUP_DIR, BACKUP_PREFIX, CADDY_API_URL, CADDYFILE
+from ..config import (
+    AUDIT_LOG,
+    BACKUP_DIR,
+    BACKUP_PREFIX,
+    CADDY_API_URL,
+    CADDYFILE,
+    LOG_STATS_WINDOW_MAX_MB,
+    LOG_STATS_WINDOW_MB,
+)
+from ..logstats import log_stats
 from ..validator import run_caddy
 
 ops_bp = Blueprint("ops", __name__)
@@ -233,6 +242,35 @@ def traffic():
         return jsonify({"error": f"Connection failed to {CADDY_API_URL}/metrics: {e}", "sites": {}})
     except Exception as e:
         return jsonify({"error": f"{type(e).__name__}: {e}", "sites": {}})
+
+
+@ops_bp.route("/api/logstats", methods=["GET"])
+@login_required
+def logstats():
+    """Per-host traffic figures from the access log.
+
+    Complements /api/traffic, which can only report per server because Caddy's
+    metrics carry no host label. Never returns an error status: the panel is a
+    supplement to the Prometheus figures and must not take the tab down with it.
+    """
+    window_mb = _window_mb(request.args.get("window_mb"))
+    host = request.args.get("host") or None
+    try:
+        payload = log_stats.snapshot(window_mb * 1024 * 1024, host=host)
+    except OSError as e:
+        payload = {"error": f"Could not read the access log: {e}", "sites": {}, "exists": False}
+    payload["window_mb"] = window_mb
+    payload["window_max_mb"] = LOG_STATS_WINDOW_MAX_MB
+    return jsonify(payload)
+
+
+def _window_mb(raw):
+    """Clamp the requested window to 1..LOG_STATS_WINDOW_MAX_MB megabytes."""
+    try:
+        requested = int(raw)
+    except (TypeError, ValueError):
+        return LOG_STATS_WINDOW_MB
+    return max(1, min(requested, LOG_STATS_WINDOW_MAX_MB))
 
 
 def _server_maps():

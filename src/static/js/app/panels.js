@@ -1,5 +1,7 @@
 // Side panels: open/close behaviour + Audit, Status, and Snippets loaders.
-window.togglePanel = function(name) {
+import { clearPreview, loadBackups } from './backups.js';
+import { editorView, fetchJson, setDot, showError } from './core.js';
+export function togglePanel(name) {
   const panel = document.getElementById(`panel-${name}`); const isOpen = panel.classList.contains('open');
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('open'));
   document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
@@ -8,14 +10,14 @@ window.togglePanel = function(name) {
   const btn = document.getElementById(`panel-btn-${name}`);
   if (btn) btn.classList.add('panel-active');
   if (name==='backups') loadBackups(); if (name==='audit') loadAudit(); if (name==='status') loadStatusPanel(); if (name==='snippets') loadSnippets();
-};
-window.closePanel = function(name) {
+}
+export function closePanel(name) {
   document.getElementById(`panel-${name}`).classList.remove('open');
   document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
   if (name === 'backups') clearPreview();
-};
+}
 
-async function loadAudit() {
+export async function loadAudit() {
   const list = document.getElementById('audit-list');
   let data;
   try { data = await fetchJson('/api/audit'); }
@@ -31,7 +33,7 @@ async function loadAudit() {
   });
 }
 
-async function loadStatusPanel() {
+export async function loadStatusPanel() {
   const body = document.getElementById('status-body');
   let data;
   try { data = await fetchJson('/api/status'); }
@@ -46,7 +48,7 @@ async function loadStatusPanel() {
   });
 }
 
-async function loadSnippets() {
+export async function loadSnippets() {
   const list = document.getElementById('snippets-list');
   let data;
   try { data = await fetchJson('/api/snippets'); }
@@ -59,4 +61,4 @@ async function loadSnippets() {
     card.appendChild(name); card.appendChild(desc); list.appendChild(card);
   });
 }
-function insertSnippet(code) { const pos = editorView.state.selection.main.head; editorView.dispatch({ changes: { from: pos, insert: code } }); setDot('yellow'); window.closePanel('snippets'); }
+function insertSnippet(code) { const pos = editorView.state.selection.main.head; editorView.dispatch({ changes: { from: pos, insert: code } }); setDot('yellow'); closePanel('snippets'); }

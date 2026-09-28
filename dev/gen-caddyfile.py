@@ -16,8 +16,13 @@ HEADER = """{
 \t\toutput file /var/log/caddy/access.log {
 \t\t\troll_size 10mb
 \t\t\troll_keep 3
+\t\t\troll_keep_for 168h
 \t\t}
-\t\tformat json
+\t\tformat filter {
+\t\t\twrap json
+\t\t\trequest>headers delete
+\t\t\tresp_headers delete
+\t\t}
 \t}
 }
 """

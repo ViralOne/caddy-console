@@ -1,8 +1,14 @@
 // Backups panel: list, preview, diff, load-to-editor, and rollback+reload.
+import {
+  fetchJson, getContent, markSaved, setContent, setDot, setOriginal, setStatus,
+  setVersion, showError,
+} from './core.js';
+import { renderDiff } from './diff.js';
+import { closePanel } from './panels.js';
 let previewBackupContent = '';
 let currentPreviewName = '';
 
-async function loadBackups() {
+export async function loadBackups() {
   const list = document.getElementById('backups-list');
   clearPreview();
   let data;
@@ -38,28 +44,28 @@ async function previewBackup(name) {
   document.getElementById('backups-list').style.display = 'none'; document.getElementById('backup-preview').style.display = 'block';
   document.getElementById('preview-name').textContent = name.replace('Caddyfile.','');
   document.getElementById('preview-content').textContent = data.content;
-  renderDiff(getContent(), data.content); window.showPreviewTab('diff');
+  renderDiff(getContent(), data.content); showPreviewTab('diff');
 }
 
-window.showPreviewTab = function(tab) {
+export function showPreviewTab(tab) {
   document.getElementById('preview-content').style.display = tab==='preview'?'block':'none';
   document.getElementById('diff-content').style.display = tab==='diff'?'block':'none';
   document.getElementById('tab-btn-preview').classList.toggle('active', tab==='preview');
   document.getElementById('tab-btn-diff').classList.toggle('active', tab==='diff');
-};
+}
 
 // Drop the preview text and rendered diff so they aren't kept in the DOM (and
 // memory) after the panel closes. Safe to call when nothing is open.
-function clearPreview() {
+export function clearPreview() {
   previewBackupContent = ''; currentPreviewName = '';
   document.getElementById('preview-content').textContent = '';
   document.getElementById('diff-content').textContent = '';
   document.getElementById('backup-preview').style.display = 'none';
   document.getElementById('backups-list').style.display = 'block';
 }
-window.closePreview = function() { clearPreview(); };
-window.restoreFromPreview = function() { setContent(previewBackupContent); setStatus('Backup loaded (unsaved)', 'info'); setDot('yellow'); window.closePanel('backups'); };
-window.rollbackFromPreview = async function() {
+export function closePreview() { clearPreview(); }
+export function restoreFromPreview() { setContent(previewBackupContent); setStatus('Backup loaded (unsaved)', 'info'); setDot('yellow'); closePanel('backups'); };
+export async function rollbackFromPreview() {
   if (!currentPreviewName) return;
   const label = currentPreviewName.replace('Caddyfile.', '');
   if (!confirm(`Restore backup ${label} AND reload Caddy now?\n\nThis replaces the live config immediately.`)) return;
@@ -71,14 +77,14 @@ window.rollbackFromPreview = async function() {
   } catch (e) { setStatus(`Restore failed: ${e.message}`, 'err'); setDot('red'); return; }
   if (data && data.ok) {
     const restored = data.content || previewBackupContent;
-    setContent(restored); setOriginal(restored); if (data.version) currentVersion = data.version;
+    setContent(restored); setOriginal(restored); if (data.version) setVersion(data.version);
     setStatus(data.message, 'ok'); setDot('green');
-    lastSavedTime = Date.now(); lastSavedBy = document.getElementById('user-info').textContent; updateLastSaved();
-    window.closePanel('backups');
+    markSaved();
+    closePanel('backups');
   } else {
     const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
-    if (data && data.version) currentVersion = data.version;
+    if (data && data.version) setVersion(data.version);
     setStatus(msg, 'err'); setDot('red');
     alert('Restore failed: ' + msg);
   }
-};
+}

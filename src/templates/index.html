@@ -129,16 +129,6 @@
 <script src="/static/js/editor.bundle.js"></script>
 <!-- App scripts: load order matters (classic scripts share one global scope;
      csrf first, core before features, events last because it calls init()). -->
-<script src="/static/js/app/csrf.js"></script>
-<script src="/static/js/app/core.js"></script>
-<script src="/static/js/app/diff.js"></script>
-<script src="/static/js/app/caddyfile.js"></script>
-<script src="/static/js/app/validate.js"></script>
-<script src="/static/js/app/metrics.js"></script>
-<script src="/static/js/app/panels.js"></script>
-<script src="/static/js/app/backups.js"></script>
-<script src="/static/js/app/logs.js"></script>
-<script src="/static/js/app/search.js"></script>
-<script src="/static/js/app/events.js"></script>
+<script type="module" src="/static/js/app/main.js"></script>
 </body>
 </html>

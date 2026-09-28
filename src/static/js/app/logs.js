@@ -1,4 +1,6 @@
 // Logs tab: poll the Caddy log file and tail it incrementally.
+import { el } from './core.js';
+
 let logsPos = null, logsTimer = null, logsFileExisted = false;
 // Bumped by startLogs()/stopLogs() so a poll that was in flight when the user
 // switched tabs can't append stale lines to a freshly cleared panel.
@@ -18,7 +20,10 @@ async function pollLogs() {
         body.textContent = '';
         const hint = el('div', 'metrics-hint');
         hint.style.whiteSpace = 'pre-wrap';
-        hint.textContent = `No log file at ${data.path}.\n\nAdd a log snippet and import it in each site block:\n\n(access_log) {\n    log {\n        output file ${data.path}\n        format json\n    }\n}\n\nyourdomain.com {\n    import access_log\n    reverse_proxy ...\n}\n\nLogs appear after the first HTTP request hits a site with the import.`;
+        // The filter wrapper is part of the suggestion on purpose: a bare
+        // `format json` writes every request header, including auth tokens,
+        // to disk and then into this panel.
+        hint.textContent = `No log file at ${data.path}.\n\nAdd a log snippet and import it in each site block:\n\n(access_log) {\n    log {\n        output file ${data.path} {\n            roll_size 10mb\n            roll_keep 3\n            roll_keep_for 168h\n        }\n        format filter {\n            wrap json\n            request>headers delete\n            resp_headers delete\n        }\n    }\n}\n\nyourdomain.com {\n    import access_log\n    reverse_proxy ...\n}\n\nLogs appear after the first HTTP request hits a site with the import.`;
         body.appendChild(hint);
       }
       logsPos = null;
@@ -56,7 +61,7 @@ function updateLogsStatus(size, lineCount) {
   const sizeKB = (size / 1024).toFixed(1);
   info.textContent = 'File: ' + sizeKB + ' KB • Lines: ' + lineCount + ' • Polling every 3s';
 }
-function startLogs() {
+export function startLogs() {
   stopLogs();
   logsGeneration++;
   const body = document.getElementById('logs-body'); body.textContent = '';
@@ -65,4 +70,4 @@ function startLogs() {
   pollLogs();
   logsTimer = setInterval(pollLogs, 3000);
 }
-function stopLogs() { logsGeneration++; if (logsTimer) { clearInterval(logsTimer); logsTimer = null; } }
+export function stopLogs() { logsGeneration++; if (logsTimer) { clearInterval(logsTimer); logsTimer = null; } }

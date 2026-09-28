@@ -97,8 +97,13 @@ Access logs require a `log` directive **inside each site block**. Define a snipp
         output file /var/log/caddy/access.log {
             roll_size 10mb
             roll_keep 3
+            roll_keep_for 168h
         }
-        format json
+        format filter {
+            wrap json
+            request>headers delete
+            resp_headers delete
+        }
     }
 }
 
@@ -111,6 +116,15 @@ app.yourdomain.com {
 The `caddy-logs` volume is shared between the Caddy and editor containers (already configured in both compose files). Every site that imports `access_log` will write HTTP request entries to the shared file.
 
 To change the log path, set `CADDY_LOG_FILE` in `.env` (default: `/var/log/caddy/access.log`).
+
+**Strip headers.** `format filter` with `wrap json` keeps the fields the Logs and Metrics tabs need (host, method, uri, status, duration, size, client_ip) and drops the header maps. Do not skip this:
+
+- Request headers carry session tokens and API keys in plaintext. Caddy redacts `Cookie` automatically but nothing else, so a bare `format json` writes live credentials to disk and renders them in the browser.
+- Headers are roughly 90% of each entry. Dropping them takes an entry from ~4 KB to ~300 bytes, so the same `roll_size` covers over ten times as much history.
+
+To keep a specific header, delete the others individually instead of the whole map — for example `request>headers>Authorization delete`. The filter encoder also supports `ip_mask` if you would rather not store full client IPs.
+
+Changes to an existing `output file` block need a full restart of the Caddy container; a reload will not pick them up.
 
 **Note:** A global `log default` block only captures Caddy runtime logs (startup, TLS, shutdown) — not HTTP access logs. You must use per-site `log` directives for access logging.
 

@@ -1,6 +1,12 @@
 // Fetch wrapper: attach the session CSRF token to every state-changing request
 // and handle an expired session in one place.
-// Must load before any other script that issues a fetch.
+//
+// Patching window.fetch at module scope is safe with the module graph: no module
+// body issues a request while evaluating, and main.js runs init() only after all
+// imports have finished.
+import { setDot, setStatus } from './core.js';
+import { stopLogs } from './logs.js';
+
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
 const _origFetch = window.fetch.bind(window);
 let _sessionExpired = false;
@@ -19,8 +25,9 @@ window.fetch = async (url, opts = {}) => {
     // Every API call would otherwise fail in its own confusing way ("config is
     // invalid: undefined"). Stop background polling, tell the user, go sign in.
     _sessionExpired = true;
-    if (typeof stopLogs === 'function') stopLogs();
-    if (typeof setStatus === 'function') { setStatus('Session expired — sign in again', 'err'); setDot('red'); }
+    stopLogs();
+    setStatus('Session expired — sign in again', 'err');
+    setDot('red');
     alert('Your session has expired. Sign in again to continue.\n\nIf you have unsaved changes, copy them somewhere first.');
     window.location.href = '/welcome';
   }

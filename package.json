@@ -13,7 +13,8 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "//type": "ESM so Node can import the browser modules under src/static/js/app directly in tests; nothing here is CommonJS.",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/ViralOne/caddy-web-editor/issues"
   },

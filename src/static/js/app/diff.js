@@ -5,11 +5,11 @@ const DIFF_MAX_D = 1200;
 // anyway so a deep chain of anchors can't overflow the stack.
 const DIFF_MAX_DEPTH = 24;
 
-function renderDiff(current, backup) {
+export function renderDiff(current, backup) {
   renderDiffInto(document.getElementById('diff-content'), current, backup);
 }
 
-function renderDiffInto(container, oldText, newText) {
+export function renderDiffInto(container, oldText, newText) {
   container.textContent = '';
   const a = oldText.split('\n'), b = newText.split('\n');
   const ops = diffLines(a, b);
@@ -33,7 +33,7 @@ function renderDiffInto(container, oldText, newText) {
   container.appendChild(frag);
 }
 
-function diffLines(a, b) {
+export function diffLines(a, b) {
   // Intern lines to integers once, so the inner loops compare numbers instead
   // of re-comparing strings that are usually long and share prefixes.
   const idOf = new Map();

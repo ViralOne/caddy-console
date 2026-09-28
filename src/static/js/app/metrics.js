@@ -1,4 +1,5 @@
 // Metrics tab: overview cards, upstreams, per-site traffic, editor activity.
+import { el, fetchJson, showError } from './core.js';
 function formatBytes(bytes) {
   if (bytes === 0) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -6,7 +7,7 @@ function formatBytes(bytes) {
   return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
 }
 
-async function loadMetrics() {
+export async function loadMetrics() {
   const body = document.getElementById('metrics-body');
   body.textContent = 'Loading metrics...';
 
@@ -185,6 +186,14 @@ async function loadMetrics() {
 
   body.appendChild(sitesSection);
 
+  // --- By Site (access log) ---
+  // Rendered into its own container so the window selector can refresh just
+  // this section without refetching metrics, traffic and upstreams.
+  const logStatsSection = el('div', 'metrics-section');
+  logStatsSection.id = 'logstats-section';
+  body.appendChild(logStatsSection);
+  renderLogStats();
+
   // --- Editor Activity ---
   const activitySection = el('div', 'metrics-section');
   activitySection.appendChild(el('div', 'section-title', 'Editor Activity'));
@@ -198,6 +207,246 @@ async function loadMetrics() {
     activitySection.appendChild(el('div', 'metrics-footer', 'Last config change: ' + metrics.last_modified));
   }
   body.appendChild(activitySection);
+}
+
+// --- By Site, from the access log -------------------------------------------
+//
+// Caddy's metrics have no host label, so Per-Site Traffic above is really
+// per-server. These figures come from scanning the tail of the access log,
+// which is the only place each request's host is recorded.
+
+const LOGSTATS_WINDOWS = [10, 25, 50, 100];
+const LOGSTATS_WINDOW_KEY = 'logstatsWindowMb';
+
+function logStatsWindow() {
+  const saved = parseInt(localStorage.getItem(LOGSTATS_WINDOW_KEY), 10);
+  return LOGSTATS_WINDOWS.includes(saved) ? saved : LOGSTATS_WINDOWS[0];
+}
+
+async function renderLogStats() {
+  const section = document.getElementById('logstats-section');
+  if (!section) return;  // metrics tab was re-rendered or closed mid-flight
+
+  let stats;
+  try {
+    stats = await fetchJson('/api/logstats?window_mb=' + logStatsWindow());
+  } catch (e) {
+    if (e.status === 401) return;
+    section.textContent = '';
+    section.appendChild(el('div', 'section-title', 'By Site'));
+    // Only this section fails; the Prometheus figures above stay rendered.
+    section.appendChild(el('div', 'metrics-hint error', 'Could not read per-site log stats: ' + e.message));
+    return;
+  }
+  if (!document.getElementById('logstats-section')) return;
+
+  section.textContent = '';
+
+  const header = el('div', 'section-title');
+  header.style.cssText = 'display:flex;align-items:center;gap:8px';
+  header.appendChild(el('span', null, 'By Site'));
+  header.appendChild(logStatsWindowPicker());
+  section.appendChild(header);
+
+  if (stats.error) {
+    section.appendChild(el('div', 'metrics-hint error', stats.error));
+    return;
+  }
+  if (!stats.exists) {
+    section.appendChild(el('div', 'metrics-hint',
+      `No access log at ${stats.path}. See the Logs tab for the log snippet to add.`));
+    return;
+  }
+
+  const sites = stats.sites || {};
+  const sorted = Object.entries(sites).sort((a, b) => b[1].requests - a[1].requests);
+  if (!sorted.length) {
+    section.appendChild(el('div', 'metrics-hint',
+      'Access log is present but has no request entries yet. Entries appear once a site importing the log snippet is hit.'));
+  }
+
+  sorted.forEach(([host, data]) => {
+    const card = el('div', 'site-metric-card');
+
+    const headerDiv = el('div', 'site-metric-header');
+    headerDiv.appendChild(el('span', 'site-metric-name', host));
+    if (data.error_rate > 0) {
+      const badge = el('span', data.error_rate > 5 ? 'site-metric-err high' : 'site-metric-err low');
+      badge.textContent = data.error_rate + '% 5xx';
+      headerDiv.appendChild(badge);
+    }
+    // Only offer the drill-down when there is something to drill into.
+    const failing = failureCount(data.status);
+    if (failing > 0) {
+      const toggle = el('span', 'logstats-toggle');
+      toggle.textContent = `▸ ${failing.toLocaleString()} failing`;
+      toggle.style.cssText = 'cursor:pointer;color:#90a4ae;font-size:10px;margin-left:auto';
+      toggle.title = 'Show which paths are returning 4xx/5xx for this site.';
+      headerDiv.style.cursor = 'pointer';
+      headerDiv.onclick = () => toggleFailures(host, card, toggle);
+      headerDiv.appendChild(toggle);
+    }
+    card.appendChild(headerDiv);
+
+    const classes = data.status || {};
+    const order = ['2xx', '3xx', '4xx', '5xx', 'other'];
+    const breakdown = order.filter(k => classes[k]).map(k => `${k} ${classes[k].toLocaleString()}`);
+    if (breakdown.length) card.appendChild(el('div', 'site-metric-domains', breakdown.join('  ·  ')));
+
+    const stats_ = el('div', 'site-metric-stats');
+    stats_.appendChild(statPill('Requests', data.requests.toLocaleString(), '#4fc3f7'));
+    stats_.appendChild(statPill('Avg', data.avg_latency_ms + ' ms', latencyColor(data.avg_latency_ms)));
+    stats_.appendChild(statPill('p95', data.p95_latency_ms + ' ms', latencyColor(data.p95_latency_ms)));
+    stats_.appendChild(statPill('Out', formatBytes(data.bytes_out), '#90a4ae'));
+    card.appendChild(stats_);
+
+    if (data.slowest && data.slowest.uri) {
+      const slowest = el('div', 'site-metric-domains');
+      slowest.textContent = `slowest: ${data.slowest.ms} ms  ${data.slowest.uri}`;
+      slowest.title = 'Slowest single request seen in the scanned window.';
+      card.appendChild(slowest);
+    }
+
+    section.appendChild(card);
+  });
+
+  section.appendChild(logStatsFooter(stats));
+}
+
+function failureCount(classes) {
+  const c = classes || {};
+  return (c['4xx'] || 0) + (c['5xx'] || 0);
+}
+
+function statusColor(status) {
+  return status >= 500 ? '#ef5350' : status >= 400 ? '#ffa726' : '#90a4ae';
+}
+
+// Expand one site at a time: collapsing the others keeps the panel scannable
+// when several sites are failing at once.
+async function toggleFailures(host, card, toggle) {
+  const open = card.querySelector('.logstats-failures');
+  if (open) {
+    open.remove();
+    toggle.textContent = toggle.textContent.replace('▾', '▸');
+    return;
+  }
+  document.querySelectorAll('#logstats-section .logstats-failures').forEach(n => n.remove());
+  document.querySelectorAll('#logstats-section .logstats-toggle').forEach(t => {
+    t.textContent = t.textContent.replace('▾', '▸');
+  });
+
+  const box = el('div', 'logstats-failures');
+  box.style.cssText = 'margin-top:8px;border-top:1px solid #2a2a2a;padding-top:6px';
+  box.appendChild(el('div', 'metrics-hint', 'Loading...'));
+  card.appendChild(box);
+  toggle.textContent = toggle.textContent.replace('▸', '▾');
+
+  let detail;
+  try {
+    const params = `?window_mb=${logStatsWindow()}&host=${encodeURIComponent(host)}`;
+    detail = (await fetchJson('/api/logstats' + params)).detail;
+  } catch (e) {
+    if (e.status === 401) return;
+    box.textContent = '';
+    box.appendChild(el('div', 'metrics-hint error', 'Could not load failures: ' + e.message));
+    return;
+  }
+  if (!card.contains(box)) return;  // collapsed again while the fetch was in flight
+
+  box.textContent = '';
+  const rows = (detail && detail.failures) || [];
+  if (!rows.length) {
+    box.appendChild(el('div', 'metrics-hint', 'No 4xx or 5xx responses in the scanned window.'));
+    return;
+  }
+  drawFailures(box, rows, detail, FAILURE_ROWS_SHOWN);
+}
+
+// Rows arrive worst-first, and a scanned site produces a long tail of paths hit
+// once. Showing all of them buries the handful that matter, so the tail is
+// collapsed behind a click.
+const FAILURE_ROWS_SHOWN = 15;
+
+function drawFailures(box, rows, detail, limit) {
+  box.textContent = '';
+  rows.slice(0, limit).forEach(f => box.appendChild(failureRow(f)));
+
+  const hidden = rows.length - limit;
+  if (hidden > 0) {
+    const tail = rows.slice(limit).reduce((n, f) => n + f.count, 0);
+    const more = el('div', 'metrics-hint');
+    more.textContent = `▸ ${hidden.toLocaleString()} more paths (${tail.toLocaleString()} failures) — show all`;
+    more.style.cursor = 'pointer';
+    more.onclick = () => drawFailures(box, rows, detail, rows.length);
+    box.appendChild(more);
+  }
+
+  if (detail.capped) {
+    box.appendChild(el('div', 'metrics-hint',
+      `Only the most common paths are tracked. ${detail.other.toLocaleString()} further failures were to paths beyond that limit, usually a scanner walking random URLs.`));
+  }
+}
+
+function failureRow(f) {
+  const row = el('div', 'logstats-failure-row');
+  row.style.cssText = 'display:flex;gap:10px;font-size:11px;padding:2px 0;font-family:ui-monospace,monospace';
+
+  const code = el('span', null, String(f.status));
+  code.style.cssText = `color:${statusColor(f.status)};min-width:28px`;
+  row.appendChild(code);
+
+  const count = el('span', null, '×' + f.count.toLocaleString());
+  count.style.cssText = 'color:#777;min-width:48px;text-align:right';
+  row.appendChild(count);
+
+  // Long paths must not push the count off the card.
+  const path = el('span', null, f.path || '(no path)');
+  path.style.cssText = 'color:#ccc;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  path.title = f.path || '(no path)';
+  row.appendChild(path);
+
+  return row;
+}
+
+function latencyColor(ms) {
+  return ms > 1000 ? '#ef5350' : ms > 300 ? '#ffa726' : '#66bb6a';
+}
+
+function logStatsWindowPicker() {
+  const select = document.createElement('select');
+  select.id = 'logstats-window';
+  select.style.cssText = 'background:#1e1e1e;color:#ccc;border:1px solid #333;border-radius:3px;font-size:10px;padding:2px 4px';
+  select.title = 'How far back into the access log to scan.';
+  LOGSTATS_WINDOWS.forEach(mb => {
+    const opt = document.createElement('option');
+    opt.value = mb;
+    opt.textContent = 'last ' + mb + ' MB';
+    if (mb === logStatsWindow()) opt.selected = true;
+    select.appendChild(opt);
+  });
+  select.onchange = () => {
+    localStorage.setItem(LOGSTATS_WINDOW_KEY, select.value);
+    renderLogStats();
+  };
+  return select;
+}
+
+function logStatsFooter(stats) {
+  // covered_bytes is what the numbers actually describe, which is not the same
+  // as the requested window: a smaller file covers less, and the scan
+  // re-anchors as the file grows, so say what was really read.
+  const parts = [
+    `${stats.entries.toLocaleString()} entries over ${formatBytes(stats.covered_bytes)}`,
+    `log file ${formatBytes(stats.file_size)}`,
+  ];
+  if (stats.truncated) parts.push('older entries outside the window are not counted');
+  if (stats.skipped) parts.push(`${stats.skipped.toLocaleString()} lines skipped`);
+  const footer = el('div', 'metrics-footer', parts.join(' · '));
+  if (stats.skipped) {
+    footer.title = 'Skipped lines are entries with no request host: Caddy runtime logs sharing the file, or a log format this panel cannot parse.';
+  }
+  return footer;
 }
 
 function metricCard(label, value, color) {

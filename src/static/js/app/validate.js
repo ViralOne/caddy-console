@@ -1,4 +1,10 @@
 // Validate / Save flow, the pre-save diff modal, and warnings UI.
+import { loadCaddyfile } from './caddyfile.js';
+import {
+  fetchJson, getContent, getVersion, isDirty, markSaved, originalContent,
+  setContent, setDot, setOriginal, setStatus, setVersion,
+} from './core.js';
+import { renderDiffInto } from './diff.js';
 
 async function _validateRequest(content) {
   const res = await fetch('/api/validate', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({content}) });
@@ -12,7 +18,7 @@ async function _validateRequest(content) {
   return res.json();
 }
 
-window.doValidate = async function() {
+export async function doValidate() {
   setStatus('Validating + formatting...', 'info'); hideWarnings();
   let data;
   try { data = await _validateRequest(getContent()); }
@@ -21,18 +27,18 @@ window.doValidate = async function() {
   else if (data.valid && !data.warnings.length) { setStatus('Valid config', 'ok'); setDot(isDirty() ? 'yellow' : 'green'); }
   else if (data.valid && data.warnings.length) { setStatus('Valid with warnings', 'ok'); setDot('yellow'); showWarnings(data.warnings); }
   else { setStatus(data.message, 'err'); setDot('red'); }
-};
+}
 
 // Only one save flow at a time: a second Cmd+S while the diff modal is open
 // used to start a second validation and orphan the first modal's promise.
 let _saving = false;
 
-window.doSave = async function() {
+export async function doSave() {
   if (_saving) return;
   _saving = true;
   try { await _doSave(); }
   finally { _saving = false; }
-};
+}
 
 async function _doSave() {
   setStatus('Validating before save...', 'info');
@@ -57,7 +63,7 @@ async function _doSave() {
   setStatus('Saving...', 'info');
   let res;
   try {
-    res = await fetch('/api/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({content, version: currentVersion}) });
+    res = await fetch('/api/save', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({content, version: getVersion()}) });
   } catch (e) { setStatus(`Save failed: ${e.message}`, 'err'); setDot('red'); return; }
   let data = null;
   try { data = await res.json(); } catch (e) {}
@@ -70,13 +76,13 @@ async function _doSave() {
   if (data.ok) {
     if (data.content) setContent(data.content);
     setOriginal(data.content || content);
-    if (data.version) currentVersion = data.version;
+    if (data.version) setVersion(data.version);
     setStatus(data.message, 'ok'); setDot('green');
-    lastSavedTime = Date.now(); lastSavedBy = document.getElementById('user-info').textContent; updateLastSaved(); hideWarnings();
+    markSaved(); hideWarnings();
   } else {
     // Caddy rejected it and the server rolled the file back; keep its version
     // so a retry after fixing the config isn't reported as a conflict.
-    if (data.version) currentVersion = data.version;
+    if (data.version) setVersion(data.version);
     setStatus(data.message, 'err'); setDot('red');
   }
 }
@@ -87,13 +93,13 @@ function openSaveModal() {
   document.getElementById('save-diff-modal').classList.add('open');
   return new Promise(resolve => { _saveResolver = resolve; });
 }
-window.resolveSaveModal = function(value) {
+export function resolveSaveModal(value) {
   document.getElementById('save-diff-modal').classList.remove('open');
   // Drop the rendered diff (tens of thousands of rows for a big file) rather
   // than keeping it in the DOM until the next save.
   document.getElementById('save-diff-content').textContent = '';
   if (_saveResolver) { _saveResolver(value); _saveResolver = null; }
-};
+}
 
 function showWarnings(warnings) {
   const el = document.getElementById('warnings'); el.textContent = '';
