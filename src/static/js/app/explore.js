@@ -139,11 +139,15 @@ function App() {
                placeholder="host:nas.example.com status:5xx path:/api  —  or any text"
                value=${draft} onInput=${e => setDraft(e.target.value)} />
         ${draft && html`<button class="btn btn-secondary btn-sm" onClick=${() => setDraft('')}>Clear</button>`}
-        <select class="select-inline" value=${custom ? 'custom' : range}
-                onChange=${e => pickRange(e.target.value)}>
-          ${custom && html`<option value="custom">${rangeLabel}</option>`}
-          ${RANGES.map(r => html`<option value=${r.key}>${r.label}</option>`)}
-        </select>
+        ${custom
+          ? html`<span class="range-pin" title="Zoomed into a selected range">
+                   ${rangeLabel}
+                   <button onClick=${() => setCustom(null)} title="Back to ${(RANGES.find(r => r.key === range) || {}).label}">✕</button>
+                 </span>`
+          : html`<select class="select-inline" value=${range}
+                         onChange=${e => pickRange(e.target.value)}>
+                   ${RANGES.map(r => html`<option value=${r.key}>${r.label}</option>`)}
+                 </select>`}
         <select class="select-inline" value=${String(windowMb)} title="How much of the log to read"
                 onChange=${e => setWindowMb(Number(e.target.value))}>
           ${WINDOWS.map(mb => html`<option value=${String(mb)}>read ${mb} MB</option>`)}

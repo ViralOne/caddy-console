@@ -242,16 +242,47 @@ body {
 .explore-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 
 /* Histogram */
-.hist { padding: var(--space-3) var(--space-4) 0; }
+.hist { padding: var(--space-3) var(--space-4) 0; transition: opacity 0.18s ease; }
+/* Dimming while a new range loads is the feedback that the click registered. */
+.hist.loading { opacity: 0.45; }
 .hist-empty { padding: var(--space-4); color: var(--ink-muted); font-size: var(--text-sm); }
 .hist-head { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
-.hist-total { font-size: var(--text-sm); color: var(--ink); font-weight: 600; }
+.hist-total { font-size: var(--text-sm); color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.hist-loading { font-size: var(--text-sm); color: var(--accent); }
 .hist-legend { display: flex; gap: var(--space-3); margin-left: auto; }
 .hist-legend-item { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-sm); color: var(--ink-muted); }
-.hist-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.hist-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+
+.hist-plot { position: relative; }
 .hist-svg { width: 100%; height: 96px; display: block; cursor: crosshair; touch-action: none; }
+.hist-svg.dragging { cursor: ew-resize; }
+
+/* Bars fade back when another bucket is hovered, so the hovered one reads as
+   selected without changing its colour, which still has to mean status. */
+.hist-bar { transition: opacity 0.12s ease; }
+.hist-bar.dim { opacity: 0.35; }
+.hist-hover-band { fill: var(--ink); opacity: 0.07; pointer-events: none; }
+.hist-brush { fill: var(--accent); opacity: 0.18; stroke: var(--accent); stroke-width: 0.3; pointer-events: none; }
+
+/* Custom tooltip rather than a native <title>: appears instantly and can show
+   the full per-class breakdown. */
+.hist-tip { position: absolute; bottom: calc(100% - 88px); transform: translateX(-50%); min-width: 132px; padding: var(--space-2); background: var(--surface-raised); border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow); font-size: var(--text-sm); pointer-events: none; z-index: 5; animation: hist-tip-in 0.12s ease; }
+@keyframes hist-tip-in { from { opacity: 0; transform: translate(-50%, 3px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.hist-tip-time { color: var(--ink-muted); margin-bottom: var(--space-1); white-space: nowrap; }
+.hist-tip-row { display: flex; align-items: center; gap: var(--space-2); }
+.hist-tip-label { flex: 1; color: var(--ink-secondary); }
+.hist-tip-count { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 600; }
+.hist-tip-total { margin-top: var(--space-1); padding-top: var(--space-1); border-top: 1px solid var(--border); }
+.hist-brush-label { position: absolute; top: var(--space-1); padding: 2px var(--space-2); background: var(--accent); color: var(--accent-ink); border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 600; white-space: nowrap; pointer-events: none; z-index: 5; }
+
 .hist-axis { position: relative; height: 16px; }
 .hist-tick { position: absolute; transform: translateX(-50%); font-size: var(--text-sm); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+.hist-help { font-size: var(--text-sm); color: var(--ink-muted); padding-bottom: var(--space-1); }
+
+/* Pinned custom range chip */
+.range-pin { display: inline-flex; align-items: center; gap: var(--space-1); padding: 2px var(--space-2); background: var(--accent-quiet); color: var(--accent); border: 1px solid var(--accent); border-radius: var(--radius-pill); font-size: var(--text-sm); white-space: nowrap; }
+.range-pin button { background: none; border: none; color: inherit; cursor: pointer; font-size: var(--text-sm); padding: 0 2px; }
+.range-pin button:hover { color: var(--ink); }
 
 /* Summary row */
 .explore-stats { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border); font-size: var(--text-sm); color: var(--ink-secondary); font-variant-numeric: tabular-nums; }
