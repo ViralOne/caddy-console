@@ -103,6 +103,9 @@ function App() {
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
+  const [older, setOlder] = useState([]);          // pages fetched behind the first
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [exhausted, setExhausted] = useState(false);
   const [raw, setRaw] = useState({});              // offset -> original log line
   const [fieldMenu, setFieldMenu] = useState(null);  // "<rowKey>|<field label>"
   const [note, setNote] = useState('');            // transient confirmation
@@ -156,7 +159,12 @@ function App() {
     }
   }, [query, range, windowMb, custom]);
 
-  useEffect(() => { setLoading(true); load(); }, [load]);
+  useEffect(() => {
+    setLoading(true);
+    setOlder([]);
+    setExhausted(false);
+    load();
+  }, [load]);
 
   // Follow mode re-runs the same query on a timer. Disabled whenever a custom
   // range is pinned, since "live" and "a fixed window in the past" conflict.
@@ -165,6 +173,45 @@ function App() {
     const t = setInterval(load, FOLLOW_MS);
     return () => clearInterval(t);
   }, [follow, custom, load]);
+
+  // Paging walks backwards from the oldest event on screen. The server takes a
+  // timestamp rather than an offset, so pages cannot drift or duplicate when new
+  // events arrive at the head while reading.
+  const loadOlder = async () => {
+    const shown = [...(data?.entries || []), ...older];
+    if (!shown.length || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const params = new URLSearchParams({
+        window_mb: String(windowMb),
+        limit: '200',
+        before_ts: String(shown[shown.length - 1].ts),
+      });
+      if (query) params.set('q', query);
+      // Page against the absolute bounds the first request resolved, not the
+      // relative range. Re-sending range=1h would re-resolve now-3600 for every
+      // page, so the window would slide while paging and the tail would vanish —
+      // "222 of 228" followed by "no more events".
+      const from = custom ? custom.from : data?.range?.from;
+      const to = custom ? custom.to : data?.range?.to;
+      if (from != null && to != null) {
+        params.set('from', String(Math.floor(from)));
+        params.set('to', String(Math.ceil(to)));
+      } else if (range !== 'all') {
+        params.set('range', range);
+      }
+      const res = await fetch('/api/explore?' + params);
+      if (!res.ok) return;
+      const body = await res.json();
+      const page = body.entries || [];
+      if (!page.length) setExhausted(true);
+      else setOlder([...older, ...page]);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   const showRaw = async (offset) => {
     if (raw[offset] !== undefined) { setRaw({ ...raw, [offset]: undefined }); return; }
@@ -297,7 +344,7 @@ function App() {
           <div class="stream">
             ${data?.entries?.length === 0 && !loading && html`
               <div class="metrics-hint">No events match. ${draft ? 'Try removing a filter.' : ''}</div>`}
-            ${(data?.entries || []).map(e => {
+            ${[...(data?.entries || []), ...older].map(e => {
               const key = e.ts + '|' + e.host + '|' + e.uri + '|' + e.status;
               const open = expanded === key;
               return html`
@@ -366,8 +413,18 @@ function App() {
                     </div>`}
                 </div>`;
             })}
-            ${data && data.total > (data.entries || []).length && html`
-              <div class="metrics-hint">Showing the newest ${(data.entries || []).length} of ${data.total.toLocaleString()} matches. Narrow the query or the range to see the rest.</div>`}
+            ${(() => {
+              if (!data) return null;
+              const shown = (data.entries || []).length + older.length;
+              if (shown >= data.total) return null;
+              if (exhausted) {
+                return html`<div class="metrics-hint">No more events in this range.</div>`;
+              }
+              return html`
+                <button class="stream-more" onClick=${loadOlder} disabled=${loadingOlder}>
+                  ${loadingOlder ? 'Loading…' : `Load 200 older — showing ${shown.toLocaleString()} of ${data.total.toLocaleString()}`}
+                </button>`;
+            })()}
           </div>
         </section>
       </div>

@@ -329,3 +329,7 @@ a.dash-kpi-value:hover { text-decoration: underline; }
 .dash-audit-user { color: var(--accent); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-audit-detail { color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dash-audit-time { color: var(--ink-muted); text-align: right; font-variant-numeric: tabular-nums; }
+
+.stream-more { display: block; width: 100%; margin-top: var(--space-2); padding: var(--space-2); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--ink-secondary); font-size: var(--text-sm); font-family: var(--font); cursor: pointer; }
+.stream-more:hover:not(:disabled) { background: var(--surface-raised); color: var(--ink); border-color: var(--border-strong); }
+.stream-more:disabled { color: var(--ink-muted); cursor: default; }
