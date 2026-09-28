@@ -10,6 +10,13 @@ const html = htm.bind(h);
 const RANGE = '1h';          // the dashboard is a "right now" view
 const REFRESH_MS = 15000;
 
+// Both views read one shared index, and asking for a different window forces it
+// to rebuild. Reading the explorer's choice keeps them in step.
+function sharedWindowMb() {
+  const mb = parseInt(localStorage.getItem('exploreWindowMb'), 10);
+  return [10, 25, 50, 100].includes(mb) ? mb : 10;
+}
+
 function formatBytes(n) {
   if (!n) return '0';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -85,7 +92,7 @@ function App() {
   const load = async () => {
     try {
       const [sites, upstreams, traffic, status, audit] = await Promise.all([
-        fetch(`/api/sites?range=${RANGE}`).then(r => r.json()),
+        fetch(`/api/sites?range=${RANGE}&window_mb=${sharedWindowMb()}`).then(r => r.json()),
         fetch('/api/upstreams').then(r => r.json()),
         fetch('/api/traffic').then(r => r.json()),
         fetch('/api/status').then(r => r.json()),
@@ -103,7 +110,15 @@ function App() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, REFRESH_MS);
+    // The component is never unmounted — switching view only hides its root — so
+    // the tick has to check for itself, or the dashboard keeps polling /api/sites
+    // from behind the Explore view. That mattered beyond wasted requests: the two
+    // views can request different log windows, and a window change forces the
+    // shared index to rebuild, so background polling made every Explore query
+    // re-parse the window.
+    const t = setInterval(() => {
+      if (document.getElementById('tab-dashboard')?.classList.contains('active')) load();
+    }, REFRESH_MS);
     return () => clearInterval(t);
   }, []);
 

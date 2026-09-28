@@ -189,6 +189,9 @@ body {
 .facet-value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .facet-count { flex-shrink: 0; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 .facet-more { font-size: var(--text-sm); color: var(--ink-muted); padding: 2px var(--space-1); }
+/* A value with no filter behind it: shown for the count, not offered as a click. */
+.facet-row-static { color: var(--ink-muted); cursor: default; }
+.facet-row-static:hover { background: none; }
 
 /* Main column */
 .explore-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }

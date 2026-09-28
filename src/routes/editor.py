@@ -21,7 +21,6 @@ from ..config import (
     BACKUP_KEEP,
     BACKUP_PREFIX,
     CADDY_API_URL,
-    CADDY_LOG_FILE,
     CADDYFILE,
     SESSION_TIMEOUT_HOURS,
 )

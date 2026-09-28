@@ -73,7 +73,6 @@ docker compose -f docker-compose.prod.yaml up -d
 
 **Important:**
 - The global block must include `admin 0.0.0.0:2019` so the editor can reload Caddy over the Docker network
-- Add `metrics` to the global block to enable traffic metrics in the Metrics tab
 
 ## Access Log Setup
 

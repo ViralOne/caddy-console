@@ -1,6 +1,6 @@
 // Side panels: open/close behaviour + Audit, Status, and Snippets loaders.
 import { clearPreview, loadBackups } from './backups.js';
-import { editorView, fetchJson, setDot } from './core.js';
+import { editorView, fetchJson, setDot, showError } from './core.js';
 export function togglePanel(name) {
   const panel = document.getElementById(`panel-${name}`); const isOpen = panel.classList.contains('open');
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('open'));

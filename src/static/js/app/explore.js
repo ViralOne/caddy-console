@@ -114,7 +114,7 @@ function App() {
   // Any click that is not on a field menu closes it.
   useEffect(() => {
     if (!fieldMenu) return;
-    const close = (ev) => { if (!ev.target.closest('.field-menu, .field-trigger')) setFieldMenu(null); };
+    const close = (ev) => { if (!ev.target.closest('.field-menu, .field-trigger, .field-value-click')) setFieldMenu(null); };
     const esc = (ev) => { if (ev.key === 'Escape') setFieldMenu(null); };
     document.addEventListener('click', close);
     document.addEventListener('keydown', esc);
@@ -123,10 +123,29 @@ function App() {
 
   const flash = (msg) => { setNote(msg); setTimeout(() => setNote(''), 1800); };
 
+  // Re-read the URL on demand. mountExplore() calls this when the view is shown
+  // again, which covers dashboard drill-down links and Back/Forward, since the
+  // component is never unmounted.
+  useEffect(() => {
+    applyUrlState = () => {
+      const next = exploreStateFromSearch();
+      setDraft(next.q);
+      setQuery(next.q);
+      setRange(next.range);
+      setWindowMb(next.windowMb);
+      setCustom(next.custom);
+      setFollow(next.live);
+    };
+    return () => { applyUrlState = null; };
+  }, []);
+
   // replaceState, not pushState: a history entry per keystroke would make Back
   // feel broken.
   useEffect(() => {
     replaceSearch(exploreStateToSearch({ q: query, range, windowMb, custom, live: follow }));
+    // The dashboard reads this so both views request the same log window; a
+    // mismatch would make the shared index rebuild on every view switch.
+    try { localStorage.setItem('exploreWindowMb', String(windowMb)); } catch (e) { /* private mode */ }
   }, [query, range, windowMb, custom, follow]);
 
   // Debounce the input: one request when typing settles, not one per keystroke.
@@ -170,6 +189,10 @@ function App() {
   // range is pinned, since "live" and "a fixed window in the past" conflict.
   useEffect(() => {
     if (!follow || custom) return;
+    // Paged history cannot survive a refreshing head: the newest window shifts
+    // and would overlap what was already appended, rendering events twice.
+    setOlder([]);
+    setExhausted(false);
     const t = setInterval(load, FOLLOW_MS);
     return () => clearInterval(t);
   }, [follow, custom, load]);
@@ -179,13 +202,14 @@ function App() {
   // events arrive at the head while reading.
   const loadOlder = async () => {
     const shown = [...(data?.entries || []), ...older];
-    if (!shown.length || loadingOlder) return;
+    if (!shown.length || loadingOlder || follow) return;
     setLoadingOlder(true);
     try {
       const params = new URLSearchParams({
         window_mb: String(windowMb),
         limit: '200',
         before_ts: String(shown[shown.length - 1].ts),
+        before_offset: String(shown[shown.length - 1].offset),
       });
       if (query) params.set('q', query);
       // Page against the absolute bounds the first request resolved, not the
@@ -201,8 +225,8 @@ function App() {
         params.set('range', range);
       }
       const res = await fetch('/api/explore?' + params);
-      if (!res.ok) return;
-      const body = await res.json();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(body.error || `Could not load older events: HTTP ${res.status}`); return; }
       const page = body.entries || [];
       if (!page.length) setExhausted(true);
       else setOlder([...older, ...page]);
@@ -214,13 +238,15 @@ function App() {
   };
 
   const showRaw = async (offset) => {
-    if (raw[offset] !== undefined) { setRaw({ ...raw, [offset]: undefined }); return; }
+    if (raw[offset] !== undefined) { setRaw(prev => ({ ...prev, [offset]: undefined })); return; }
+    // Updater form, not a spread of the captured `raw`: two rows fetched at once
+    // would otherwise have the second response discard the first.
     try {
       const res = await fetch('/api/explore/raw?offset=' + offset);
       const body = await res.json();
-      setRaw({ ...raw, [offset]: body.line || body.error || '(unavailable)' });
+      setRaw(prev => ({ ...prev, [offset]: body.line || body.error || '(unavailable)' }));
     } catch (e) {
-      setRaw({ ...raw, [offset]: e.message });
+      setRaw(prev => ({ ...prev, [offset]: e.message }));
     }
   };
 
@@ -297,13 +323,25 @@ function App() {
               <div class="facet-group" key=${group.key}>
                 <div class="facet-title">${group.title}</div>
                 ${values.slice(0, 8).map(v => {
+                  // Values the query language cannot express: an absent field, or
+                  // a status this app never recorded a real code for.
+                  const unfilterable = v.value === '' || (group.key === 'status' && v.value === '0');
+                  if (unfilterable) {
+                    return html`
+                      <div class="facet-row facet-row-static" key=${v.value || '(none)'}
+                           title="Entries with no value for this field — not filterable">
+                        <span class="facet-check">–</span>
+                        <span class="facet-value">(none)</span>
+                        <span class="facet-count">${v.count.toLocaleString()}</span>
+                      </div>`;
+                  }
                   const on = hasTerm(draft, qk, v.value);
                   return html`
                     <button class=${'facet-row' + (on ? ' on' : '')} key=${v.value}
                             onClick=${() => toggleFacet(group.key, v.value)}
                             title=${v.value}>
                       <span class="facet-check">${on ? '☑' : '☐'}</span>
-                      <span class="facet-value">${v.value || '(none)'}</span>
+                      <span class="facet-value">${v.value}</span>
                       <span class="facet-count">${v.count.toLocaleString()}</span>
                     </button>`;
                 })}
@@ -432,11 +470,18 @@ function App() {
 }
 
 let mounted = false;
+let applyUrlState = null;   // set by App while it is rendered
 
 export function mountExplore() {
-  if (mounted) return;  // Preact keeps its own state; re-mounting would reset it
   const root = document.getElementById('explore-root');
   if (!root) return;
+  if (mounted) {
+    // Already rendered: adopt whatever the URL now says rather than showing the
+    // previous query. Re-rendering from scratch would also work but would throw
+    // away expanded rows and loaded pages on every view switch.
+    applyUrlState?.();
+    return;
+  }
   render(html`<${App} />`, root);
   mounted = true;
 }

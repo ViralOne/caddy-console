@@ -267,6 +267,7 @@ def explore():
             to_ts=to_ts,
             limit=_clamp_int(args.get("limit"), 200, 1, 1000),
             before_ts=_float_or_none(args.get("before_ts")),
+            before_offset=_clamp_int(args.get("before_offset"), None, 0, 2 ** 62),
             facet_limit=_clamp_int(args.get("facet_limit"), 50, 1, 200),
         )
     except OSError as e:

@@ -148,9 +148,22 @@ class IndexTest(unittest.TestCase):
         self.write(entry(method="GET"), entry(method="POST"))
         self.assertEqual(self.q("method:post")["total"], 1)
 
-    def test_filter_by_path_substring(self):
-        self.write(entry(uri="/api/v1/sync"), entry(uri="/static/app.js"))
+    def test_path_filter_is_an_exact_path(self):
+        # Exact, so a path facet's count always equals what clicking it returns.
+        self.write(entry(uri="/api"), entry(uri="/api/v1/sync"), entry(uri="/apikeys"))
         self.assertEqual(self.q("path:/api")["total"], 1)
+        self.assertEqual(self.q("path:/api/v1/sync")["total"], 1)
+
+    def test_free_text_still_matches_substrings_of_the_path(self):
+        # Substring search did not disappear with the exact path filter.
+        self.write(entry(uri="/api"), entry(uri="/api/v1/sync"), entry(uri="/apikeys"))
+        self.assertEqual(self.q("/api")["total"], 3)
+
+    def test_path_facet_count_equals_the_filtered_total(self):
+        self.write(entry(uri="/api"), entry(uri="/api"), entry(uri="/api/v1"), entry(uri="/apikeys"))
+        facet = {v["value"]: v["count"] for v in self.q()["facets"]["path"]}
+        for path, count in facet.items():
+            self.assertEqual(self.q(f"path:{path}")["total"], count, path)
 
     def test_query_string_is_ignored_when_matching_paths(self):
         self.write(entry(uri="/search?q=1"), entry(uri="/search?q=2"))
@@ -283,6 +296,18 @@ class IndexTest(unittest.TestCase):
         r = self.q(limit=10)
         self.assertEqual(len(r["entries"]), 10)
         self.assertEqual(r["total"], 30)
+
+    def test_paging_returns_events_sharing_the_boundary_timestamp(self):
+        # Several events can share a ts; a strict comparison skipped the rest of
+        # that instant, so the last page could never be reached.
+        self.write(*[entry(ts=T0, uri=f"/same/{i}") for i in range(5)])
+        first = self.q(limit=2)
+        self.assertEqual(len(first["entries"]), 2)
+        oldest = first["entries"][-1]
+        rest = self.q(limit=10, before_ts=oldest["ts"], before_offset=oldest["offset"])
+        self.assertEqual(len(rest["entries"]), 3)
+        seen = {e["offset"] for e in first["entries"]} & {e["offset"] for e in rest["entries"]}
+        self.assertEqual(seen, set())
 
     def test_before_ts_pages_strictly_older(self):
         self.write(*[entry(ts=T0 + i) for i in range(30)])

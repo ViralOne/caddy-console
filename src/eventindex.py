@@ -280,7 +280,7 @@ class EventIndex:
     # --- querying ----------------------------------------------------------
 
     def query(self, q="", window_bytes=10 * 1024 * 1024, from_ts=None, to_ts=None,
-              limit=200, before_ts=None, facet_limit=50):
+              limit=200, before_ts=None, before_offset=None, facet_limit=50):
         with self._lock:
             exists, size = self._refresh(int(window_bytes))
             filters = parse_query(q)
@@ -296,8 +296,14 @@ class EventIndex:
 
             page = matches
             if before_ts is not None:
-                cutoff = bisect.bisect_left(self.ts, before_ts)
-                page = [i for i in matches if i < cutoff and self.ts[i] < before_ts]
+                # Several events can share a timestamp, so a strict ts comparison
+                # would skip the rest of that instant entirely. The byte offset is
+                # unique and monotonic, so it breaks the tie exactly.
+                page = [i for i in matches
+                        if self.ts[i] < before_ts
+                        or (self.ts[i] == before_ts
+                            and before_offset is not None
+                            and self.offset[i] < before_offset)]
 
             newest = list(reversed(page[-limit:])) if limit else list(reversed(page))
             return {
@@ -316,7 +322,9 @@ class EventIndex:
                     # True only when the byte window is what cut history short:
                     # anchoring at 0 means the whole file was read, so an earlier
                     # `from` just predates the log rather than exceeding it.
-                    "truncated": bool(n and self._scan_start > 0
+                    # True when history was cut short either by the byte window
+                    # or by the in-memory cap evicting the oldest events.
+                    "truncated": bool(n and (self._scan_start > 0 or self._dropped)
                                       and from_ts is not None and from_ts < self.ts[0]),
                 },
                 "window": {"bytes": int(window_bytes), "covered_bytes": max(0, self._pos - self._scan_start),
@@ -339,12 +347,14 @@ class EventIndex:
         method_ids = None if skip_key == "method" or not f.methods else self.methods.ids_matching_exact({m.lower() for m in f.methods})
         not_method_ids = set() if skip_key == "method" else (self.methods.ids_matching_exact({m.lower() for m in f.not_methods}) if f.not_methods else set())
 
+        # Exact path, query string ignored — the same grouping the path facet
+        # uses, so a facet count always equals what clicking it returns. Substring
+        # search is what free text is for.
         path_ids = None
         if f.paths and skip_key != "path":
-            path_ids = None
-            for p in f.paths:
-                ids = self.uris.ids_containing(p.lower())
-                path_ids = ids if path_ids is None else (path_ids | ids)
+            wanted = {p.lower().split("?", 1)[0] for p in f.paths}
+            path_ids = {i for i, low in enumerate(self.uris.lowers)
+                        if low.split("?", 1)[0] in wanted}
 
         text_uri, text_host = [], []
         for t in f.text:
