@@ -314,6 +314,11 @@ body {
 .field-row:hover { background: var(--bg); }
 .field-label { color: var(--ink-muted); }
 .field-value { color: var(--ink); word-break: break-all; }
+/* The value itself opens the menu, so it has to look like it does something.
+   Not a <button>, so drag-selecting the text still works. */
+.field-value-click { cursor: pointer; border-radius: var(--radius-sm); padding: 0 var(--space-1); margin-left: calc(var(--space-1) * -1); text-decoration-color: transparent; }
+.field-value-click:hover { background: var(--surface); text-decoration: underline; text-decoration-color: var(--ink-muted); text-underline-offset: 2px; }
+.field-value-click:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .field-row-raw { grid-template-columns: 18px 72px 1fr; }
 .field-row-raw .field-label { grid-column: 2; }
 

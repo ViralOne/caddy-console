@@ -314,13 +314,25 @@ function App() {
                       ${fieldsOf(e).map(f => {
                         const id = key + '|' + f.label;
                         const filterable = !!FIELD_KEYS[f.label];
+                        const toggle = () => {
+                          // Don't hijack a drag-select: if the user has highlighted
+                          // text, they are copying by hand, not asking for a menu.
+                          if (String(window.getSelection() || '')) return;
+                          setFieldMenu(fieldMenu === id ? null : id);
+                        };
                         return html`
                           <div class="field-row" key=${f.label}>
                             <button class="field-trigger" title=${'Actions for ' + f.label}
                                     aria-haspopup="true" aria-expanded=${String(fieldMenu === id)}
-                                    onClick=${() => setFieldMenu(fieldMenu === id ? null : id)}>⋮</button>
+                                    onClick=${toggle}>⋮</button>
                             <span class="field-label">${f.label}</span>
-                            <span class="field-value">${f.display}</span>
+                            <span class="field-value field-value-click" role="button" tabindex="0"
+                                  aria-haspopup="true" aria-expanded=${String(fieldMenu === id)}
+                                  title=${'Actions for ' + f.label}
+                                  onClick=${toggle}
+                                  onKeyDown=${ev => {
+                                    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); }
+                                  }}>${f.display}</span>
                             ${fieldMenu === id && html`
                               <div class="field-menu" role="menu">
                                 <button role="menuitem" onClick=${() => fieldAction('copy-value', f)}>Copy value</button>
