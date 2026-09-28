@@ -1,5 +1,11 @@
 import os
 
+# The running build, shown in the account menu. Duplicated in pyproject.toml and
+# package.json because the app runs from source rather than as an installed
+# distribution, so importlib.metadata has nothing to read; test_version.py keeps
+# the three in step.
+APP_VERSION = "0.5.0"
+
 CADDYFILE = os.environ.get("CADDYFILE_PATH", "/etc/caddy/Caddyfile")
 BACKUP_DIR = os.environ.get("BACKUP_DIR", "/backups")
 AUDIT_LOG = os.environ.get("AUDIT_LOG", "/backups/audit.log")

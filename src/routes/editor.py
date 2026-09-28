@@ -16,6 +16,7 @@ from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
 from ..caddy_api import get_servers, invalidate_servers_cache
 from ..config import (
+    APP_VERSION,
     AUTH_MODE,
     BACKUP_DIR,
     BACKUP_KEEP,
@@ -276,6 +277,7 @@ def me():
         "csrf_token": get_or_create_csrf(),
         "auth_mode": AUTH_MODE,
         "session_expires_at": expires_at,
+        "version": APP_VERSION,
     })
 
 
