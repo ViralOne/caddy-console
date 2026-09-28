@@ -1,3 +1,5 @@
+<img src="src/static/img/icon-512.png" alt="" width="64">
+
 # Caddy Console
 
 A console for a self-hosted Caddy: edit the Caddyfile, save and reload with no

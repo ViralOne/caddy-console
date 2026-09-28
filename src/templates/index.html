@@ -5,18 +5,39 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="csrf-token" content="{{ csrf_token }}">
 <title>Caddy Console</title>
+<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
 <body>
 
+{% include "_icons.html" %}
+
 <div class="header">
-  <a class="brand" data-view="dashboard" href="/">Caddy Console</a>
+  <a class="brand" data-view="dashboard" href="/">
+    <!-- Same geometry as static/img/icon.svg, inlined rather than referenced as
+         an image file so it takes the brand's colour on hover. -->
+    <svg class="brand-mark" viewBox="0 0 32 32" width="20" height="20"
+         aria-hidden="true" focusable="false">
+      <path d="M6 26V16a10 10 0 0 1 20 0v10" fill="none" stroke="currentColor"
+            stroke-width="3" stroke-linecap="round"/>
+      <g fill="currentColor">
+        <rect x="10.5" y="18" width="3" height="8" rx="1.5"/>
+        <rect x="14.5" y="14" width="3" height="12" rx="1.5"/>
+        <rect x="18.5" y="21" width="3" height="5" rx="1.5"/>
+      </g>
+    </svg>
+    <span>Caddy Console</span>
+  </a>
 
   <nav class="tabs">
-    <a class="tab" data-view="dashboard" href="/">Dashboard</a>
-    <a class="tab" data-view="editor" href="/editor">Editor</a>
-    <a class="tab" data-view="explore" href="/explore">Explore</a>
+    <a class="tab" data-view="dashboard" href="/">
+      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-dashboard"/></svg>Dashboard</a>
+    <a class="tab" data-view="editor" href="/editor">
+      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-editor"/></svg>Editor</a>
+    <a class="tab" data-view="explore" href="/explore">
+      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg>Explore</a>
   </nav>
 
   <span class="spacer"></span>

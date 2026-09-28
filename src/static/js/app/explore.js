@@ -10,6 +10,7 @@
 import { h, htm, render, useCallback, useEffect, useRef, useState } from '../explore-vendor.js';
 import { cycleTerm, setTermState, termState } from './explore-query.js';
 import { CLASSES, Histogram } from './histogram.js';
+import { Icon } from './icons.js';
 import { JsonView } from './jsonview.js';
 import { exploreStateFromSearch, exploreStateToSearch, replaceSearch } from './router.js';
 
@@ -37,12 +38,14 @@ const DEBOUNCE_MS = 250;
 const FOLLOW_MS = 4000;
 
 // A facet row has three states, cycled by clicking it: not filtered, only this
-// value, everything but this value. The glyphs are the ballot-box family, so the
-// difference is a shape and not only a colour.
+// value, everything but this value. Each has its own shape, so the difference
+// never rests on colour alone. Drawn as icons rather than the ☐/☑/☒ characters
+// they replaced: those three render at wildly different weights and widths
+// depending on the platform's emoji font, so a column of them never lined up.
 const FACET_STATE = {
-  off: { mark: '☐', cls: '', hint: 'click to show only this' },
-  include: { mark: '☑', cls: ' on', hint: 'only this — click to exclude it instead' },
-  exclude: { mark: '☒', cls: ' excluded', hint: 'excluded — click to clear' },
+  off: { icon: 'box', cls: '', hint: 'click to show only this' },
+  include: { icon: 'box-check', cls: ' on', hint: 'only this — click to exclude it instead' },
+  exclude: { icon: 'box-x', cls: ' excluded', hint: 'excluded — click to clear' },
 };
 
 const pad = (n) => String(n).padStart(2, '0');
@@ -307,8 +310,13 @@ function App() {
         ${draft && html`<button class="btn btn-secondary btn-sm" onClick=${() => setDraft('')}>Clear</button>`}
         ${custom
           ? html`<span class="range-pin" title="Zoomed into a selected range">
+                   <${Icon} name="clock" />
                    ${rangeLabel}
-                   <button onClick=${() => setCustom(null)} title="Back to ${(RANGES.find(r => r.key === range) || {}).label}">✕</button>
+                   <button onClick=${() => setCustom(null)}
+                           aria-label="Clear the selected range"
+                           title="Back to ${(RANGES.find(r => r.key === range) || {}).label}">
+                     <${Icon} name="close" size=${14} />
+                   </button>
                  </span>`
           : html`<select class="select-inline" value=${range}
                          onChange=${e => pickRange(e.target.value)}>
@@ -318,7 +326,9 @@ function App() {
         <button class=${'btn btn-sm ' + (follow ? 'btn-primary' : 'btn-secondary')}
                 disabled=${!!custom}
                 title=${custom ? 'Pinned to a selected range — pick a preset range to follow again' : 'Stream new matching events'}
-                onClick=${() => setFollow(f => !f)}>${follow ? '● Live' : 'Live'}</button>
+                onClick=${() => setFollow(f => !f)}>
+          <${Icon} name="live" class=${follow ? 'icon-pulse' : ''} />Live
+        </button>
       </div>
 
       ${error && html`<div class="metrics-hint error explore-error">${error}</div>`}
@@ -341,7 +351,7 @@ function App() {
                     return html`
                       <div class="facet-row facet-row-static" key=${v.value || '(none)'}
                            title="Entries with no value for this field — not filterable">
-                        <span class="facet-check">–</span>
+                        <span class="facet-check facet-check-none" aria-hidden="true">–</span>
                         <span class="facet-value">(none)</span>
                         <span class="facet-count">${v.count.toLocaleString()}</span>
                       </div>`;
@@ -352,7 +362,7 @@ function App() {
                             onClick=${() => cycleFacet(group.key, v.value)}
                             title=${`${v.value} — ${state.hint}`}
                             aria-label=${`${group.title} ${v.value}, ${state.hint}`}>
-                      <span class="facet-check" aria-hidden="true">${state.mark}</span>
+                      <${Icon} name=${state.icon} class="facet-check" />
                       <span class="facet-value">${v.value}</span>
                       <span class="facet-count">${v.count.toLocaleString()}</span>
                     </button>`;
@@ -421,7 +431,7 @@ function App() {
                           <div class="field-row" key=${f.label}>
                             <button class="field-trigger" title=${'Actions for ' + f.label}
                                     aria-haspopup="true" aria-expanded=${String(fieldMenu === id)}
-                                    onClick=${toggle}>⋮</button>
+                                    onClick=${toggle}><${Icon} name="more" size=${14} /></button>
                             <span class="field-label">${f.label}</span>
                             <span class="field-value field-value-click" role="button" tabindex="0"
                                   aria-haspopup="true" aria-expanded=${String(fieldMenu === id)}

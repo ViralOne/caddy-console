@@ -2,6 +2,7 @@
 //
 // Chrome rather than a data view, so plain DOM — Preact is reserved for the
 // dashboard and Explore, where derived state actually earns it.
+import { iconEl } from './icons.js';
 
 const SHORTCUTS = [
   ['Save & reload', 'Cmd/Ctrl + S'],
@@ -64,10 +65,7 @@ export function initUserMenu(user) {
   label.className = 'menu-trigger-email';
   label.textContent = user.email;
 
-  const caret = document.createElement('span');
-  caret.className = 'menu-caret';
-  caret.textContent = '▾';
-  caret.setAttribute('aria-hidden', 'true');
+  const caret = iconEl('chevron-down', { size: 14, cls: 'menu-caret' });
 
   button.append(avatar, label, caret);
 
@@ -105,9 +103,14 @@ export function initUserMenu(user) {
   logout.className = 'menu-action';
   logout.href = '/logout';
   logout.setAttribute('role', 'menuitem');
-  logout.textContent = 'Log out';
+  logout.append(iconEl('logout'), document.createTextNode('Log out'));
 
-  menu.append(head, session, shortcuts, logout);
+  // Which build you are running, where you look when something behaves oddly.
+  const version = document.createElement('div');
+  version.className = 'menu-version';
+  version.textContent = `Caddy Console ${user.version || ''}`.trim();
+
+  menu.append(head, session, shortcuts, logout, version);
   host.append(button, menu);
 
   let open = false;

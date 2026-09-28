@@ -14,8 +14,25 @@ body {
 
 /* Header */
 .header { padding: var(--space-1) var(--space-4); background: var(--surface-raised); display: flex; align-items: center; gap: var(--space-3); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-.brand { font-size: var(--text-md); font-weight: 600; color: var(--accent); text-decoration: none; margin-right: var(--space-1); }
+.brand { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-md); font-weight: 600; color: var(--accent); text-decoration: none; margin-right: var(--space-1); }
 .brand:hover { color: var(--accent-hover); }
+.brand-mark { flex-shrink: 0; }
+
+/* Icons.
+   The sprite itself is never rendered; only its symbols are referenced. Sizing
+   comes from the width/height attributes so an icon cannot be stretched by its
+   flex parent, and the stroke inherits the surrounding colour, which is how a
+   facet row's state reaches its checkbox with no extra rule. */
+.icon-sprite { display: none; }
+.icon { flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.125em; }
+/* Only on while Live is actually following, so the motion means something.
+   Opacity rather than scale: a pulsing size would nudge the button's text. */
+@keyframes icon-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.icon-pulse { animation: icon-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .icon-pulse { animation: none; }
+  .menu-caret { transition: none; }
+}
 
 /* Actions scoped to one view: laid out only when that view is showing, so they
    take no space elsewhere. */
@@ -57,7 +74,7 @@ body {
 
 /* Tabs */
 .tabs { display: flex; gap: var(--space-1); }
-.tab { padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--ink-muted); cursor: pointer; border-bottom: 2px solid transparent; text-decoration: none; display: inline-block; }
+.tab { display: inline-flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--ink-muted); cursor: pointer; border-bottom: 2px solid transparent; text-decoration: none; }
 .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .tab:hover { color: var(--ink); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
@@ -94,7 +111,11 @@ body {
 .user-menu.open .menu-trigger { background: var(--surface); border-color: var(--border-strong); color: var(--ink); }
 .menu-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .menu-trigger-email { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.menu-caret { color: var(--ink-muted); font-size: var(--text-sm); }
+.menu-caret { color: var(--ink-muted); }
+/* Rotates rather than swapping to a second glyph, so the state change reads as
+   one continuous motion. */
+.user-menu.open .menu-caret { transform: rotate(180deg); }
+.menu-caret { transition: transform 0.15s ease; }
 
 /* Initials rather than a fetched avatar: no external request, nothing to leak. */
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: var(--radius-pill); background: var(--accent-quiet); color: var(--accent); font-size: var(--text-sm); font-weight: 700; letter-spacing: 0.3px; }
@@ -112,8 +133,10 @@ body {
 .menu-row { display: flex; align-items: baseline; gap: var(--space-2); padding: 1px 0; font-size: var(--text-sm); }
 .menu-row-label { flex: 1; color: var(--ink-secondary); }
 .menu-row-value { color: var(--ink-muted); font-family: var(--font-mono); white-space: nowrap; }
-.menu-action { display: block; padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--ink-secondary); text-decoration: none; }
+.menu-action { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); font-size: var(--text-sm); color: var(--ink-secondary); text-decoration: none; }
 .menu-action:hover { background: var(--surface); color: var(--ink); }
+/* The build, quiet at the bottom: worth being able to find, not worth reading. */
+.menu-version { padding: var(--space-2) var(--space-3); border-top: 1px solid var(--border); color: var(--ink-muted); font-size: var(--text-sm); }
 .spacer { flex: 1; }
 .footer-meta { font-size: var(--text-sm); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
 
@@ -206,7 +229,11 @@ body {
 .facet-row.excluded { color: var(--ink-secondary); }
 .facet-row.excluded .facet-check { color: var(--accent); }
 .facet-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.facet-check { flex-shrink: 0; }
+.facet-check { flex-shrink: 0; color: var(--ink-muted); }
+.facet-row.on .facet-check { color: var(--accent); }
+/* An unfilterable row's dash is text, not an icon, and needs the icon's width
+   so its value still lines up with the rows above it. */
+.facet-check-none { width: 16px; text-align: center; }
 .facet-value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .facet-row.excluded .facet-value { text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: var(--accent); }
 .facet-count { flex-shrink: 0; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
@@ -259,7 +286,7 @@ body {
 
 /* Pinned custom range chip */
 .range-pin { display: inline-flex; align-items: center; gap: var(--space-1); padding: 2px var(--space-2); background: var(--accent-quiet); color: var(--accent); border: 1px solid var(--accent); border-radius: var(--radius-pill); font-size: var(--text-sm); white-space: nowrap; }
-.range-pin button { background: none; border: none; color: inherit; cursor: pointer; font-size: var(--text-sm); padding: 0 2px; }
+.range-pin button { display: inline-flex; align-items: center; background: none; border: none; color: inherit; cursor: pointer; padding: 0 1px; }
 .range-pin button:hover { color: var(--ink); }
 
 /* Summary row */
@@ -298,7 +325,7 @@ body {
 
 /* The trigger only appears on hover or focus, so eight of them do not clutter
    the expanded row. */
-.field-trigger { opacity: 0; background: none; border: none; color: var(--ink-muted); cursor: pointer; font-size: var(--text-sm); line-height: 1; padding: 0; width: 18px; text-align: center; }
+.field-trigger { display: inline-flex; align-items: center; justify-content: center; opacity: 0; background: none; border: none; color: var(--ink-muted); cursor: pointer; line-height: 1; padding: 0; width: 18px; }
 .field-row:hover .field-trigger, .field-trigger:focus-visible, .field-trigger[aria-expanded="true"] { opacity: 1; }
 .field-trigger:hover, .field-trigger[aria-expanded="true"] { color: var(--accent); }
 

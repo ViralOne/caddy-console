@@ -1,0 +1,16 @@
+<!-- Tab icon: the app mark knocked out of a filled badge.
+     A badge rather than bare strokes because a favicon sits on whatever colour
+     the browser chrome happens to be, and a thin arch disappears on a dark tab
+     strip. #1f6feb is the accent one step darker than the UI's --accent, which
+     keeps white above 4.5:1 on it. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"
+     role="img" aria-label="Caddy Console">
+  <rect width="32" height="32" rx="7" fill="#1f6feb"/>
+  <path d="M6 26V16a10 10 0 0 1 20 0v10" fill="none" stroke="#ffffff"
+        stroke-width="3" stroke-linecap="round"/>
+  <g fill="#ffffff">
+    <rect x="10.5" y="18" width="3" height="8" rx="1.5"/>
+    <rect x="14.5" y="14" width="3" height="12" rx="1.5"/>
+    <rect x="18.5" y="21" width="3" height="5" rx="1.5"/>
+  </g>
+</svg>

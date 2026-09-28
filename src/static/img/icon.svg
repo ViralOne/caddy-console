@@ -1,0 +1,19 @@
+<!-- Caddy Console app mark.
+     A gateway with the traffic through it measured: the two halves of what this
+     app is for, in one shape. Drawn on a 32 grid; the bars are filled rather
+     than stroked so they keep their weight when the mark is scaled down, and
+     everything inherits currentColor so this file works on the dark UI and in a
+     light README alike.
+
+     The bars stop well short of the arch's crown on purpose — crowding them into
+     it turns the whole mark into a blob below about 20px. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32"
+     role="img" aria-label="Caddy Console">
+  <path d="M6 26V16a10 10 0 0 1 20 0v10" fill="none" stroke="currentColor"
+        stroke-width="3" stroke-linecap="round"/>
+  <g fill="currentColor">
+    <rect x="10.5" y="18" width="3" height="8" rx="1.5"/>
+    <rect x="14.5" y="14" width="3" height="12" rx="1.5"/>
+    <rect x="18.5" y="21" width="3" height="5" rx="1.5"/>
+  </g>
+</svg>
