@@ -14,14 +14,17 @@ import { exploreStateFromSearch, exploreStateToSearch, replaceSearch } from './r
 
 const html = htm.bind(h);
 
+// Time is the only control now. The log is append-ordered, so the server
+// bisects to the start of a range instead of reading a fixed number of
+// megabytes, and reaches into rolled archives when a range predates the live file.
 const RANGES = [
+  { key: '30m', label: 'last 30 min' },
   { key: '1h', label: 'last 1h' },
   { key: '6h', label: 'last 6h' },
   { key: '24h', label: 'last 24h' },
   { key: '7d', label: 'last 7d' },
-  { key: 'all', label: 'everything read' },
+  { key: '30d', label: 'last 30 days' },
 ];
-const WINDOWS = [10, 25, 50, 100];
 const FACET_GROUPS = [
   { key: 'host', title: 'Host' },
   { key: 'status_class', title: 'Status', queryKey: 'status' },
@@ -96,7 +99,6 @@ function App() {
   const [query, setQuery] = useState(initial.q);
   const [draft, setDraft] = useState(initial.q);   // what's in the input right now
   const [range, setRange] = useState(initial.range);
-  const [windowMb, setWindowMb] = useState(initial.windowMb);
   const [custom, setCustom] = useState(initial.custom);  // {from, to}, pinned absolute
   const [follow, setFollow] = useState(initial.live);
   const [data, setData] = useState(null);
@@ -132,7 +134,6 @@ function App() {
       setDraft(next.q);
       setQuery(next.q);
       setRange(next.range);
-      setWindowMb(next.windowMb);
       setCustom(next.custom);
       setFollow(next.live);
     };
@@ -142,11 +143,8 @@ function App() {
   // replaceState, not pushState: a history entry per keystroke would make Back
   // feel broken.
   useEffect(() => {
-    replaceSearch(exploreStateToSearch({ q: query, range, windowMb, custom, live: follow }));
-    // The dashboard reads this so both views request the same log window; a
-    // mismatch would make the shared index rebuild on every view switch.
-    try { localStorage.setItem('exploreWindowMb', String(windowMb)); } catch (e) { /* private mode */ }
-  }, [query, range, windowMb, custom, follow]);
+    replaceSearch(exploreStateToSearch({ q: query, range, custom, live: follow }));
+  }, [query, range, custom, follow]);
 
   // Debounce the input: one request when typing settles, not one per keystroke.
   useEffect(() => {
@@ -155,10 +153,10 @@ function App() {
   }, [draft]);
 
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ window_mb: String(windowMb), limit: '200' });
+    const params = new URLSearchParams({ limit: '200' });
     if (query) params.set('q', query);
     if (custom) { params.set('from', String(custom.from)); params.set('to', String(custom.to)); }
-    else if (range !== 'all') params.set('range', range);
+    else params.set('range', range);
 
     // A slow response for an old query must not overwrite a newer one.
     const token = {};
@@ -176,7 +174,7 @@ function App() {
     } finally {
       if (inflight.current === token) setLoading(false);
     }
-  }, [query, range, windowMb, custom]);
+  }, [query, range, custom]);
 
   useEffect(() => {
     setLoading(true);
@@ -206,7 +204,6 @@ function App() {
     setLoadingOlder(true);
     try {
       const params = new URLSearchParams({
-        window_mb: String(windowMb),
         limit: '200',
         before_ts: String(shown[shown.length - 1].ts),
         before_offset: String(shown[shown.length - 1].offset),
@@ -221,7 +218,7 @@ function App() {
       if (from != null && to != null) {
         params.set('from', String(Math.floor(from)));
         params.set('to', String(Math.ceil(to)));
-      } else if (range !== 'all') {
+      } else {
         params.set('range', range);
       }
       const res = await fetch('/api/explore?' + params);
@@ -237,12 +234,12 @@ function App() {
     }
   };
 
-  const showRaw = async (offset) => {
+  const showRaw = async (fileId, offset) => {
     if (raw[offset] !== undefined) { setRaw(prev => ({ ...prev, [offset]: undefined })); return; }
     // Updater form, not a spread of the captured `raw`: two rows fetched at once
     // would otherwise have the second response discard the first.
     try {
-      const res = await fetch('/api/explore/raw?offset=' + offset);
+      const res = await fetch(`/api/explore/raw?file=${fileId}&offset=${offset}`);
       const body = await res.json();
       setRaw(prev => ({ ...prev, [offset]: body.line || body.error || '(unavailable)' }));
     } catch (e) {
@@ -299,10 +296,6 @@ function App() {
                          onChange=${e => pickRange(e.target.value)}>
                    ${RANGES.map(r => html`<option value=${r.key}>${r.label}</option>`)}
                  </select>`}
-        <select class="select-inline" value=${String(windowMb)} title="How much of the log to read"
-                onChange=${e => setWindowMb(Number(e.target.value))}>
-          ${WINDOWS.map(mb => html`<option value=${String(mb)}>read ${mb} MB</option>`)}
-        </select>
         ${note && html`<span class="explore-note">${note}</span>`}
         <button class=${'btn btn-sm ' + (follow ? 'btn-validate' : 'btn-secondary')}
                 disabled=${!!custom}
@@ -364,14 +357,14 @@ function App() {
               <span class=${'tone-' + latencyTone(stats.p95_latency_ms)}>p95 ${formatMs(stats.p95_latency_ms)}</span>
               <span>${formatBytesShort(stats.bytes_out)} out</span>
               <span class="spacer"></span>
-              <span class="explore-meta">${rangeLabel} · read ${formatBytesShort(data.window.covered_bytes)} of ${formatBytesShort(data.window.file_size)}</span>
+              <span class="explore-meta">${rangeLabel} · ${data.history?.rolls_read ? `${data.history.rolls_read} archive${data.history.rolls_read > 1 ? 's' : ''} read` : 'live log only'}</span>
             </div>`}
 
           ${data && !data.exists && html`
             <div class="metrics-hint">No access log at ${data.path}. Add a log directive to your sites — see the README for the snippet.</div>`}
 
           ${data?.range?.truncated && html`
-            <div class="metrics-hint">The selected range reaches further back than the ${windowMb} MB read from the log. Earliest event available: ${clockTime(data.range.earliest_ts)}. Read more of the log to see further back.</div>`}
+            <div class="metrics-hint">This range reaches further back than the events held in memory. Earliest indexed: ${clockTime(data.range.earliest_ts)}. Narrow the range, or raise CADDY_EXPLORE_MAX_EVENTS.</div>`}
 
           ${data?.skipped > 0 && data?.indexed === 0 && html`
             <div class="metrics-hint error">${data.skipped.toLocaleString()} log lines were read but none could be indexed — every entry needs a "ts" field and a request host. Check the log format against the README snippet.</div>`}
@@ -442,7 +435,7 @@ function App() {
                         <span class="field-label">raw</span>
                         <span class="field-value">
                           <button class="btn btn-secondary btn-sm"
-                                  onClick=${() => showRaw(e.offset)}>
+                                  onClick=${() => showRaw(e.file, e.offset)}>
                             ${raw[e.offset] !== undefined ? 'hide' : 'show original line'}
                           </button>
                           ${raw[e.offset] !== undefined && html`<pre class="stream-raw">${raw[e.offset]}</pre>`}

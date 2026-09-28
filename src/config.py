@@ -26,14 +26,11 @@ CF_ACCESS_AUD = os.environ.get("CF_ACCESS_AUD", "").strip()
 # How many pre-save backups to keep on disk (oldest are pruned after each save).
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "50"))
 
-# How far back into the access log the dashboard and the explorer scan. The UI
-# can override it per request up to the maximum. Keep it at or below the
-# Caddyfile's roll_size, since only the current (unrolled) file is read.
-EXPLORE_WINDOW_MAX_MB = 100
-EXPLORE_WINDOW_MB = min(
-    max(int(os.environ.get("CADDY_EXPLORE_WINDOW_MB", "10")), 1),
-    EXPLORE_WINDOW_MAX_MB,
-)
+# Loading is bounded by the requested time range, not by a byte budget: the log
+# is append-ordered, so the start of a range is found by bisection, and rolled
+# archives are opened only when a range predates the live file. How far back you
+# can look is therefore Caddy's retention (roll_keep / roll_keep_for), not a
+# setting here.
 
 # Rotate the audit log once it grows past this size; one rotated file is kept.
 AUDIT_LOG_MAX_BYTES = int(os.environ.get("AUDIT_LOG_MAX_BYTES", str(5 * 1024 * 1024)))

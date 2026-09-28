@@ -10,13 +10,6 @@ const html = htm.bind(h);
 const RANGE = '1h';          // the dashboard is a "right now" view
 const REFRESH_MS = 15000;
 
-// Both views read one shared index, and asking for a different window forces it
-// to rebuild. Reading the explorer's choice keeps them in step.
-function sharedWindowMb() {
-  const mb = parseInt(localStorage.getItem('exploreWindowMb'), 10);
-  return [10, 25, 50, 100].includes(mb) ? mb : 10;
-}
-
 function formatBytes(n) {
   if (!n) return '0';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -92,7 +85,7 @@ function App() {
   const load = async () => {
     try {
       const [sites, upstreams, traffic, status, audit] = await Promise.all([
-        fetch(`/api/sites?range=${RANGE}&window_mb=${sharedWindowMb()}`).then(r => r.json()),
+        fetch(`/api/sites?range=${RANGE}`).then(r => r.json()),
         fetch('/api/upstreams').then(r => r.json()),
         fetch('/api/traffic').then(r => r.json()),
         fetch('/api/status').then(r => r.json()),
@@ -230,7 +223,7 @@ function App() {
       })()}
 
       <div class="metrics-footer">
-        Read ${formatBytes(data.sites.window?.covered_bytes || 0)} of ${formatBytes(data.sites.window?.file_size || 0)} from the log · refreshes every ${REFRESH_MS / 1000}s
+        ${data.sites.indexed?.toLocaleString() || 0} events indexed · refreshes every ${REFRESH_MS / 1000}s
         ${data.sites.dropped ? ` · ${data.sites.dropped.toLocaleString()} oldest events dropped at the memory cap` : ''}
       </div>
     </div>`;

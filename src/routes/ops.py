@@ -17,8 +17,6 @@ from ..config import (
     BACKUP_PREFIX,
     CADDY_API_URL,
     CADDYFILE,
-    EXPLORE_WINDOW_MAX_MB,
-    EXPLORE_WINDOW_MB,
 )
 from ..eventindex import event_index
 from ..validator import run_caddy
@@ -245,7 +243,11 @@ def traffic():
         return jsonify({"error": f"{type(e).__name__}: {e}", "sites": {}})
 
 
-RANGES = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}
+RANGES = {
+    "30m": 1800, "1h": 3600, "6h": 21600, "24h": 86400,
+    "7d": 604800, "30d": 2592000,
+}
+DEFAULT_RANGE = "30m"
 
 
 @ops_bp.route("/api/explore", methods=["GET"])
@@ -257,12 +259,10 @@ def explore():
     show zero results, not an error page.
     """
     args = request.args
-    window_mb = _window_mb(args.get("window_mb"))
     from_ts, to_ts = _range(args)
     try:
         payload = event_index.query(
             args.get("q", ""),
-            window_bytes=window_mb * 1024 * 1024,
             from_ts=from_ts,
             to_ts=to_ts,
             limit=_clamp_int(args.get("limit"), 200, 1, 1000),
@@ -273,9 +273,8 @@ def explore():
     except OSError as e:
         return jsonify({"error": f"Could not read the access log: {e}",
                         "exists": False, "entries": [], "total": 0})
-    payload["window_mb"] = window_mb
-    payload["window_max_mb"] = EXPLORE_WINDOW_MAX_MB
     payload["ranges"] = list(RANGES)
+    payload["default_range"] = DEFAULT_RANGE
     return jsonify(payload)
 
 
@@ -283,13 +282,11 @@ def explore():
 @login_required
 def sites():
     """Per-site traffic for the dashboard, from the access log."""
-    window_mb = _window_mb(request.args.get("window_mb"))
     from_ts, to_ts = _range(request.args)
     try:
-        payload = event_index.site_summary(window_mb * 1024 * 1024, from_ts, to_ts)
+        payload = event_index.site_summary(from_ts, to_ts)
     except OSError as e:
         return jsonify({"error": str(e), "sites": [], "exists": False})
-    payload["window_mb"] = window_mb
     return jsonify(payload)
 
 
@@ -298,14 +295,15 @@ def sites():
 def explore_raw():
     """One original log line, addressed by the byte offset the index recorded."""
     offset = request.args.get("offset", type=int)
-    if offset is None or offset < 0:
+    file_id = request.args.get("file", type=int, default=0)
+    if offset is None or offset < 0 or file_id is None or file_id < 0:
         return jsonify({"error": "offset required"}), 400
     try:
-        line = event_index.raw_line(offset)
+        line = event_index.raw_line(file_id, offset)
     except OSError as e:
         return jsonify({"error": str(e)}), 200
     if line is None:
-        return jsonify({"error": "That line is outside the range currently read from the log."})
+        return jsonify({"error": "That line is no longer in the range being read from the log."})
     return jsonify({"line": line})
 
 
@@ -315,7 +313,7 @@ def _range(args):
     explicit_to = _float_or_none(args.get("to"))
     if explicit_from is not None or explicit_to is not None:
         return explicit_from, explicit_to
-    seconds = RANGES.get(args.get("range", ""))
+    seconds = RANGES.get(args.get("range") or DEFAULT_RANGE)
     if seconds is None:
         return None, None
     now = time.time()
@@ -334,15 +332,6 @@ def _clamp_int(raw, default, low, high):
         return max(low, min(int(raw), high))
     except (TypeError, ValueError):
         return default
-
-
-def _window_mb(raw):
-    """Clamp the requested window to 1..EXPLORE_WINDOW_MAX_MB megabytes."""
-    try:
-        requested = int(raw)
-    except (TypeError, ValueError):
-        return EXPLORE_WINDOW_MB
-    return max(1, min(requested, EXPLORE_WINDOW_MAX_MB))
 
 
 def _server_maps():

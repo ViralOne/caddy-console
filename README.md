@@ -8,7 +8,7 @@ Three views, each with its own URL:
 
 - **Dashboard** (`/`) — one row per site: upstream health, requests, 5xx rate, p95 latency, bandwidth and an hourly sparkline. Every figure links into the explorer with that filter applied. Plus config status and recent editor changes.
 - **Editor** (`/editor`) — CodeMirror 6 with Caddyfile syntax highlighting, find/replace, Cmd+S to save, validate & format
-- **Explore** (`/explore`) — faceted search over the access log: a query bar (`host:… status:5xx path:/api`, free text, `-` to exclude), facet sidebar with live counts, a stacked status histogram you can drag to zoom, and an event stream. Per-field menus filter, exclude or copy. The whole state lives in the URL, so a view is shareable — including absolute timestamps.
+- **Explore** (`/explore`) — faceted search over the access log: a query bar (`host:… status:5xx path:/api`, free text, `-` to exclude), facet sidebar with live counts, a stacked status histogram you can drag to zoom, and an event stream. Per-field menus filter, exclude or copy. The whole state lives in the URL, so a view is shareable — including absolute timestamps. Ranges run from 30 minutes to 30 days; older ranges are served by reading Caddy's rolled archives, so **how far back you can look is whatever `roll_keep` / `roll_keep_for` in your Caddyfile has kept.**
 
 Everything else:
 
@@ -245,8 +245,7 @@ The bundle (`editor.bundle.js`) is committed — no build step needed on the ser
 | `BACKUP_KEEP` | no | `50` | Pre-save backups to keep; oldest are pruned after each save (`0` = keep all) |
 | `AUDIT_LOG_MAX_BYTES` | no | `5242880` | Rotate the audit log past this size; one rotated file is kept |
 | `CADDY_LOG_FILE` | no | `/var/log/caddy/access.log` | Path to Caddy access log (must match Caddyfile) |
-| `CADDY_EXPLORE_WINDOW_MB` | no | `10` | How far back into the log to scan (max 100) |
-| `CADDY_EXPLORE_MAX_EVENTS` | no | `200000` | Events held in memory; ~38 B each retained |
+| `CADDY_EXPLORE_MAX_EVENTS` | no | `200000` | Events held in memory per range; ~38 B each |
 | `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
 | `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
 

@@ -23,6 +23,7 @@ import os
 import threading
 from array import array
 
+from . import logfiles
 from .config import CADDY_LOG_FILE, EXPLORE_MAX_EVENTS
 
 CHUNK = 1024 * 1024
@@ -155,75 +156,95 @@ class EventIndex:
         self.status = array("h")
         self.duration_ms = array("f")
         self.size = array("q")
-        # Byte offset of the line this event came from. 8 bytes per event buys a
-        # raw-line view without retaining the line itself.
+        # Byte offset of the line this event came from, plus which file in the
+        # series it was. 12 bytes per event buys a raw-line view without
+        # retaining the line itself.
         self.offset = array("q")
+        self.file_id = array("i")
         self.host_id = array("i")
         self.method_id = array("i")
         self.uri_id = array("i")
         self.client_id = array("i")
         self.hosts = _Intern(); self.methods = _Intern()
         self.uris = _Intern(); self.clients = _Intern()
-        self._pos = 0
-        self._scan_start = 0
-        self._last_size = 0
         self._skipped = 0
         self._dropped = 0
-        self._window = None
         self._built = False
+        self._from = None
+        self._to = None
+        self._files = []
+        self._live_size = 0
+        self._live_pos = 0
+        self._earliest_possible = None
+        self._series_starts_at = None
+        self._rolls_available = 0
+        self._rolls_read = 0
 
-    # --- reading -----------------------------------------------------------
+    # --- loading -----------------------------------------------------------
 
-    def _refresh(self, window_bytes):
-        try:
-            size = os.path.getsize(self._path)
-        except OSError:
+    def _load(self, from_ts, to_ts):
+        """Index every entry in [from_ts, to_ts], across rolls if needed.
+
+        Reloads only when the requested span is not already covered. When the
+        span is unchanged and the live file has grown, the tail is folded in
+        incrementally so Live mode does not re-read anything.
+        """
+        series = logfiles.discover(self._path)
+        if not series:
             self._clear()
-            return False, 0
-        rebuild = (
-            not self._built
-            or window_bytes != self._window
-            or size < self._last_size
-            or (size - self._scan_start) > window_bytes * REBUILD_SLACK
-        )
-        if rebuild:
-            self._clear()
-            self._window = window_bytes
-            self._scan_start = max(0, size - window_bytes)
-            self._built = True
-            self._pos = self._fold(self._scan_start, size, drop_first=self._scan_start > 0)
-        else:
-            self._pos = self._fold(self._pos, size, drop_first=False)
-        self._last_size = size
+            return False
+
+        live = series[-1] if series[-1].is_live else None
+        live_size = live.size() if live else 0
+
+        same_span = (self._from == from_ts and self._to == to_ts and self._built)
+        if same_span and live is not None and live_size >= self._live_size:
+            if live_size > self._live_size:
+                # A resume position, so it is already on a line boundary.
+                self._fold_file(live, self._live_pos, len(self._files) - 1, exact=True)
+                self._live_size = live_size
+            return True
+
+        self._clear()
+        self._from, self._to = from_ts, to_ts
+        self._built = True
+
+        wanted = [f for f in series if f.covers(from_ts, to_ts)]
+        self._files = wanted
+        for i, f in enumerate(wanted):
+            # Only the live file is seekable, so only it can be bisected; an
+            # archive is read whole, which is why filename-based selection above
+            # matters so much.
+            start_offset = 0
+            if f.is_live and from_ts is not None:
+                start_offset = logfiles.offset_at(f.path, from_ts)
+            self._fold_file(f, start_offset, i)
+            if f.is_live:
+                self._live_size = f.size()
+
+        self._earliest_possible = wanted[0].starts_at if wanted else None
+        self._series_starts_at = series[0].starts_at
+        self._rolls_available = sum(1 for f in series if not f.is_live)
+        self._rolls_read = sum(1 for f in wanted if not f.is_live)
+        return True
+
+    def _fold_file(self, logfile, start_offset, file_id, exact=False):
+        count = 0
+        consumed = start_offset
+        for offset, line in logfiles.iter_lines(logfile, start_offset, exact=exact):
+            self._add(line, offset, file_id)
+            # Where the next read resumes: past this line and its newline. Derived
+            # from the iteration rather than from what was kept, since entries
+            # outside the span are read and discarded.
+            consumed = offset + len(line) + 1
+            count += 1
+            if count % 20000 == 0:
+                self._evict()
+        if logfile.is_live:
+            self._live_pos = consumed
         self._evict()
-        return True, size
 
-    def _fold(self, start, size, drop_first):
-        consumed = start
-        read_to = start
-        buf = b""
-        dropped = not drop_first
-        with open(self._path, "rb") as f:
-            f.seek(start)
-            while read_to < size:
-                chunk = f.read(min(CHUNK, size - read_to))
-                if not chunk:
-                    break
-                read_to += len(chunk)
-                buf += chunk
-                while True:
-                    nl = buf.find(b"\n")
-                    if nl == -1:
-                        break
-                    line, buf = buf[:nl], buf[nl + 1:]
-                    consumed += nl + 1
-                    if not dropped:
-                        dropped = True  # partial line at the byte anchor
-                        continue
-                    self._add(line, consumed - (nl + 1))
-        return consumed
-
-    def _add(self, raw, offset=0):
+    def _add(self, raw, offset=0, file_id=0):
         if not raw.strip():
             return
         try:
@@ -241,6 +262,12 @@ class EventIndex:
             # Caddy runtime lines (startup, TLS) share the file and have neither.
             self._skipped += 1
             return
+        # Entries outside the requested span are read but not kept: bisection
+        # brackets conservatively, and an archive is read whole.
+        if self._from is not None and ts < self._from:
+            return
+        if self._to is not None and ts > self._to:
+            return
         name, sep, port = host.rpartition(":")
         if sep and port.isdigit():
             host = name
@@ -249,6 +276,7 @@ class EventIndex:
         size = e.get("size")
         self.ts.append(float(ts))
         self.offset.append(offset)
+        self.file_id.append(file_id)
         self.status.append(int(status) if isinstance(status, int) and 0 <= status <= 32767 else 0)
         self.duration_ms.append(float(duration) * 1000.0 if isinstance(duration, (int, float)) else 0.0)
         self.size.append(int(size) if isinstance(size, (int, float)) else 0)
@@ -265,24 +293,24 @@ class EventIndex:
 
         Trimmed in one slice rather than per event so the cost is amortised; the
         intern tables are left alone, since a stale entry costs one string and
-        re-interning on rebuild would cost more.
+        re-interning on reload would cost more.
         """
         over = len(self.ts) - self._max
         if over <= 0:
             return
-        cut = over + max(1, self._max // 10)
-        cut = min(cut, len(self.ts))
+        cut = min(over + max(1, self._max // 10), len(self.ts))
         for col in (self.ts, self.status, self.duration_ms, self.size, self.offset,
-                    self.host_id, self.method_id, self.uri_id, self.client_id):
+                    self.file_id, self.host_id, self.method_id, self.uri_id,
+                    self.client_id):
             del col[:cut]
         self._dropped += cut
 
     # --- querying ----------------------------------------------------------
 
-    def query(self, q="", window_bytes=10 * 1024 * 1024, from_ts=None, to_ts=None,
+    def query(self, q="", from_ts=None, to_ts=None,
               limit=200, before_ts=None, before_offset=None, facet_limit=50):
         with self._lock:
-            exists, size = self._refresh(int(window_bytes))
+            exists = self._load(from_ts, to_ts)
             filters = parse_query(q)
             n = len(self.ts)
 
@@ -322,17 +350,27 @@ class EventIndex:
                     # True only when the byte window is what cut history short:
                     # anchoring at 0 means the whole file was read, so an earlier
                     # `from` just predates the log rather than exceeding it.
-                    # True when history was cut short either by the byte window
-                    # or by the in-memory cap evicting the oldest events.
-                    "truncated": bool(n and (self._scan_start > 0 or self._dropped)
+                    # Only the in-memory cap can cut history short now: the
+                    # requested span itself is read in full, across archives.
+                    "truncated": bool(n and self._dropped
                                       and from_ts is not None and from_ts < self.ts[0]),
                 },
-                "window": {"bytes": int(window_bytes), "covered_bytes": max(0, self._pos - self._scan_start),
-                           "file_size": size},
+                "history": self._history(),
                 "indexed": n,
                 "dropped": self._dropped,
                 "skipped": self._skipped,
             }
+
+    def _history(self):
+        """What the log series can answer, so the UI never offers more than exists."""
+        return {
+            # Oldest data that exists on disk. The first file's start is unknown
+            # (nothing precedes it), so its own entries define the boundary.
+            "earliest_available": self._series_starts_at,
+            "rolls_available": self._rolls_available,
+            "rolls_read": self._rolls_read,
+            "files_read": [os.path.basename(f.path) for f in self._files],
+        }
 
     def _scan(self, f, lo, hi, skip_key=None):
         """Indices in [lo, hi) matching `f`, ignoring constraints on `skip_key`.
@@ -482,14 +520,14 @@ class EventIndex:
             b[cls] = b.get(cls, 0) + 1
         return {"bucket_seconds": width, "buckets": [buckets[k] for k in sorted(buckets)]}
 
-    def site_summary(self, window_bytes, from_ts=None, to_ts=None, points=24):
+    def site_summary(self, from_ts=None, to_ts=None, points=24):
         """Per-host traffic summary for the dashboard.
 
         One grouped pass rather than a query per host: a dozen sites would
         otherwise mean a dozen scans of the whole index.
         """
         with self._lock:
-            exists, size = self._refresh(int(window_bytes))
+            exists = self._load(from_ts, to_ts)
             n = len(self.ts)
             lo = bisect.bisect_left(self.ts, from_ts) if from_ts is not None else 0
             hi = bisect.bisect_right(self.ts, to_ts) if to_ts is not None else n
@@ -536,9 +574,7 @@ class EventIndex:
                 "exists": exists, "sites": out,
                 "from": span_from, "to": span_to, "points": points,
                 "indexed": n, "dropped": self._dropped, "skipped": self._skipped,
-                "window": {"bytes": int(window_bytes),
-                           "covered_bytes": max(0, self._pos - self._scan_start),
-                           "file_size": size},
+                "history": self._history(),
             }
 
     def _entry(self, i):
@@ -552,21 +588,21 @@ class EventIndex:
             "size": self.size[i],
             "client_ip": self.clients.values[self.client_id[i]],
             "offset": self.offset[i],
+            "file": self.file_id[i],
         }
 
-    def raw_line(self, offset):
-        """The original log line at `offset`, for the raw view in Explore.
+    def raw_line(self, file_id, offset):
+        """The original log line, for the raw view in Explore.
 
         Read on demand rather than retained: at ~378 bytes per entry, keeping
-        every line would cost as much memory as the log file itself.
+        every line would cost as much memory as the log itself. An archived line
+        means decompressing up to that offset, which is acceptable for one click.
         """
         with self._lock:
-            if offset < self._scan_start or offset >= self._pos:
-                return None  # outside what is currently indexed
-            with open(self._path, "rb") as f:
-                f.seek(offset)
-                line = f.readline()
-        return line.decode("utf-8", errors="replace").rstrip("\n")
+            if not (0 <= file_id < len(self._files)):
+                return None
+            logfile = self._files[file_id]
+        return logfiles.read_line_at(logfile, offset)
 
 
 event_index = EventIndex()

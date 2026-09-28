@@ -44,18 +44,12 @@ check('an unknown view is the dashboard path', () => assert.equal(pathFor('wat')
 console.log('\n--- exploreStateFromSearch ---');
 check('an empty query string gives the defaults', () => {
   const s = exploreStateFromSearch('');
-  assert.deepEqual(s, { q: '', range: '24h', windowMb: 10, custom: null, live: false });
+  assert.deepEqual(s, { q: '', range: '30m', custom: null, live: false });
 });
 check('reads q, range and window', () => {
-  const s = exploreStateFromSearch('?q=status%3A5xx&range=1h&window=50');
+  const s = exploreStateFromSearch('?q=status%3A5xx&range=1h');
   assert.equal(s.q, 'status:5xx');
   assert.equal(s.range, '1h');
-  assert.equal(s.windowMb, 50);
-});
-check('an unsupported window falls back to the default', () => {
-  // The UI only offers 10/25/50/100; anything else would not match a control.
-  assert.equal(exploreStateFromSearch('?window=37').windowMb, 10);
-  assert.equal(exploreStateFromSearch('?window=abc').windowMb, 10);
 });
 check('an absolute range needs both ends', () => {
   assert.deepEqual(exploreStateFromSearch('?from=100&to=200').custom, { from: 100, to: 200 });
@@ -71,29 +65,29 @@ check('live is only true for 1', () => {
 
 console.log('\n--- exploreStateToSearch ---');
 check('defaults are omitted, keeping a plain URL clean', () => {
-  assert.equal(exploreStateToSearch({ q: '', range: '24h', windowMb: 10, custom: null, live: false }), '');
+  assert.equal(exploreStateToSearch({ q: '', range: '30m', custom: null, live: false }), '');
 });
 check('writes only what differs', () => {
-  const s = exploreStateToSearch({ q: 'status:5xx', range: '24h', windowMb: 10, custom: null, live: false });
+  const s = exploreStateToSearch({ q: 'status:5xx', range: '30m', custom: null, live: false });
   assert.equal(s, 'q=status%3A5xx');
 });
 check('an absolute range replaces range, so a link cannot drift', () => {
-  const s = exploreStateToSearch({ q: '', range: '1h', windowMb: 10, custom: { from: 100.7, to: 200.2 }, live: false });
+  const s = exploreStateToSearch({ q: '', range: '1h', custom: { from: 100.7, to: 200.2 }, live: false });
   const p = new URLSearchParams(s);
   assert.equal(p.get('from'), '100');   // floored
   assert.equal(p.get('to'), '201');     // ceiled, so the range never loses an event
   assert.equal(p.has('range'), false);
 });
 check('live is recorded', () => {
-  assert.ok(new URLSearchParams(exploreStateToSearch({ q: '', range: '24h', windowMb: 10, custom: null, live: true })).has('live'));
+  assert.ok(new URLSearchParams(exploreStateToSearch({ q: '', range: '30m', custom: null, live: true })).has('live'));
 });
 
 console.log('\n--- round trip ---');
 check('state survives a serialise/parse cycle', () => {
   const cases = [
-    { q: 'host:a status:5xx', range: '1h', windowMb: 100, custom: null, live: false },
-    { q: '', range: '7d', windowMb: 25, custom: null, live: true },
-    { q: 'timeout', range: '24h', windowMb: 10, custom: { from: 1790000000, to: 1790003600 }, live: false },
+    { q: 'host:a status:5xx', range: '1h', custom: null, live: false },
+    { q: '', range: '7d', custom: null, live: true },
+    { q: 'timeout', range: '30m', custom: { from: 1790000000, to: 1790003600 }, live: false },
   ];
   for (const want of cases) {
     const got = exploreStateFromSearch('?' + exploreStateToSearch(want));
@@ -101,7 +95,7 @@ check('state survives a serialise/parse cycle', () => {
   }
 });
 check('a query with quoted spaces survives the round trip', () => {
-  const want = { q: 'path:"/a b"', range: '24h', windowMb: 10, custom: null, live: false };
+  const want = { q: 'path:"/a b"', range: '30m', custom: null, live: false };
   assert.deepEqual(exploreStateFromSearch('?' + exploreStateToSearch(want)), want);
 });
 

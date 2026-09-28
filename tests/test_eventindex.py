@@ -80,7 +80,6 @@ class IndexTest(unittest.TestCase):
                 f.write(json.dumps(e) + "\n")
 
     def q(self, query="", **kw):
-        kw.setdefault("window_bytes", 10 * MB)
         return self.index.query(query, **kw)
 
     def test_missing_file(self):
@@ -116,7 +115,7 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(self.q()["total"], 2)
         self.assertEqual(self.q()["total"], 2)  # a second poll must not re-count
 
-    def test_rotation_rebuilds(self):
+    def test_truncation_rebuilds(self):
         self.write(entry(ts=T0), entry(ts=T0 + 1), entry(ts=T0 + 2))
         self.assertEqual(self.q()["total"], 3)
         with open(self.path, "w") as f:
@@ -208,15 +207,6 @@ class IndexTest(unittest.TestCase):
         r = self.q(from_ts=T0, to_ts=T0 + 2000)
         self.assertFalse(r["range"]["truncated"])
         self.assertAlmostEqual(r["range"]["earliest_ts"], T0 + 1000, places=3)
-
-    def test_truncation_is_flagged_when_the_byte_window_cut_history(self):
-        line = len(json.dumps(entry()) + "\n")
-        self.write(*[entry(ts=T0 + i) for i in range(100)])
-        r = self.q(window_bytes=line * 10, from_ts=T0, to_ts=T0 + 1000)
-        self.assertTrue(r["range"]["truncated"])
-        self.assertGreater(r["range"]["earliest_ts"], T0)
-
-    # --- facets ---
 
     def test_facets_count_by_value(self):
         self.write(
@@ -324,7 +314,7 @@ class IndexTest(unittest.TestCase):
             entry(ts=T0 + 1, host="a.example.com", status=502, duration=0.3, size=20),
             entry(ts=T0 + 2, host="b.example.com", status=200, duration=0.2, size=30),
         )
-        r = self.index.site_summary(10 * MB)
+        r = self.index.site_summary()
         by = {s["host"]: s for s in r["sites"]}
         self.assertEqual(by["a.example.com"]["requests"], 2)
         self.assertEqual(by["a.example.com"]["errors"], 1)
@@ -334,12 +324,12 @@ class IndexTest(unittest.TestCase):
 
     def test_site_summary_is_sorted_busiest_first(self):
         self.write(entry(host="quiet.example.com"), *[entry(host="busy.example.com") for _ in range(5)])
-        hosts = [s["host"] for s in self.index.site_summary(10 * MB)["sites"]]
+        hosts = [s["host"] for s in self.index.site_summary()["sites"]]
         self.assertEqual(hosts, ["busy.example.com", "quiet.example.com"])
 
     def test_site_summary_series_sums_to_requests(self):
         self.write(*[entry(ts=T0 + i * 60, host="a.example.com") for i in range(24)])
-        site = self.index.site_summary(10 * MB)["sites"][0]
+        site = self.index.site_summary()["sites"][0]
         self.assertEqual(sum(site["series"]), site["requests"])
         self.assertEqual(len(site["series"]), 24)
 
@@ -347,19 +337,19 @@ class IndexTest(unittest.TestCase):
         self.write(entry(ts=T0, uri="/first"), entry(ts=T0 + 1, uri="/second"))
         r = self.q()
         newest = r["entries"][0]
-        raw = self.index.raw_line(newest["offset"])
+        raw = self.index.raw_line(newest["file"], newest["offset"])
         self.assertIn('"/second"', raw)
         self.assertEqual(json.loads(raw)["request"]["uri"], "/second")
 
     def test_raw_line_outside_the_window_is_none(self):
         self.write(entry(ts=T0))
         self.q()
-        self.assertIsNone(self.index.raw_line(10 ** 9))
+        self.assertIsNone(self.index.raw_line(99, 0))
 
     def test_max_events_drops_oldest_and_reports_it(self):
         idx = EventIndex(self.path, max_events=20)
         self.write(*[entry(ts=T0 + i) for i in range(30)])
-        r = idx.query("", window_bytes=10 * MB)
+        r = idx.query("")
         self.assertLessEqual(r["indexed"], 20)
         self.assertGreater(r["dropped"], 0)
         # The survivors must be the newest ones.

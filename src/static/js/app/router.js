@@ -62,7 +62,7 @@ export function interceptLinks(handler) {
 // Only non-default values are written, so a plain /explore stays clean and a
 // shared link carries just what differs.
 
-const DEFAULTS = { q: '', range: '24h', windowMb: 10, from: null, to: null, live: false };
+const DEFAULTS = { q: '', range: '30m', from: null, to: null, live: false };
 
 export function exploreStateFromSearch(search = location.search) {
   const p = new URLSearchParams(search);
@@ -70,20 +70,18 @@ export function exploreStateFromSearch(search = location.search) {
     const v = parseFloat(p.get(key));
     return Number.isFinite(v) ? v : null;
   };
-  const windowMb = parseInt(p.get('window'), 10);
   const from = num('from');
   const to = num('to');
   return {
     q: p.get('q') || DEFAULTS.q,
     range: p.get('range') || DEFAULTS.range,
-    windowMb: [10, 25, 50, 100].includes(windowMb) ? windowMb : DEFAULTS.windowMb,
     // A pinned absolute range needs both ends to be meaningful.
     custom: from !== null && to !== null ? { from, to } : null,
     live: p.get('live') === '1',
   };
 }
 
-export function exploreStateToSearch({ q, range, windowMb, custom, live }) {
+export function exploreStateToSearch({ q, range, custom, live }) {
   const p = new URLSearchParams();
   if (q) p.set('q', q);
   if (custom) {
@@ -93,7 +91,6 @@ export function exploreStateToSearch({ q, range, windowMb, custom, live }) {
   } else if (range && range !== DEFAULTS.range) {
     p.set('range', range);
   }
-  if (windowMb && windowMb !== DEFAULTS.windowMb) p.set('window', String(windowMb));
   if (live) p.set('live', '1');
   return p.toString();
 }
