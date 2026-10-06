@@ -37,11 +37,12 @@ const FACET_GROUPS = [
 const DEBOUNCE_MS = 250;
 const FOLLOW_MS = 4000;
 
-// Clicking a facet row cycles it: not filtered, only this value, everything but
-// it. Icons rather than ☐/☑/☒, whose width varies by platform font.
+// A facet row is a plain include toggle; excluding is the separate button that
+// appears on hover, so clearing a filter never detours through its inverse.
+// Icons rather than ☐/☑/☒, whose width varies by platform font.
 const FACET_STATE = {
   off: { icon: 'box', cls: '', hint: 'click to show only this' },
-  include: { icon: 'box-check', cls: ' on', hint: 'only this — click to exclude it instead' },
+  include: { icon: 'box-check', cls: ' on', hint: 'only this — click to clear' },
   exclude: { icon: 'box-x', cls: ' excluded', hint: 'excluded — click to clear' },
 };
 
@@ -285,10 +286,11 @@ function App() {
     }
   };
 
-  const cycleFacet = (key, value) => {
-    const qk = FACET_GROUPS.find(g => g.key === key)?.queryKey || key;
-    setDraft(cycleTerm(draft, qk, value));
-  };
+  const queryKeyFor = (key) => FACET_GROUPS.find(g => g.key === key)?.queryKey || key;
+  const cycleFacet = (key, value) => setDraft(cycleTerm(draft, queryKeyFor(key), value));
+  // setTermState, not cycle: Exclude on an included value flips it in one click.
+  const excludeFacet = (key, value) =>
+    setDraft(setTermState(draft, queryKeyFor(key), value, 'exclude'));
   const pickRange = (key) => { setCustom(null); setRange(key); };
   const onDragRange = (from, to) => { setCustom({ from, to }); setFollow(false); };
 
@@ -353,16 +355,30 @@ function App() {
                         <span class="facet-count">${v.count.toLocaleString()}</span>
                       </div>`;
                   }
-                  const state = FACET_STATE[termState(draft, qk, v.value)];
+                  const current = termState(draft, qk, v.value);
+                  const state = FACET_STATE[current];
                   return html`
-                    <button class=${'facet-row' + state.cls} key=${v.value}
-                            onClick=${() => cycleFacet(group.key, v.value)}
-                            title=${`${v.value} — ${state.hint}`}
-                            aria-label=${`${group.title} ${v.value}, ${state.hint}`}>
-                      <${Icon} name=${state.icon} class="facet-check" />
-                      <span class="facet-value">${v.value}</span>
-                      <span class="facet-count">${v.count.toLocaleString()}</span>
-                    </button>`;
+                    <div class="facet-row-wrap" key=${v.value}>
+                      <button class=${'facet-row' + state.cls}
+                              onClick=${() => cycleFacet(group.key, v.value)}
+                              title=${`${v.value} — ${state.hint}`}
+                              aria-label=${`${group.title} ${v.value}, ${state.hint}`}>
+                        <${Icon} name=${state.icon} class="facet-check" />
+                        <span class="facet-value">${v.value}</span>
+                        <span class="facet-count">${v.count.toLocaleString()}</span>
+                      </button>
+                      ${current === 'exclude'
+                        // A spacer, so the counts stay in a column: the row is
+                        // already excluded, and clicking it clears that.
+                        ? html`<span class="facet-exclude-slot" aria-hidden="true"></span>`
+                        : html`
+                          <button class="facet-exclude facet-exclude-slot"
+                                  onClick=${() => excludeFacet(group.key, v.value)}
+                                  title=${`Exclude ${v.value}`}
+                                  aria-label=${`Exclude ${group.title} ${v.value}`}>
+                            <${Icon} name="box-x" />
+                          </button>`}
+                    </div>`;
                 })}
                 ${values.length > 8 && html`<div class="facet-more">+${values.length - 8} more</div>`}
                 ${other > 0 && html`<div class="facet-more">${other.toLocaleString()} in other values</div>`}

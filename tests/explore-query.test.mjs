@@ -93,26 +93,32 @@ check('quotes a negated value that needs it', () => {
 });
 
 console.log('\n--- cycleTerm ---');
-check('unset -> include -> exclude -> unset', () => {
+check('unset -> include -> unset', () => {
   const a = cycleTerm('', 'host', 'a');
   assert.equal(a, 'host:a');
-  const b = cycleTerm(a, 'host', 'a');
-  assert.equal(b, '-host:a');
-  assert.equal(cycleTerm(b, 'host', 'a'), '');
+  assert.equal(cycleTerm(a, 'host', 'a'), '');
 });
-check('cycles one value without disturbing the rest of the query', () => {
+check('never reaches exclude — that has its own control', () => {
+  let q = '';
+  for (let i = 0; i < 6; i++) {
+    q = cycleTerm(q, 'host', 'a');
+    assert.ok(!q.includes('-host:a'), `click ${i + 1} produced ${q}`);
+  }
+});
+check('clears an excluded value in one click', () => {
+  assert.equal(cycleTerm('-host:a', 'host', 'a'), '');
+});
+check('toggles one value without disturbing the rest of the query', () => {
   let q = 'status:5xx timeout';
   q = cycleTerm(q, 'host', 'a');
   assert.equal(q, 'status:5xx timeout host:a');
   q = cycleTerm(q, 'host', 'a');
-  assert.equal(q, 'status:5xx timeout -host:a');
-  q = cycleTerm(q, 'host', 'a');
   assert.equal(q, 'status:5xx timeout');
 });
-check('three clicks return to the starting query', () => {
+check('two clicks return to the starting query', () => {
   const start = 'method:GET';
   let q = start;
-  for (let i = 0; i < 3; i++) q = cycleTerm(q, 'path', '/api/v1');
+  for (let i = 0; i < 2; i++) q = cycleTerm(q, 'path', '/api/v1');
   assert.equal(q, start);
 });
 

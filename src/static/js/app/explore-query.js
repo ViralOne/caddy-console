@@ -84,9 +84,14 @@ export function setTermState(query, key, value, state) {
   return out.join(' ');
 }
 
-const NEXT_STATE = { off: 'include', include: 'exclude', exclude: 'off' };
+const NEXT_STATE = { off: 'include', include: 'off', exclude: 'off' };
 
-/** One click on a facet row: unset -> include -> exclude -> unset. */
+/** One click on a facet row: a plain include toggle, and clear from excluded.
+ *
+ * Deliberately not a three-way cycle. Clearing a filter is far more common than
+ * inverting one, and routing it through `exclude` meant a wasted fetch showing
+ * the inverse of what you were reading. Exclude has its own control instead.
+ */
 export function cycleTerm(query, key, value) {
   return setTermState(query, key, value, NEXT_STATE[termState(query, key, value)]);
 }

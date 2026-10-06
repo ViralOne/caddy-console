@@ -215,8 +215,9 @@ body {
 .explore-facets { width: 240px; flex-shrink: 0; min-height: 0; overflow-y: auto; padding: var(--space-3); border-right: 1px solid var(--border); background: var(--bg); }
 .facet-group { margin-bottom: var(--space-4); }
 .facet-title { font-size: var(--text-sm); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--ink-muted); margin-bottom: var(--space-2); }
-.facet-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; padding: 3px var(--space-1); background: none; border: none; border-radius: var(--radius-sm); color: var(--ink-secondary); font-size: var(--text-sm); font-family: var(--font); cursor: pointer; text-align: left; }
-.facet-row:hover { background: var(--surface); color: var(--ink); }
+.facet-row-wrap { display: flex; align-items: center; }
+.facet-row { display: flex; align-items: center; gap: var(--space-2); flex: 1; min-width: 0; padding: 3px var(--space-1); background: none; border: none; border-radius: var(--radius-sm); color: var(--ink-secondary); font-size: var(--text-sm); font-family: var(--font); cursor: pointer; text-align: left; }
+.facet-row:hover, .facet-row-wrap:hover .facet-row { background: var(--surface); color: var(--ink); }
 .facet-row.on { color: var(--accent); }
 /* Excluded: accent marks it as active, struck through to distinguish it from
    included. A status hue would collide with the Status facet's own colours. */
@@ -230,9 +231,18 @@ body {
 .facet-value { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); }
 .facet-row.excluded .facet-value { text-decoration: line-through; text-decoration-thickness: 1px; text-decoration-color: var(--accent); }
 .facet-count { flex-shrink: 0; color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+/* Exclude is the secondary action, so it stays out of the way until the row is
+   hovered or focused. Faded with opacity rather than display:none so it keeps
+   its width — the counts stay in a column — and stays in the tab order, which
+   is the only way a keyboard reaches it. */
+.facet-exclude-slot { width: 22px; height: 22px; flex-shrink: 0; }
+.facet-exclude { display: flex; align-items: center; justify-content: center; padding: 0; background: none; border: none; border-radius: var(--radius-sm); color: var(--ink-muted); cursor: pointer; opacity: 0; }
+.facet-row-wrap:hover .facet-exclude, .facet-exclude:focus-visible { opacity: 1; }
+.facet-exclude:hover { background: var(--surface); color: var(--accent); }
+.facet-exclude:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .facet-more { font-size: var(--text-sm); color: var(--ink-muted); padding: 2px var(--space-1); }
 /* A value with no filter behind it: shown for the count, not offered as a click. */
-.facet-row-static { color: var(--ink-muted); cursor: default; }
+.facet-row-static { color: var(--ink-muted); cursor: default; padding-right: calc(var(--space-1) + 22px); }
 .facet-row-static:hover { background: none; }
 
 /* Main column */
