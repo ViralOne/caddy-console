@@ -3,7 +3,7 @@ import os
 # Shown in the account menu. Duplicated in pyproject.toml and package.json since
 # the app runs from source, so importlib.metadata has nothing to read;
 # test_version.py keeps the three in step.
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 
 CADDYFILE = os.environ.get("CADDYFILE_PATH", "/etc/caddy/Caddyfile")
 BACKUP_DIR = os.environ.get("BACKUP_DIR", "/backups")

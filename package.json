@@ -1,6 +1,6 @@
 {
   "name": "caddy-console",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Web UI to edit your Caddyfile. Google OAuth, backup/restore with diff, validate before save.",
   "main": "index.js",
   "scripts": {
