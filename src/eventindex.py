@@ -110,7 +110,9 @@ def parse_query(q):
             (f.not_paths if negated else f.paths).append(value)
         elif key == "status":
             low = value.lower()
-            if len(low) == 3 and low.endswith("xx") and low[0].isdigit():
+            # "other" is a status class like 2xx — it is the bucket the Status
+            # facet offers for anything outside 2xx-5xx, so it has to filter.
+            if low == "other" or (len(low) == 3 and low.endswith("xx") and low[0].isdigit()):
                 (f.not_classes if negated else f.classes).add(low)
             elif value.isdigit() and 100 <= int(value) <= 599:
                 (f.not_codes if negated else f.codes).add(int(value))

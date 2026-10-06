@@ -39,6 +39,12 @@ class ParseQueryTest(unittest.TestCase):
         self.assertEqual(f.classes, {"5xx"})
         self.assertEqual(f.codes, {404})
 
+    def test_status_other_is_a_class(self):
+        f = parse_query("status:other")
+        self.assertEqual(f.classes, {"other"})
+        self.assertEqual(f.codes, set())
+        self.assertEqual(f.text, [])
+
     def test_same_key_repeats_or_together(self):
         f = parse_query("host:a host:b")
         self.assertEqual(f.hosts, {"a", "b"})
@@ -155,6 +161,15 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(self.q("status:5xx")["total"], 2)
         self.assertEqual(self.q("status:502")["total"], 1)
         self.assertEqual(self.q("status:5xx status:404")["total"], 3)  # OR within a key
+
+    def test_filter_by_status_other_matches_the_other_facet(self):
+        # The Status facet buckets a missing or out-of-range code as "other";
+        # clicking that row has to narrow to exactly those rows.
+        self.write(entry(status=200), entry(status=404), entry(status=None))
+        res = self.q("status:other")
+        self.assertEqual(res["total"], 1)
+        self.assertEqual([e["status"] for e in res["entries"]], [0])
+        self.assertEqual(self.q("-status:other")["total"], 2)
 
     def test_filter_by_method_case_insensitive(self):
         self.write(entry(method="GET"), entry(method="POST"))
