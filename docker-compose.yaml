@@ -12,6 +12,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy-backups:/backups
       - caddy-logs:/var/log/caddy
+      # IP location databases, refreshed monthly; kept so a rebuild does not re-download.
+      - caddy-geoip:/data/geoip
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
       interval: 30s
@@ -39,3 +41,4 @@ volumes:
   caddy-config:
   caddy-backups:
   caddy-logs:
+  caddy-geoip:

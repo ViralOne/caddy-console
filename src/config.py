@@ -50,3 +50,10 @@ os.makedirs(BACKUP_DIR, exist_ok=True)
 # costs roughly 30 bytes each, so the default is about 6 MB. Past this the oldest
 # are dropped and the response reports how many, rather than quietly under-counting.
 EXPLORE_MAX_EVENTS = int(os.environ.get("CADDY_EXPLORE_MAX_EVENTS", "200000"))
+
+# IP location and network owner for the Explore IP popover, from DB-IP's free
+# Lite databases (CC-BY 4.0). Read offline, so no visitor IP leaves the server.
+# The updater fetches a new release monthly; set GEOIP_AUTO_UPDATE=false on a
+# host without egress and drop the .mmdb files into GEOIP_DIR by hand.
+GEOIP_DIR = os.environ.get("GEOIP_DIR", "/data/geoip")
+GEOIP_AUTO_UPDATE = os.environ.get("GEOIP_AUTO_UPDATE", "true").lower() not in ("0", "false", "no")

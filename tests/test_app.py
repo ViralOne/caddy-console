@@ -216,6 +216,25 @@ class SavePathTest(AppTestCase):
         self.assertIn("from=Caddyfile.20260101-000000", entries[0]["detail"])
 
 
+class ExploreIpApiTest(AppTestCase):
+    def test_public_ip_with_no_database(self):
+        r = self.client.get("/api/explore/ip?ip=172.126.2.72&range=24h", headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertEqual(body["kind"], "public")
+        self.assertIsNone(body["location"])
+        self.assertFalse(body["source"]["available"])
+        self.assertIn("requests", body["seen"])
+
+    def test_rejects_non_ip(self):
+        r = self.client.get("/api/explore/ip?ip=example.com", headers=AUTH)
+        self.assertEqual(r.status_code, 400)
+
+    def test_requires_login(self):
+        r = self.client.get("/api/explore/ip?ip=1.1.1.1")
+        self.assertIn(r.status_code, (302, 401, 403))
+
+
 class AuditLogTest(unittest.TestCase):
     def setUp(self):
         reset_backup_dir()

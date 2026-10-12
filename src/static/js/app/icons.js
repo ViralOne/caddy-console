@@ -11,7 +11,7 @@ export const ICONS = [
   'dashboard', 'editor', 'explore',
   'box', 'box-check', 'box-x',
   'more', 'chevron-down', 'close', 'copy', 'clock', 'filter', 'live',
-  'check', 'warning', 'external', 'logout',
+  'check', 'warning', 'external', 'logout', 'globe',
 ];
 
 function idFor(name) {

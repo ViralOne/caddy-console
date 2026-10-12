@@ -50,10 +50,12 @@ node tests/diff.test.mjs                     # diff algorithm
 node tests/router.test.mjs                   # URL <-> state
 node tests/explore-query.test.mjs            # query parsing
 node tests/jsonview.test.mjs                 # raw-line formatting
+node tests/ip-info.test.mjs                  # IP popover formatting
 ```
 
 No Caddy binary and no network needed: the admin API is faked and `caddy fmt` /
-`caddy validate` are patched out.
+`caddy validate` are patched out. GeoIP tests build tiny `.mmdb` fixtures with
+`tests/_mmdb.py` and fake the DB-IP download.
 
 ## Front-end build
 

@@ -12,6 +12,7 @@ BACKUP_DIR = os.path.join(ROOT, "backups")
 CADDYFILE = os.path.join(ROOT, "Caddyfile")
 AUDIT_LOG = os.path.join(BACKUP_DIR, "audit.log")
 LOG_FILE = os.path.join(ROOT, "access.log")
+GEOIP_DIR = os.path.join(ROOT, "geoip")
 
 os.environ.update({
     "BACKUP_DIR": BACKUP_DIR,
@@ -24,4 +25,7 @@ os.environ.update({
     "BACKUP_KEEP": "3",
     "AUDIT_LOG_MAX_BYTES": "400",
     "CADDY_API_URL": "http://caddy.invalid:2019",
+    "GEOIP_DIR": GEOIP_DIR,
+    # Tests must never download anything.
+    "GEOIP_AUTO_UPDATE": "false",
 })

@@ -25,6 +25,10 @@ SITES = [
     ("radarr.example.com",    5, ["/api/v3/queue", "/api/v3/movie"], 0.22, 0.03),
 ]
 METHODS = ["GET"] * 8 + ["POST"] * 2
+# A few distinct clients so the IP popover has something to correlate: mostly
+# one household, plus a couple of strangers and a LAN device.
+CLIENTS = (["82.77.14.203"] * 12 + ["172.126.2.72"] * 3 + ["185.220.101.4"] * 2
+           + ["2a02:2f0e:5a1:c00::1f"] + ["192.168.1.20"] * 2)
 UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:142.0) "
       "Gecko/20100101 Firefox/142.0")
 
@@ -37,7 +41,7 @@ def entry(ts, host, uri, method, status, duration, size):
         "msg": "handled request",
         "request": {
             "remote_ip": "172.71.98.14", "remote_port": str(random.randrange(40000, 65000)),
-            "client_ip": "82.77.14.203", "proto": "HTTP/2.0",
+            "client_ip": random.choice(CLIENTS), "proto": "HTTP/2.0",
             "method": method, "host": host, "uri": uri,
         },
         "bytes_read": 0,

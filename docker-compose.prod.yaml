@@ -38,6 +38,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy-backups:/backups
       - caddy-logs:/var/log/caddy
+      # IP location databases, refreshed monthly; kept so a rebuild does not re-download.
+      - caddy-geoip:/data/geoip
     networks:
       # Not on `default`: containers behind Caddy must not be able to reach the
       # console (in header-trust mode anything that can would be a full admin).
@@ -69,3 +71,4 @@ volumes:
   caddy-config:
   caddy-backups:
   caddy-logs:
+  caddy-geoip:

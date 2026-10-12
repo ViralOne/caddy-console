@@ -19,7 +19,7 @@ caused it.
 
 ## Explore — why is it broken?
 
-Faceted search over the access log. Type `host:… status:5xx path:/api`, or plain
+Faceted search over the access log. Type `host:… status:5xx path:/api client:1.2.3.4`, or plain
 text, or prefix a term with `-` to exclude it — `-status:2xx` is everything that
 did not go well. Sidebar rows cycle through the same three states as you click
 them: off, only this (☑), everything but this (☒). Counts update with your filters,
@@ -34,7 +34,9 @@ older ranges are served by reading Caddy's rolled `.gz` archives, so how far bac
 you can look is simply how much `roll_keep` has kept.
 
 Expand an event for its fields, each with a menu to filter, exclude or copy — plus
-the original log line, formatted.
+the original log line, formatted. Click the client IP to see where it is from — city, country
+and network, from a local DB-IP database that updates itself monthly — and what
+else that IP did: its hosts, paths and status mix, each one click from a filter.
 
 ![Event detail](docs/screenshots/event-detail.png)
 

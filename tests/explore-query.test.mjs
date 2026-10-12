@@ -168,4 +168,15 @@ check('quotes a host that would otherwise split', () => {
   assert.ok(placeholderFor(data).startsWith('host:"weird host"'));
 });
 
+console.log('\n--- client ---');
+check('client is a key, so it toggles rather than piling up as text', () => {
+  assert.equal(setTermState('host:a', 'client', '1.2.3.4', 'include'), 'host:a client:1.2.3.4');
+  assert.equal(setTermState('client:1.2.3.4', 'client', '1.2.3.4', 'exclude'), '-client:1.2.3.4');
+  assert.deepEqual([...activeKeys('client:1.2.3.4')], ['client']);
+});
+check('an IPv6 value keeps its colons', () => {
+  assert.equal(termState('client:2001:db8::1', 'client', '2001:DB8::1'), 'include');
+  assert.equal(setTermState('client:2001:db8::1', 'client', '2001:db8::1', 'off'), '');
+});
+
 console.log(`\n${passed} checks passed\n`);

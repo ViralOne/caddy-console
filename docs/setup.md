@@ -132,6 +132,25 @@ History is whatever Caddy has kept. `roll_size × roll_keep` caps the disk used 
 about 60 MB or 7 days. The explorer reads rolled `.gz` archives too, so raising
 `roll_keep` directly extends how far back you can search.
 
+## 5. IP location (optional, automatic)
+
+Click a client IP in an expanded event to see where it is from (city, country,
+network/ASN) and what else it did in the range on screen. Location comes from
+[DB-IP](https://db-ip.com)'s free Lite databases (CC-BY 4.0), read locally — no
+visitor IP is ever sent anywhere to look it up.
+
+You do not need to do anything: on startup, and then once a day, the console
+checks whether the installed release is older than the current month and, if so,
+downloads the new one (~65 MB, about 135 MB on disk) into `GEOIP_DIR`. The
+compose files mount a `caddy-geoip` volume there so a rebuild does not
+re-download. A failed or partial download never replaces the working files.
+
+On a host without internet egress, set `GEOIP_AUTO_UPDATE=false` and drop
+`dbip-city-lite.mmdb` and `dbip-asn-lite.mmdb` (decompressed, from
+<https://db-ip.com/db/lite.php>) into `GEOIP_DIR` yourself; they are picked up
+within ten minutes without a restart. Without the files the popover still works —
+it just shows the IP's type and its requests, not its location.
+
 ## Running a custom Caddy build
 
 Plugin builds work as-is. If your Caddyfile uses a DNS provider for DNS-01 —
@@ -232,6 +251,8 @@ dashboard uses for server-level counters:
 | `AUDIT_LOG_MAX_BYTES` | no | `5242880` | Rotate the audit log past this size; one rotated file is kept |
 | `CADDY_LOG_FILE` | no | `/var/log/caddy/access.log` | Path to Caddy access log (must match Caddyfile) |
 | `CADDY_EXPLORE_MAX_EVENTS` | no | `200000` | Events held in memory per range; ~38 B each |
+| `GEOIP_DIR` | no | `/data/geoip` | Where the DB-IP Lite databases live |
+| `GEOIP_AUTO_UPDATE` | no | `true` | Download a new DB-IP release monthly. `false` for air-gapped hosts |
 | `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
 | `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
 

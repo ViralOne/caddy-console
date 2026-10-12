@@ -11,6 +11,7 @@ import { h, htm, render, useCallback, useEffect, useRef, useState } from '../exp
 import { cycleTerm, placeholderFor, setTermState, termState } from './explore-query.js';
 import { CLASSES, Histogram } from './histogram.js';
 import { Icon } from './icons.js';
+import { IpPopover } from './ip-popover.js';
 import { JsonView } from './jsonview.js';
 import { exploreStateFromSearch, exploreStateToSearch, replaceSearch } from './router.js';
 
@@ -64,7 +65,7 @@ function formatBytesShort(n) {
 // Which query key each field maps to. Fields absent from this map are
 // copy-only: offering "Filter by" for a field the backend cannot filter would
 // be a menu item that silently does nothing.
-const FIELD_KEYS = { host: 'host', method: 'method', path: 'path', status: 'status' };
+const FIELD_KEYS = { host: 'host', method: 'method', path: 'path', status: 'status', client: 'client' };
 
 function pathOf(uri) {
   return (uri || '').split('?', 1)[0];
@@ -89,7 +90,7 @@ function fieldsOf(e) {
     { label: 'status', display: String(e.status), value: String(e.status) },
     { label: 'duration', display: formatMs(e.duration_ms), value: String(e.duration_ms) },
     { label: 'size', display: formatBytesShort(e.size), value: String(e.size) },
-    { label: 'client', display: e.client_ip || '(none)', value: e.client_ip || '' },
+    { label: 'client', display: e.client_ip || '(none)', value: e.client_ip || '', ip: e.client_ip || null },
   ];
 }
 
@@ -121,6 +122,7 @@ function App() {
   const [exhausted, setExhausted] = useState(false);
   const [raw, setRaw] = useState({});              // offset -> original log line
   const [fieldMenu, setFieldMenu] = useState(null);  // "<rowKey>|<field label>"
+  const [ipPop, setIpPop] = useState(null);          // {id, anchor rect}, for the client IP
   const [note, setNote] = useState('');            // transient confirmation
   const inflight = useRef(null);
 
@@ -133,6 +135,24 @@ function App() {
     document.addEventListener('keydown', esc);
     return () => { document.removeEventListener('click', close); document.removeEventListener('keydown', esc); };
   }, [fieldMenu]);
+
+  // The IP popover closes the same way, but clicks inside it must not: it holds
+  // its own buttons and the reader may be selecting text in it.
+  useEffect(() => {
+    if (!ipPop) return;
+    const close = (ev) => { if (!ev.target.closest('.ip-pop, .field-value-click')) setIpPop(null); };
+    const esc = (ev) => { if (ev.key === 'Escape') setIpPop(null); };
+    // Fixed-position, so it would float away from its row on scroll.
+    const scroll = (ev) => { if (!ev.target.closest?.('.ip-pop')) setIpPop(null); };
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', esc);
+    document.addEventListener('scroll', scroll, true);
+    window.addEventListener('resize', esc);
+    return () => {
+      document.removeEventListener('click', close); document.removeEventListener('keydown', esc);
+      document.removeEventListener('scroll', scroll, true); window.removeEventListener('resize', esc);
+    };
+  }, [ipPop]);
 
   const flash = (msg) => { setNote(msg); setTimeout(() => setNote(''), 1800); };
 
@@ -433,26 +453,45 @@ function App() {
                     <div class="stream-detail" onClick=${ev => ev.stopPropagation()}>
                       ${fieldsOf(e).map(f => {
                         const id = key + '|' + f.label;
-                        const filterable = !!FIELD_KEYS[f.label];
+                        // An absent value cannot be typed as a filter.
+                        const filterable = !!FIELD_KEYS[f.label] && f.value !== '';
                         const toggle = () => {
                           // Don't hijack a drag-select: if the user has highlighted
                           // text, they are copying by hand, not asking for a menu.
                           if (String(window.getSelection() || '')) return;
+                          setIpPop(null);
                           setFieldMenu(fieldMenu === id ? null : id);
                         };
+                        // The IP itself opens the popover; the ⋯ trigger still
+                        // gives the same menu as every other field.
+                        const onValue = f.ip ? (ev) => {
+                          if (String(window.getSelection() || '')) return;
+                          setFieldMenu(null);
+                          const rect = ev.currentTarget.getBoundingClientRect();
+                          setIpPop(ipPop?.id === id ? null : { id, rect });
+                        } : toggle;
+                        const valueOpen = f.ip ? ipPop?.id === id : fieldMenu === id;
                         return html`
                           <div class="field-row" key=${f.label}>
                             <button class="field-trigger" title=${'Actions for ' + f.label}
                                     aria-haspopup="true" aria-expanded=${String(fieldMenu === id)}
                                     onClick=${toggle}><${Icon} name="more" size=${14} /></button>
                             <span class="field-label">${f.label}</span>
-                            <span class="field-value field-value-click" role="button" tabindex="0"
-                                  aria-haspopup="true" aria-expanded=${String(fieldMenu === id)}
-                                  title=${'Actions for ' + f.label}
-                                  onClick=${toggle}
+                            <span class=${'field-value field-value-click' + (f.ip ? ' field-value-ip' : '')}
+                                  role="button" tabindex="0"
+                                  aria-haspopup=${f.ip ? 'dialog' : 'true'} aria-expanded=${String(valueOpen)}
+                                  title=${f.ip ? 'Where is this IP from?' : 'Actions for ' + f.label}
+                                  onClick=${onValue}
                                   onKeyDown=${ev => {
-                                    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); toggle(); }
-                                  }}>${f.display}</span>
+                                    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onValue(ev); }
+                                  }}>${f.ip && html`<${Icon} name="globe" size=${13} />`}${f.display}</span>
+                            ${f.ip && ipPop?.id === id && html`
+                              <${IpPopover} ip=${f.ip} anchor=${ipPop.rect}
+                                            from=${custom ? custom.from : data?.range?.from}
+                                            to=${custom ? custom.to : data?.range?.to}
+                                            query=${draft}
+                                            onQuery=${q => { setDraft(q); setIpPop(null); }}
+                                            onCopy=${async v => flash(await copyText(v) ? 'IP copied' : 'Copy blocked by the browser')} />`}
                             ${fieldMenu === id && html`
                               <div class="field-menu" role="menu">
                                 <button role="menuitem" onClick=${() => fieldAction('copy-value', f)}>Copy value</button>

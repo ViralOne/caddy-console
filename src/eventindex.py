@@ -49,19 +49,21 @@ def _status_class(status):
 class Filters:
     """A parsed query. Same-key terms OR, different keys AND, `-` negates."""
 
-    __slots__ = ("hosts", "methods", "codes", "classes", "paths", "text",
-                 "not_hosts", "not_methods", "not_codes", "not_classes", "not_paths")
+    __slots__ = ("hosts", "methods", "codes", "classes", "paths", "clients", "text",
+                 "not_hosts", "not_methods", "not_codes", "not_classes", "not_paths",
+                 "not_clients")
 
     def __init__(self):
         self.hosts = set(); self.methods = set(); self.codes = set()
-        self.classes = set(); self.paths = []; self.text = []
+        self.classes = set(); self.paths = []; self.clients = set(); self.text = []
         self.not_hosts = set(); self.not_methods = set()
         self.not_codes = set(); self.not_classes = set(); self.not_paths = []
+        self.not_clients = set()
 
     def is_empty(self):
         return not any((self.hosts, self.methods, self.codes, self.classes, self.paths,
-                        self.text, self.not_hosts, self.not_methods, self.not_codes,
-                        self.not_classes, self.not_paths))
+                        self.clients, self.text, self.not_hosts, self.not_methods,
+                        self.not_codes, self.not_classes, self.not_paths, self.not_clients))
 
     def active_keys(self):
         """Which facet keys this query constrains, so facets can exclude their own."""
@@ -73,6 +75,7 @@ class Filters:
         if self.codes or self.not_codes or self.classes or self.not_classes:
             keys.add("status"); keys.add("status_class")
         if self.paths or self.not_paths: keys.add("path")
+        if self.clients or self.not_clients: keys.add("client")
         return keys
 
 
@@ -97,7 +100,7 @@ def parse_query(q):
         token = raw[1:] if negated else raw
         key, sep, value = token.partition(":")
         key = key.lower()
-        if not sep or not value or key not in ("host", "status", "method", "path"):
+        if not sep or not value or key not in ("host", "status", "method", "path", "client"):
             # Unknown key or a bare word: search for it rather than drop what
             # the user typed.
             f.text.append(raw)
@@ -108,6 +111,9 @@ def parse_query(q):
             (f.not_methods if negated else f.methods).add(value.upper())
         elif key == "path":
             (f.not_paths if negated else f.paths).append(value)
+        elif key == "client":
+            # Lowercased so an IPv6 address matches however it was typed.
+            (f.not_clients if negated else f.clients).add(value.lower())
         elif key == "status":
             low = value.lower()
             # "other" is a status class like 2xx — it is the bucket the Status
@@ -406,6 +412,9 @@ class EventIndex:
             if f.not_paths:
                 not_path_ids = self.uris.ids_matching_path(f.not_paths)
 
+        client_ids = None if skip_key == "client" or not f.clients else self.clients.ids_matching_exact(f.clients)
+        not_client_ids = set() if skip_key == "client" else (self.clients.ids_matching_exact(f.not_clients) if f.not_clients else set())
+
         text_uri, text_host = [], []
         for t in f.text:
             low = t.lower()
@@ -422,6 +431,7 @@ class EventIndex:
         not_classes = set() if skip_status else f.not_classes
 
         ts, st, hid, mid, uid = self.ts, self.status, self.host_id, self.method_id, self.uri_id
+        cid = self.client_id
         out = []
         for i in range(lo, hi):
             h = hid[i]
@@ -433,6 +443,8 @@ class EventIndex:
             u = uid[i]
             if path_ids is not None and u not in path_ids: continue
             if not_path_ids and u in not_path_ids: continue
+            if client_ids is not None and cid[i] not in client_ids: continue
+            if not_client_ids and cid[i] in not_client_ids: continue
             s = st[i]
             if want_status and not (s in codes or (classes and _status_class(s) in classes)):
                 continue
@@ -588,6 +600,55 @@ class EventIndex:
                 "from": span_from, "to": span_to, "points": points,
                 "indexed": n, "dropped": self._dropped, "skipped": self._skipped,
                 "history": self._history(),
+            }
+
+    def ip_summary(self, ip, from_ts=None, to_ts=None, top=5):
+        """What the log says about one client IP within a range.
+
+        The correlation half of the IP popover: how much it did, when, and where,
+        so "who is this" can be answered without leaving the event.
+        """
+        with self._lock:
+            self._load(from_ts, to_ts)
+            n = len(self.ts)
+            lo = bisect.bisect_left(self.ts, from_ts) if from_ts is not None else 0
+            hi = bisect.bisect_right(self.ts, to_ts) if to_ts is not None else n
+            wanted = self.clients.ids_matching_exact({ip.lower()})
+            hosts, paths, classes = {}, {}, {}
+            requests = errors = 0
+            first = last = None
+            cid = self.client_id
+            for i in range(lo, hi):
+                if cid[i] not in wanted:
+                    continue
+                requests += 1
+                ts = self.ts[i]
+                if first is None: first = ts
+                last = ts
+                h = self.hosts.values[self.host_id[i]]
+                hosts[h] = hosts.get(h, 0) + 1
+                p = self.uris.values[self.uri_id[i]].split("?", 1)[0]
+                paths[p] = paths.get(p, 0) + 1
+                cls = _status_class(self.status[i])
+                classes[cls] = classes.get(cls, 0) + 1
+                if 500 <= self.status[i] < 600:
+                    errors += 1
+
+            def ranked(bucket):
+                ordered = sorted(bucket.items(), key=lambda kv: (-kv[1], kv[0]))
+                return [{"value": v, "count": c} for v, c in ordered[:top]]
+
+            return {
+                "requests": requests,
+                "errors": errors,
+                "first_ts": first,
+                "last_ts": last,
+                "hosts": ranked(hosts),
+                "host_count": len(hosts),
+                "paths": ranked(paths),
+                "path_count": len(paths),
+                "status_classes": [{"value": c, "count": classes[c]}
+                                   for c in STATUS_CLASSES if c in classes],
             }
 
     def _entry(self, i):

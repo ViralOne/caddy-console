@@ -4,7 +4,7 @@
 //
 // Pure functions only — no DOM, no fetch — so they are unit-testable directly.
 
-const KEYS = ['host', 'status', 'method', 'path'];
+const KEYS = ['host', 'status', 'method', 'path', 'client'];
 
 /** Split on whitespace, keeping "quoted values" together. Mirrors the server. */
 export function tokenize(query) {

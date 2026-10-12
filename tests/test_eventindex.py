@@ -39,6 +39,12 @@ class ParseQueryTest(unittest.TestCase):
         self.assertEqual(f.classes, {"5xx"})
         self.assertEqual(f.codes, {404})
 
+    def test_client_is_a_key(self):
+        f = parse_query("client:1.2.3.4 -client:2001:DB8::1")
+        self.assertEqual(f.clients, {"1.2.3.4"})
+        self.assertEqual(f.not_clients, {"2001:db8::1"})
+        self.assertEqual(f.text, [])
+
     def test_status_other_is_a_class(self):
         f = parse_query("status:other")
         self.assertEqual(f.classes, {"other"})
@@ -434,6 +440,43 @@ class IndexTest(unittest.TestCase):
         self.assertGreater(r["dropped"], 0)
         # The survivors must be the newest ones.
         self.assertAlmostEqual(r["entries"][0]["ts"], T0 + 29, places=3)
+
+    def test_client_filter_includes_and_excludes(self):
+        self.write(entry(client="1.1.1.1"), entry(client="2.2.2.2"), entry(client="1.1.1.1"))
+        self.assertEqual(self.q("client:1.1.1.1")["total"], 2)
+        self.assertEqual(self.q("-client:1.1.1.1")["total"], 1)
+
+    def test_client_filter_is_exact_not_substring(self):
+        self.write(entry(client="10.0.0.1"), entry(client="10.0.0.12"))
+        self.assertEqual(self.q("client:10.0.0.1")["total"], 1)
+
+    def test_ip_summary_counts_and_ranks(self):
+        self.write(
+            entry(ts=T0, client="9.9.9.9", host="a.example.com", uri="/x?q=1", status=200),
+            entry(ts=T0 + 5, client="9.9.9.9", host="a.example.com", uri="/x", status=502),
+            entry(ts=T0 + 9, client="9.9.9.9", host="b.example.com", uri="/y", status=404),
+            entry(ts=T0 + 3, client="8.8.8.8", host="c.example.com"),
+        )
+        s = self.index.ip_summary("9.9.9.9")
+        self.assertEqual(s["requests"], 3)
+        self.assertEqual(s["errors"], 1)
+        self.assertEqual((s["first_ts"], s["last_ts"]), (T0, T0 + 9))
+        self.assertEqual(s["hosts"][0], {"value": "a.example.com", "count": 2})
+        self.assertEqual(s["host_count"], 2)
+        # Query strings are grouped away, as in the path facet.
+        self.assertEqual(s["paths"][0], {"value": "/x", "count": 2})
+        self.assertEqual([c["value"] for c in s["status_classes"]], ["2xx", "4xx", "5xx"])
+
+    def test_ip_summary_respects_the_range(self):
+        self.write(entry(ts=T0, client="9.9.9.9"), entry(ts=T0 + 100, client="9.9.9.9"))
+        self.assertEqual(self.index.ip_summary("9.9.9.9", T0 + 50, T0 + 200)["requests"], 1)
+
+    def test_ip_summary_for_an_unseen_ip_is_empty(self):
+        self.write(entry(client="1.1.1.1"))
+        s = self.index.ip_summary("7.7.7.7")
+        self.assertEqual(s["requests"], 0)
+        self.assertIsNone(s["first_ts"])
+        self.assertEqual(s["hosts"], [])
 
 
 if __name__ == "__main__":

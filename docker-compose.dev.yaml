@@ -44,6 +44,7 @@ services:
       - ./dev/run/Caddyfile:/etc/caddy/Caddyfile
       - ./dev/run/backups:/backups
       - caddy-logs:/var/log/caddy
+      - caddy-geoip:/data/geoip
       # Live source so you don't rebuild the image on every edit. Remember to
       # re-run `npm run build` after changing files under static/js/app.
       - ./src:/app/src
@@ -72,5 +73,6 @@ services:
 
 volumes:
   caddy-logs:
+  caddy-geoip:
   caddy-target-data:
   caddy-target-config:

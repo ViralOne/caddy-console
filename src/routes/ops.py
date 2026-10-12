@@ -19,6 +19,7 @@ from ..config import (
     CADDYFILE,
 )
 from ..eventindex import event_index
+from ..geoip import geoip
 from ..validator import run_caddy
 
 ops_bp = Blueprint("ops", __name__)
@@ -305,6 +306,24 @@ def explore_raw():
     if line is None:
         return jsonify({"error": "That line is no longer in the range being read from the log."})
     return jsonify({"line": line})
+
+
+@ops_bp.route("/api/explore/ip", methods=["GET"])
+@login_required
+def explore_ip():
+    """Where a client IP is from, and what else it did in the range on screen."""
+    ip = (request.args.get("ip") or "").strip()
+    found = geoip.lookup(ip) if ip else None
+    if found is None:
+        return jsonify({"error": "Not an IP address"}), 400
+    from_ts, to_ts = _range(request.args)
+    try:
+        seen = event_index.ip_summary(ip, from_ts, to_ts)
+    except OSError as e:
+        seen = None
+        found["seen_error"] = f"Could not read the access log: {e}"
+    return jsonify({"ip": ip, **found, "seen": seen,
+                    "source": geoip.status() | {"name": "DB-IP", "url": "https://db-ip.com"}})
 
 
 def _range(args):
