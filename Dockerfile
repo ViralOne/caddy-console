@@ -3,7 +3,7 @@
 ARG CADDY_IMAGE=caddy:2.11.4-alpine
 FROM ${CADDY_IMAGE} AS caddy-bin
 
-FROM python:3.14-alpine
+FROM python:3.15-alpine
 
 RUN apk add --no-cache curl openssl
 
