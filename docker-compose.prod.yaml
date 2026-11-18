@@ -29,10 +29,33 @@ services:
   caddy-console:
     image: ghcr.io/viralone/caddy-console:latest
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      # Reach the caddy container's admin API for Save & Reload (overrides .env)
+      - AUTH_MODE
+      - SECRET_KEY
+      - GOOGLE_CLIENT_ID
+      - GOOGLE_CLIENT_SECRET
+      - CF_ACCESS_TEAM_DOMAIN
+      - CF_ACCESS_AUD
+      - ALLOWED_DOMAIN
+      - ALLOWED_EMAILS
+      - SESSION_TIMEOUT_HOURS
+      - SESSION_COOKIE_SECURE
+      - SERVER_URL
+      - CADDYFILE_PATH
+      - CADDY_LOG_FILE
+      - CADDY_EXPLORE_MAX_EVENTS
+      - CADDY_CACHE_TTL
+      - CADDY_CMD_TIMEOUT
+      - BACKUP_DIR
+      - BACKUP_KEEP
+      - AUDIT_LOG
+      - AUDIT_LOG_MAX_BYTES
+      - GEOIP_DIR
+      - GEOIP_AUTO_UPDATE
+      - GUNICORN_WORKERS
+      - GUNICORN_THREADS
+      - GUNICORN_TIMEOUT
+      - GUNICORN_PRELOAD
       - CADDY_API_URL=http://caddy:2019
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile

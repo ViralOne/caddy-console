@@ -47,9 +47,14 @@ cp .env.example .env
 docker compose -f docker-compose.prod.yaml up -d
 ```
 
+No `.env` file is needed if you deploy from Portainer, or anywhere else that sets
+environment variables: set the same variables as stack environment variables.
+Compose passes each one through by name. Anything left unset never reaches the
+container, so the default in the table below applies.
+
 ## 2. Choose how people sign in
 
-Set `AUTH_MODE` in `.env`:
+Set `AUTH_MODE` (in `.env` or your stack's environment):
 
 | Mode | How it works | Session length |
 |------|--------------|----------------|
