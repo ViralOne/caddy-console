@@ -165,7 +165,7 @@ tls {
 changes:
 
 ```yaml
-image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.4-alpine
+image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine
 ```
 
 Validation is done by that container, through its admin API (`POST /adapt`), so
@@ -177,7 +177,7 @@ If you rely on that fallback and your config needs a plugin, build the console
 image against a matching Caddy:
 
 ```bash
-docker build --build-arg CADDY_IMAGE=ghcr.io/caddybuilds/caddy-cloudflare:2.11.4-alpine .
+docker build --build-arg CADDY_IMAGE=ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine .
 ```
 
 Without it, the fallback reports `module not registered: dns.providers.cloudflare`

@@ -1,6 +1,6 @@
 # Override to match your Caddy if you rely on the fallback, e.g. a DNS-01 build:
-#   docker build --build-arg CADDY_IMAGE=ghcr.io/caddybuilds/caddy-cloudflare:2.11.4-alpine .
-ARG CADDY_IMAGE=caddy:2.11.4-alpine
+#   docker build --build-arg CADDY_IMAGE=ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine .
+ARG CADDY_IMAGE=caddy:2.11.9-alpine
 FROM ${CADDY_IMAGE} AS caddy-bin
 
 FROM python:3.15-alpine

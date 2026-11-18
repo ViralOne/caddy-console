@@ -1,6 +1,6 @@
 services:
   caddy-console:
-    build: .
+    image: ghcr.io/viralone/caddy-console:latest
     restart: unless-stopped
     ports:
       - "9090:9090"
@@ -21,7 +21,7 @@ services:
       retries: 3
 
   caddy:
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.9-alpine
     restart: unless-stopped
     ports:
       - "8080:80"

@@ -11,7 +11,7 @@ name: caddy-console-dev
 services:
   # Stands in for Cloudflare Access, and is the only entrypoint you browse to.
   caddy-front:
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.9-alpine
     restart: unless-stopped
     ports:
       - "127.0.0.1:8888:80"
@@ -56,7 +56,7 @@ services:
 
   # The Caddy instance whose config the console edits and reloads.
   caddy-target:
-    image: caddy:2.11.4-alpine
+    image: caddy:2.11.9-alpine
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:80"
