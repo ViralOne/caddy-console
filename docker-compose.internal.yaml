@@ -22,7 +22,7 @@ services:
       - default
       - console
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -86,6 +86,11 @@ services:
       - "8888:8888"
     networks:
       - console
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8888/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     depends_on:
       caddy-console:
         condition: service_healthy
