@@ -1,0 +1,141 @@
+services:
+  caddy:
+    image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+    environment:
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN}"
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "8443:8443"
+
+    volumes:
+      - /volume2/docker/caddy/caddy:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - /volume2/docker/caddy/cloudflare:/cloudflare
+      - caddy-logs:/var/log/caddy
+
+    networks:
+      - caddy-public
+      - caddy-admin
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy-editor:
+    image: ghcr.io/viralone/caddy-console:sha-5f4f5f6
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+
+    environment:
+      AUTH_MODE: "${AUTH_MODE}"
+      SECRET_KEY: "${SECRET_KEY}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET}"
+      SERVER_URL: "${SERVER_URL}"
+      CF_ACCESS_TEAM_DOMAIN: "${CF_ACCESS_TEAM_DOMAIN}"
+      CF_ACCESS_AUD: "${CF_ACCESS_AUD}"
+      ALLOWED_DOMAIN: "${ALLOWED_DOMAIN}"
+      ALLOWED_EMAILS: "${ALLOWED_EMAILS}"
+      SESSION_TIMEOUT_HOURS: "8"
+      SESSION_COOKIE_SECURE: "true"
+      CADDY_API_URL: "http://caddy:2019"
+      CADDYFILE_PATH: "/etc/caddy/Caddyfile"
+      CADDY_LOG_FILE: "/var/log/caddy/access.log"
+      BACKUP_DIR: "/backups"
+      BACKUP_KEEP: "50"
+      AUDIT_LOG: "/backups/audit.log"
+      AUDIT_LOG_MAX_BYTES: "5242880"
+      GEOIP_DIR: "/data/geoip"
+      GEOIP_AUTO_UPDATE: "true"
+      CADDY_EXPLORE_MAX_EVENTS: "200000"
+      GUNICORN_WORKERS: "2"
+      GUNICORN_THREADS: "4"
+      GUNICORN_TIMEOUT: "90"
+      GUNICORN_PRELOAD: "true"
+
+    volumes:
+      - /volume2/docker/caddy/caddy:/etc/caddy
+      - caddy-backups:/backups
+      - /volume2/docker/caddy/cloudflare:/cloudflare:ro
+      - caddy-logs:/var/log/caddy:ro
+      - caddy-geoip:/data/geoip
+
+    networks:
+      - caddy-admin
+      - console-ui
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:9090/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cloudflared-caddy:
+    image: cloudflare/cloudflared:2026.11.1
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN}"
+
+    networks:
+      - console-ui
+
+    depends_on:
+      caddy-editor:
+        condition: service_healthy
+
+networks:
+  caddy-public:
+  caddy-admin:
+    internal: true
+  console-ui:
+
+volumes:
+  caddy-data:
+  caddy-config:
+  caddy-backups:
+  caddy-logs:
+  caddy-geoip:
