@@ -1,11 +1,14 @@
 version: 2
 
 updates:
-  - package-ecosystem: "pip"
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     groups:
       python-minor-patch:
         applies-to: version-updates
@@ -20,6 +23,9 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     groups:
       js-minor-patch:
         applies-to: version-updates
@@ -34,8 +40,26 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
     groups:
       docker-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+    groups:
+      compose-minor-patch:
         applies-to: version-updates
         patterns:
           - "*"
@@ -48,6 +72,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
     groups:
       actions-all:
         applies-to: version-updates
