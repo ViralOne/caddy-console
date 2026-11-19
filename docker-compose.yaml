@@ -3,7 +3,7 @@ services:
     image: ghcr.io/viralone/caddy-console:latest
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     environment:
       - AUTH_MODE
       - SECRET_KEY

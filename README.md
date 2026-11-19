@@ -55,8 +55,33 @@ first, with an inline diff and one-click restore.
 git clone https://github.com/ViralOne/caddy-console.git
 cd caddy-console
 cp .env.example .env          # set AUTH_MODE, SECRET_KEY, ALLOWED_EMAILS
+sudo mkdir -p /opt/caddy     # then write /opt/caddy/Caddyfile (example in docs/setup.md)
 docker compose -f docker-compose.prod.yaml up -d
 ```
+
+### Deploying (Portainer or plain Docker)
+
+- **Caddyfile lives at `/opt/caddy/Caddyfile` on the host.** It is gitignored, so
+  create it before the first deploy; otherwise Docker mounts an empty directory.
+- **Caddy publishes 8080/8443 (TCP + UDP 443 for HTTP/3).** Forward WAN 80 → 8080
+  and WAN 443 → 8443 on the router; Caddy still sees 80/443 from the internet, so
+  automatic HTTPS works. Use bare hostnames (`app.example.com {`), not `http://`.
+- **Never forward 9090, 8888 or 2019.** `admin 0.0.0.0:2019` has no auth, so Caddy
+  sits only on the `console` network; reach proxied apps by LAN IP or a
+  host-published port instead of attaching them to that network.
+- **Environment:** set variables in the Portainer stack (or a `.env` next to the
+  compose file). Unset ones are not passed, so the app defaults apply.
+
+### Internal stack (temporary, no login)
+
+`docker-compose.internal.yaml` runs the console without any login, for a trusted
+LAN until Google OAuth or Cloudflare Access is set up. Open `http://<server-ip>:8888`.
+
+Anyone who can reach port 8888 is a full admin: they can rewrite and reload the
+Caddyfile, so they control every site Caddy serves. `console-proxy` logs every
+visitor in as `admin@local` (the console runs in `AUTH_MODE=cloudflare`, trusting
+that header; no Cloudflare account involved), and the console itself publishes no
+port. Switch to `docker-compose.prod.yaml` as soon as auth is in place.
 
 Two things to do next, both in [docs/setup.md](docs/setup.md):
 

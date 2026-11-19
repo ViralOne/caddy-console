@@ -1,24 +1,17 @@
 services:
   caddy:
-    # Running a custom build (a DNS-01 plugin, say) is fine: the console
-    # validates through this container's admin API, so whatever modules it has
-    # are the modules a config is checked against.
-    #   image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine
     image: caddy:2.11.9-alpine
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
+      - "443:443/udp"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - /opt/caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy-data:/data
       - caddy-config:/config
-      # Shared log dir so the dashboard and explorer can read Caddy's access log
       - caddy-logs:/var/log/caddy
     networks:
-      # `default` is where your proxied apps live (if they are containers);
-      # `console` is the only way to reach caddy-console and the admin API.
-      - default
       - console
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
@@ -58,14 +51,11 @@ services:
       - GUNICORN_PRELOAD
       - CADDY_API_URL=http://caddy:2019
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - /opt/caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy-backups:/backups
       - caddy-logs:/var/log/caddy
-      # IP location databases, refreshed monthly; kept so a rebuild does not re-download.
       - caddy-geoip:/data/geoip
     networks:
-      # Not on `default`: containers behind Caddy must not be able to reach the
-      # console (in header-trust mode anything that can would be a full admin).
       - console
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
@@ -74,7 +64,7 @@ services:
       retries: 3
 
   cloudflared-caddy:
-    image: cloudflare/cloudflared:latest
+    image: cloudflare/cloudflared:2026.11.1
     restart: unless-stopped
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     networks:
@@ -84,9 +74,6 @@ services:
         condition: service_healthy
 
 networks:
-  default:
-  # Console, its tunnel, and Caddy only. Needs egress for the tunnel, so it
-  # can't be `internal: true`; isolation comes from what is attached to it.
   console:
 
 volumes:

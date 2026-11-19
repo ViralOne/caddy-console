@@ -12,25 +12,25 @@ internet → Cloudflare proxy (SSL)  → caddy:80/443       → your services
 
 Three containers:
 
-- **caddy** — the reverse proxy serving your sites (ports 80/443)
+- **caddy** — the reverse proxy serving your sites (host ports 8080/8443)
 - **caddy-console** — the web UI (no port published; reached through the tunnel)
 - **cloudflared** — the tunnel that exposes the console without opening a port
 
-All three share the same `./Caddyfile` through volume mounts. Saving in the UI
-rewrites that file and reloads Caddy through its admin API
+All three share the host's `/opt/caddy/Caddyfile` through volume mounts. Saving in
+the UI rewrites that file and reloads Caddy through its admin API
 (`POST http://caddy:2019/load`), so there is no downtime and no container restart.
 
-`docker-compose.prod.yaml` puts the console and the tunnel on their own `console`
-network. Caddy sits on both `console` and `default`, so the containers you proxy to
-can live on `default` and be reachable by Caddy **without** being able to reach the
-console or Caddy's admin API.
+`docker-compose.prod.yaml` puts Caddy, the console and the tunnel on one `console`
+network and nothing else. Caddy's admin API has no auth, so any container sharing a
+network with Caddy could rewrite its config: proxy to apps by LAN IP or a
+host-published port, not by attaching them to that network.
 
 ## 1. Start it
 
 ```bash
-mkdir caddy && cd caddy
+sudo mkdir -p /opt/caddy
 
-cat > Caddyfile << 'EOF'
+sudo tee /opt/caddy/Caddyfile > /dev/null << 'EOF'
 {
     admin 0.0.0.0:2019
     metrics

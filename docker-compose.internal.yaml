@@ -1,25 +1,18 @@
-# Internal-only stack with NO LOGIN. For testing on a trusted LAN.
-#
-#   Open http://<server-ip>:8888
-#
-# How it works: the console runs in AUTH_MODE=cloudflare, which trusts the
-# Cf-Access-Authenticated-User-Email header. No Cloudflare account is involved:
-# console-proxy sets that header on every request. The console itself publishes
-# no port, so console-proxy is the only way in.
+# Temporary no-login stack for a trusted LAN. See README: "Internal stack".
 services:
   caddy:
     image: caddy:2.11.9-alpine
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "8080:80"
+      - "8443:443"
+      - "8443:443/udp"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - /opt/caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy-data:/data
       - caddy-config:/config
       - caddy-logs:/var/log/caddy
     networks:
-      - default
       - console
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
@@ -31,12 +24,10 @@ services:
     image: ghcr.io/viralone/caddy-console:latest
     restart: unless-stopped
     environment:
-      # Fixed for this stack: header-trust mode behind console-proxy, over plain HTTP.
       - AUTH_MODE=cloudflare
       - ALLOWED_EMAILS=admin@local
       - SESSION_COOKIE_SECURE=false
       - CADDY_API_URL=http://caddy:2019
-      # Optional, passed through from the Portainer stack environment when set.
       - SECRET_KEY
       - CADDYFILE_PATH
       - CADDY_LOG_FILE
@@ -54,7 +45,7 @@ services:
       - GUNICORN_TIMEOUT
       - GUNICORN_PRELOAD
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - /opt/caddy/Caddyfile:/etc/caddy/Caddyfile
       - caddy-backups:/backups
       - caddy-logs:/var/log/caddy
       - caddy-geoip:/data/geoip
@@ -66,8 +57,6 @@ services:
       timeout: 5s
       retries: 3
 
-  # Stands in for Cloudflare Access: logs every visitor in as admin@local.
-  # A separate Caddy, so a broken main Caddyfile never locks you out of the console.
   console-proxy:
     image: caddy:2.11.9-alpine
     restart: unless-stopped
@@ -96,7 +85,6 @@ services:
         condition: service_healthy
 
 networks:
-  default:
   console:
 
 volumes:
