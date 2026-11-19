@@ -1,0 +1,102 @@
+# Internal-only stack with NO LOGIN. For testing on a trusted LAN.
+#
+#   Open http://<server-ip>:8888
+#
+# How it works: the console runs in AUTH_MODE=cloudflare, which trusts the
+# Cf-Access-Authenticated-User-Email header. No Cloudflare account is involved:
+# console-proxy sets that header on every request. The console itself publishes
+# no port, so console-proxy is the only way in.
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy-data:/data
+      - caddy-config:/config
+      - caddy-logs:/var/log/caddy
+    networks:
+      - default
+      - console
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy-console:
+    image: ghcr.io/viralone/caddy-console:latest
+    restart: unless-stopped
+    environment:
+      # Fixed for this stack: header-trust mode behind console-proxy, over plain HTTP.
+      - AUTH_MODE=cloudflare
+      - ALLOWED_EMAILS=admin@local
+      - SESSION_COOKIE_SECURE=false
+      - CADDY_API_URL=http://caddy:2019
+      # Optional, passed through from the Portainer stack environment when set.
+      - SECRET_KEY
+      - CADDYFILE_PATH
+      - CADDY_LOG_FILE
+      - CADDY_EXPLORE_MAX_EVENTS
+      - CADDY_CACHE_TTL
+      - CADDY_CMD_TIMEOUT
+      - BACKUP_DIR
+      - BACKUP_KEEP
+      - AUDIT_LOG
+      - AUDIT_LOG_MAX_BYTES
+      - GEOIP_DIR
+      - GEOIP_AUTO_UPDATE
+      - GUNICORN_WORKERS
+      - GUNICORN_THREADS
+      - GUNICORN_TIMEOUT
+      - GUNICORN_PRELOAD
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy-backups:/backups
+      - caddy-logs:/var/log/caddy
+      - caddy-geoip:/data/geoip
+    networks:
+      - console
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Stands in for Cloudflare Access: logs every visitor in as admin@local.
+  # A separate Caddy, so a broken main Caddyfile never locks you out of the console.
+  console-proxy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - :8888
+      - --to
+      - caddy-console:9090
+      - --header-up
+      - "Cf-Access-Authenticated-User-Email: admin@local"
+    environment:
+      - CADDY_ADMIN=off
+    ports:
+      - "8888:8888"
+    networks:
+      - console
+    depends_on:
+      caddy-console:
+        condition: service_healthy
+
+networks:
+  default:
+  console:
+
+volumes:
+  caddy-data:
+  caddy-config:
+  caddy-backups:
+  caddy-logs:
+  caddy-geoip:
