@@ -20,13 +20,17 @@ AUTH_MODE = os.environ.get("AUTH_MODE", "google").lower()
 CADDY_API_URL = os.environ.get("CADDY_API_URL", "http://caddy:2019")
 CADDY_LOG_FILE = os.environ.get("CADDY_LOG_FILE", "/var/log/caddy/access.log")
 
-# Cloudflare Access JWT validation (AUTH_MODE=cloudflare). When both are set the
-# Cf-Access-Jwt-Assertion header is verified against the team's public keys and
-# the identity is taken from the token. When unset the app falls back to
-# trusting the Cf-Access-Authenticated-User-Email header, which is only safe if
-# nothing but the tunnel can reach the editor.
+# Cloudflare Access JWT validation (AUTH_MODE=cloudflare). With both values,
+# identity comes only from a verified Cf-Access-Jwt-Assertion. Without them the
+# app refuses to start unless the explicit internal/dev escape hatch below is on.
 CF_ACCESS_TEAM_DOMAIN = os.environ.get("CF_ACCESS_TEAM_DOMAIN", "").strip().rstrip("/")
 CF_ACCESS_AUD = os.environ.get("CF_ACCESS_AUD", "").strip()
+# Explicit escape hatch for the temporary, loopback-only development/internal
+# proxy that injects a synthetic identity. Production Cloudflare mode fails
+# closed unless a signed Access JWT can be verified.
+UNSAFE_ALLOW_UNVERIFIED_CF_HEADER = os.environ.get(
+    "UNSAFE_ALLOW_UNVERIFIED_CF_HEADER", "false"
+).lower() in ("1", "true", "yes")
 
 # How many pre-save backups to keep on disk (oldest are pruned after each save).
 BACKUP_KEEP = int(os.environ.get("BACKUP_KEEP", "50"))

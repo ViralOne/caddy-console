@@ -2,17 +2,28 @@ services:
   caddy:
     image: caddy:2.11.9-alpine
     restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     ports:
       - "80:80"
       - "443:443"
       - "443:443/udp"
     volumes:
-      - /opt/caddy/Caddyfile:/etc/caddy/Caddyfile
+      # Mount the directory read-only so the console can replace Caddyfile
+      # atomically while Caddy always reopens the same path.
+      - /opt/caddy:/etc/caddy:ro
       - caddy-data:/data
       - caddy-config:/config
       - caddy-logs:/var/log/caddy
     networks:
-      - console
+      - caddy-public
+      - caddy-admin
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
       interval: 30s
@@ -20,8 +31,15 @@ services:
       retries: 3
 
   caddy-console:
-    image: ghcr.io/viralone/caddy-console:latest
+    image: ${CADDY_CONSOLE_IMAGE:?Set immutable CADDY_CONSOLE_IMAGE}
     restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=128m,mode=1777
     environment:
       - AUTH_MODE
       - SECRET_KEY
@@ -51,14 +69,21 @@ services:
       - GUNICORN_PRELOAD
       - CADDY_API_URL=http://caddy:2019
     volumes:
-      - /opt/caddy/Caddyfile:/etc/caddy/Caddyfile
+      - /opt/caddy:/etc/caddy
       - caddy-backups:/backups
-      - caddy-logs:/var/log/caddy
+      - caddy-logs:/var/log/caddy:ro
       - caddy-geoip:/data/geoip
     networks:
-      - console
+      - caddy-admin
+      - console-ui
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:9090/health', timeout=3)
       interval: 30s
       timeout: 5s
       retries: 3
@@ -66,15 +91,33 @@ services:
   cloudflared-caddy:
     image: cloudflare/cloudflared:2026.11.1
     restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    command: tunnel --no-autoupdate run
+    # Keep the tunnel credential out of the process command line. cloudflared
+    # also supports TUNNEL_TOKEN_FILE when the platform provides file secrets.
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN}
     networks:
-      - console
+      - console-ui
     depends_on:
       caddy-console:
         condition: service_healthy
 
 networks:
-  console:
+  # Caddy is the only peer on this ordinary bridge; it keeps outbound access for
+  # ACME while published 80/443 remain the public data plane.
+  caddy-public:
+  # Only Caddy and the console can reach the unauthenticated admin API.
+  caddy-admin:
+    internal: true
+  # Only cloudflared and the console share the authenticated UI transport.
+  console-ui:
 
 volumes:
   caddy-data:

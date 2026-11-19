@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import threading
 import time
 import unittest
 from unittest import mock
@@ -16,6 +17,7 @@ import tests._env as env  # noqa: F401  (sets env before src is imported)
 import requests
 from authlib.jose import JsonWebKey, JsonWebToken
 
+import src
 from src import audit, auth, create_app
 from src.routes import editor as editor_mod
 from src.routes import ops as ops_mod
@@ -60,7 +62,8 @@ class AppTestCase(unittest.TestCase):
         # Nothing here should ever shell out to caddy.
         self.patches = [
             mock.patch.object(editor_mod, "caddy_fmt", lambda c: c),
-            mock.patch.object(editor_mod, "caddy_validate", lambda c: (True, "Config is valid")),
+            mock.patch.object(editor_mod, "caddy_validate", lambda c: (True, "Config passed local Caddy validation")),
+            mock.patch.object(editor_mod, "caddy_check", lambda c: (True, "Config passed local Caddy validation", "validated")),
         ]
         for p in self.patches:
             p.start()
@@ -168,25 +171,63 @@ class SavePathTest(AppTestCase):
             self.assertEqual(f.read(), before, "disk must match what Caddy is still running")
         self.assertEqual(data["version"], editor_mod._version(before))
 
-    def test_reload_timeout_keeps_the_file_and_says_so(self):
+    def test_failed_rollback_returns_the_content_left_on_disk(self):
+        real_write = editor_mod._write_caddyfile
+        calls = 0
+
+        def fail_second_write(content):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("rollback failed")
+            return real_write(content)
+
+        with mock.patch.object(editor_mod, "_write_caddyfile", fail_second_write):
+            r = self._save("formatted-on-disk\n", post=lambda *a, **k: FakeResponse(400, text="rejected"))
+        data = r.get_json()
+        self.assertEqual(r.status_code, 500)
+        self.assertTrue(data["saved"])
+        self.assertEqual(data["content"], "formatted-on-disk\n")
+        with open(env.CADDYFILE) as f:
+            self.assertEqual(f.read(), data["content"])
+
+    def test_reload_timeout_keeps_the_file_and_reports_unknown(self):
         def timeout(*a, **k):
             raise requests.ReadTimeout("slow")
 
         r = self._save("slow\n", post=timeout)
-        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.status_code, 504)
         data = r.get_json()
-        self.assertTrue(data["ok"])
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["saved"])
+        self.assertEqual(data["reload_status"], "unknown")
         self.assertIn("did not confirm", data["message"])
         with open(env.CADDYFILE) as f:
             self.assertEqual(f.read(), "slow\n")
 
-    def test_unreachable_caddy_still_saves(self):
+    def test_connection_reset_saves_but_reports_unknown(self):
         def down(*a, **k):
-            raise requests.ConnectionError("down")
+            raise requests.ConnectionError("connection reset")
 
         r = self._save("x\n", post=down)
-        self.assertTrue(r.get_json()["ok"])
-        self.assertIn("reload skipped", r.get_json()["message"])
+        self.assertEqual(r.status_code, 504)
+        data = r.get_json()
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["saved"])
+        self.assertEqual(data["reload_status"], "unknown")
+        self.assertIn("did not confirm", data["message"])
+
+    def test_connect_timeout_reports_reload_not_applied(self):
+        def down(*a, **k):
+            raise requests.ConnectTimeout("not connected")
+
+        r = self._save("x\n", post=down)
+        self.assertEqual(r.status_code, 503)
+        data = r.get_json()
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["saved"])
+        self.assertEqual(data["reload_status"], "failed")
+        self.assertIn("could not be established", data["message"])
 
     def test_backups_are_pruned_and_names_never_collide(self):
         for i in range(6):  # BACKUP_KEEP=3 in the test env; all within one second
@@ -195,7 +236,11 @@ class SavePathTest(AppTestCase):
         self.assertEqual(len(names), 3, names)
         self.assertEqual(len(set(names)), 3)
         # Newest survive: the last three saves backed up v2, v3, v4.
-        contents = sorted(open(os.path.join(env.BACKUP_DIR, n)).read() for n in names)
+        contents = []
+        for name in names:
+            with open(os.path.join(env.BACKUP_DIR, name)) as f:
+                contents.append(f.read())
+        contents.sort()
         self.assertEqual(contents, ["v2\n", "v3\n", "v4\n"])
 
     def test_save_with_missing_caddyfile_does_not_crash(self):
@@ -203,6 +248,12 @@ class SavePathTest(AppTestCase):
         r = self._save("fresh\n")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(editor_mod.list_backup_names(), [], "nothing to back up")
+
+    def test_runtime_lock_failure_is_a_structured_503(self):
+        with mock.patch.object(editor_mod.os, "open", side_effect=PermissionError("denied")):
+            r = self._save("blocked\n")
+        self.assertEqual(r.status_code, 503)
+        self.assertIn("lock", r.get_json()["error"].lower())
 
     def test_restore_logs_a_single_audit_entry(self):
         path = os.path.join(env.BACKUP_DIR, "Caddyfile.20260101-000000")
@@ -214,6 +265,77 @@ class SavePathTest(AppTestCase):
         entries = [e for e in audit.iter_entries() if e["action"].startswith("restore")]
         self.assertEqual(len(entries), 1)
         self.assertIn("from=Caddyfile.20260101-000000", entries[0]["detail"])
+
+
+    def test_reload_is_inside_the_cross_process_lock(self):
+        first_in_reload = threading.Event()
+        allow_first_to_finish = threading.Event()
+        reload_order = []
+        results = []
+
+        def blocking_post(url, data, **kwargs):
+            content = data.decode("utf-8")
+            if content == "first\n":
+                first_in_reload.set()
+                self.assertTrue(allow_first_to_finish.wait(2))
+            reload_order.append(content)
+            return FakeResponse(200)
+
+        def apply(content):
+            with self.app.app_context():
+                results.append(editor_mod._apply_config(content, "u@example.com", "save"))
+
+        with mock.patch.object(editor_mod.http_client, "post", blocking_post):
+            first = threading.Thread(target=apply, args=("first\n",))
+            second = threading.Thread(target=apply, args=("second\n",))
+            first.start()
+            self.assertTrue(first_in_reload.wait(2))
+            second.start()
+            time.sleep(0.05)
+            self.assertTrue(second.is_alive(), "second save must wait while the first reload is in flight")
+            allow_first_to_finish.set()
+            first.join(2)
+            second.join(2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(reload_order, ["first\n", "second\n"])
+        self.assertEqual(len(results), 2)
+        with open(env.CADDYFILE) as f:
+            self.assertEqual(f.read(), "second\n")
+
+
+    def test_save_replaces_the_file_atomically(self):
+        before_inode = os.stat(env.CADDYFILE).st_ino
+        r = self._save("atomic\n")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotEqual(os.stat(env.CADDYFILE).st_ino, before_inode)
+
+    def test_restore_rejects_a_stale_live_version(self):
+        path = os.path.join(env.BACKUP_DIR, "Caddyfile.20260101-000000")
+        with open(path, "w") as f:
+            f.write("old {\n}\n")
+        version = self.client.get("/api/caddyfile", headers=AUTH).get_json()["version"]
+        write_caddyfile("someone else changed it\n")
+        with mock.patch.object(editor_mod.http_client, "post") as post:
+            r = self.post(
+                "/api/backups/Caddyfile.20260101-000000/restore",
+                {"version": version},
+            )
+        self.assertEqual(r.status_code, 409)
+        self.assertTrue(r.get_json()["conflict"])
+        post.assert_not_called()
+        with open(env.CADDYFILE) as f:
+            self.assertEqual(f.read(), "someone else changed it\n")
+
+    def test_rejected_reload_restores_crlf_bytes_exactly(self):
+        original = b":80 {\r\n\trespond 200\r\n}\r\n"
+        with open(env.CADDYFILE, "wb") as f:
+            f.write(original)
+        r = self._save("bad\n", post=lambda *a, **k: FakeResponse(400, text="rejected"))
+        self.assertEqual(r.status_code, 500)
+        with open(env.CADDYFILE, "rb") as f:
+            self.assertEqual(f.read(), original)
 
 
 class ExploreIpApiTest(AppTestCase):
@@ -233,6 +355,62 @@ class ExploreIpApiTest(AppTestCase):
     def test_requires_login(self):
         r = self.client.get("/api/explore/ip?ip=1.1.1.1")
         self.assertIn(r.status_code, (302, 401, 403))
+
+
+class ExploreRawApiTest(AppTestCase):
+    def test_path_like_file_tokens_are_rejected(self):
+        for bad in ("../../etc/passwd", "/etc/passwd", "..", "sub\\x.log"):
+            r = self.client.get("/api/explore/raw", query_string={"file": bad, "offset": 0}, headers=AUTH)
+            self.assertEqual(r.status_code, 400, bad)
+
+    def test_unknown_file_is_a_structured_error(self):
+        r = self.client.get("/api/explore/raw?file=not-a-log.log&offset=0", headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("error", r.get_json())
+        self.assertNotIn("line", r.get_json())
+
+    def test_missing_offset_or_file_is_a_400(self):
+        self.assertEqual(self.client.get("/api/explore/raw?file=x.log", headers=AUTH).status_code, 400)
+        self.assertEqual(self.client.get("/api/explore/raw?offset=0", headers=AUTH).status_code, 400)
+        self.assertEqual(self.client.get(
+            "/api/explore/raw?file=x.log&offset=999999999999999999999999",
+            headers=AUTH,
+        ).status_code, 400)
+
+
+class StatusApiTest(AppTestCase):
+    def test_status_uses_running_caddy_check_semantics(self):
+        ops_mod._status_cache.update(file_key=None, config_check=None, version=None)
+        with (
+            mock.patch.object(ops_mod, "caddy_check", return_value=(
+                True,
+                "Caddyfile syntax and modules were accepted by the running Caddy",
+                "adapted",
+            )),
+            mock.patch.object(ops_mod, "_caddy_version", return_value="v2.test"),
+        ):
+            r = self.client.get("/api/status", headers=AUTH)
+        self.assertEqual(r.status_code, 200)
+        body = r.get_json()
+        self.assertTrue(body["config_valid"])
+        self.assertEqual(body["config_check_level"], "adapted")
+        self.assertIn("running Caddy", body["config_check_message"])
+
+    def test_failed_local_fallback_status_is_not_cached(self):
+        ops_mod._status_cache.update(file_key=None, config_check=None, version=None)
+        checks = [
+            (False, "module not registered", "validated"),
+            (True, "accepted by running Caddy", "adapted"),
+        ]
+        with (
+            mock.patch.object(ops_mod, "caddy_check", side_effect=checks) as check,
+            mock.patch.object(ops_mod, "_caddy_version", return_value="v2.test"),
+        ):
+            first = self.client.get("/api/status", headers=AUTH).get_json()
+            second = self.client.get("/api/status", headers=AUTH).get_json()
+        self.assertFalse(first["config_valid"])
+        self.assertTrue(second["config_valid"])
+        self.assertEqual(check.call_count, 2)
 
 
 class AuditLogTest(unittest.TestCase):
@@ -305,6 +483,41 @@ class MetricsParserTest(unittest.TestCase):
     def test_upstream_health_is_passed_through(self):
         result = ops_mod.parse_prometheus_metrics(self.SCRAPE)
         self.assertEqual(result["upstreams_healthy"], {"10.0.0.1:8080": 1})
+
+
+class GoogleStartupValidationTest(unittest.TestCase):
+    def test_non_https_server_url_is_rejected_outside_localhost(self):
+        with (
+            mock.patch.object(src, "AUTH_MODE", "google"),
+            mock.patch.object(src, "SERVER_URL", "http://console.example.com"),
+            mock.patch.dict(os.environ, {
+                "GOOGLE_CLIENT_ID": "client.apps.googleusercontent.com",
+                "GOOGLE_CLIENT_SECRET": "secret",
+                "SECRET_KEY": "x" * 64,
+            }),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "must use https"):
+                create_app()
+
+
+class CloudflareFailClosedTest(unittest.TestCase):
+    def test_missing_jwt_configuration_refuses_to_start(self):
+        with (
+            mock.patch.object(src, "UNSAFE_ALLOW_UNVERIFIED_CF_HEADER", False),
+            mock.patch.object(src, "cf_jwt_enabled", return_value=False),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "requires CF_ACCESS_TEAM_DOMAIN"):
+                create_app()
+
+    def test_unsigned_header_is_ignored_without_explicit_opt_in(self):
+        app = create_app()
+        with (
+            app.test_request_context("/", headers=AUTH),
+            mock.patch.object(auth, "UNSAFE_ALLOW_UNVERIFIED_CF_HEADER", False),
+            mock.patch.object(auth, "CF_ACCESS_TEAM_DOMAIN", ""),
+            mock.patch.object(auth, "CF_ACCESS_AUD", ""),
+        ):
+            self.assertEqual(auth.cloudflare_identity(), "")
 
 
 class CloudflareJwtTest(unittest.TestCase):

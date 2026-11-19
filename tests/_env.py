@@ -20,6 +20,9 @@ os.environ.update({
     "AUDIT_LOG": AUDIT_LOG,
     "CADDY_LOG_FILE": LOG_FILE,
     "AUTH_MODE": "cloudflare",
+    # Tests exercise the temporary synthetic-header mode explicitly. Production
+    # Cloudflare mode is covered separately and must verify signed Access JWTs.
+    "UNSAFE_ALLOW_UNVERIFIED_CF_HEADER": "true",
     "ALLOWED_EMAILS": "admin@example.com",
     "SESSION_COOKIE_SECURE": "false",
     "BACKUP_KEEP": "3",

@@ -25,7 +25,18 @@ import gzip
 import json
 import os
 import re
+import zlib
 from datetime import datetime, timezone
+
+# What a damaged log can raise while being read. gzip.BadGzipFile is an OSError;
+# a truncated archive raises EOFError and a corrupt deflate stream zlib.error,
+# neither of which is an OSError. API boundaries catch this tuple.
+READ_ERRORS = (OSError, EOFError, zlib.error)
+
+# Longest single line the raw view will read. Real access-log lines are well under
+# 10 KB; the cap stops a file with no newlines from being pulled into memory.
+MAX_LINE = 1024 * 1024
+_SKIP_CHUNK = 64 * 1024
 
 # Caddy's default backup_time_format, as a regex over the rolled filename.
 # Matched loosely on purpose: an unparseable name still yields a usable file,
@@ -52,10 +63,20 @@ def _parse_stamp(text):
 class LogFile:
     """One file in the series, with the time span it is believed to cover."""
 
-    __slots__ = ("path", "gzip", "rolled_at", "starts_at", "is_live")
+    __slots__ = ("path", "gzip", "rolled_at", "starts_at", "is_live",
+                 "ident", "stat_sig")
 
     def __init__(self, path, gzip_, rolled_at, is_live):
         self.path = path
+        # (device, inode) is what survives a rename and changes on replacement,
+        # so it is how rotation of the live file is told apart from growth.
+        try:
+            st = os.stat(path)
+            self.ident = (st.st_dev, st.st_ino)
+            self.stat_sig = (st.st_size, st.st_mtime_ns)
+        except OSError:
+            self.ident = None
+            self.stat_sig = None
         self.gzip = gzip_
         self.rolled_at = rolled_at    # end of range; None for the live file
         self.starts_at = None         # filled in by discover(), from the previous roll
@@ -72,6 +93,26 @@ class LogFile:
         if from_ts is not None and self.rolled_at is not None and self.rolled_at < from_ts:
             return False
         return True
+
+    @property
+    def name(self):
+        return os.path.basename(self.path)
+
+    @property
+    def token(self):
+        """Process-independent reference to this file, for the raw-line API.
+
+        A file is identified by both basename and inode. After rotation or any
+        replacement, an old reference stops resolving instead of silently
+        pointing at different bytes under the same name.
+        """
+        if self.ident is not None:
+            return f"{self.name}~{self.ident[1]:x}"
+        return self.name
+
+    def signature(self):
+        """Identity plus size and mtime, to notice an archive that was replaced."""
+        return (self.name, self.ident, self.stat_sig)
 
     def open(self):
         if self.gzip:
@@ -184,6 +225,38 @@ def offset_at(path, target_ts, slack=64 * 1024):
     return max(0, lo - slack)
 
 
+def is_safe_token(token):
+    """A bare file name: no directory part, no NUL, not a dot entry."""
+    return (isinstance(token, str)
+            and 0 < len(token) <= 255
+            and token not in (".", "..")
+            and "/" not in token and "\\" not in token and "\0" not in token)
+
+
+def resolve(live_path, token):
+    """The LogFile a token refers to, or None.
+
+    Only a file that discover() lists for this log series can be returned; the
+    token is never joined onto a path, so it cannot reach anything else.
+    """
+    if not is_safe_token(token):
+        return None
+    for f in discover(live_path):
+        if f.token == token:
+            return f
+    return None
+
+
+def _skip(handle, count):
+    """Discard `count` bytes in bounded chunks. False if the stream ended first."""
+    while count > 0:
+        got = handle.read(min(count, _SKIP_CHUNK))
+        if not got:
+            return False
+        count -= len(got)
+    return True
+
+
 def iter_lines(logfile, start_offset=0, exact=False):
     """Complete lines from a file, with each line's byte offset.
 
@@ -198,14 +271,17 @@ def iter_lines(logfile, start_offset=0, exact=False):
         if logfile.gzip:
             # gzip has no seek worth using; discard the prefix instead.
             if start_offset:
-                f.read(start_offset)
+                if not _skip(f, start_offset):
+                    return
                 if not exact:
                     f.readline()
         else:
             f.seek(start_offset)
             if start_offset and not exact:
                 f.readline()
-        offset = f.tell() if not logfile.gzip else start_offset
+        # tell() is the uncompressed position for gzip too, so a discarded
+        # fragment is accounted for in both cases.
+        offset = f.tell()
         while True:
             line = f.readline()
             if not line:
@@ -217,15 +293,20 @@ def iter_lines(logfile, start_offset=0, exact=False):
 
 
 def read_line_at(logfile, offset):
-    """The original line at `offset`, for the raw view.
+    """The original line at `offset`, for the raw view; None past the end.
 
-    A gzip archive is decompressed up to that point rather than seeked, which is
-    fine for a single on-demand click.
+    A gzip archive is decompressed up to that point in bounded chunks rather than
+    seeked, which is fine for a single on-demand click.
     """
+    if offset < 0:
+        return None
     with logfile.open() as f:
         if logfile.gzip:
-            f.read(offset)
+            if not _skip(f, offset):
+                return None
         else:
             f.seek(offset)
-        line = f.readline()
+        line = f.readline(MAX_LINE)
+    if not line:
+        return None
     return line.decode("utf-8", errors="replace").rstrip("\n")

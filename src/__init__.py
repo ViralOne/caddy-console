@@ -1,12 +1,23 @@
 from datetime import timedelta
 import os
 import secrets
+from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, request
 
 from .auth import auth_bp, cf_jwt_enabled, csrf_valid, oauth
-from .config import AUTH_MODE, BACKUP_DIR, SESSION_TIMEOUT_HOURS
-from .routes.editor import editor_bp
+from .config import (
+    AUTH_MODE,
+    BACKUP_DIR,
+    SERVER_URL,
+    SESSION_TIMEOUT_HOURS,
+    UNSAFE_ALLOW_UNVERIFIED_CF_HEADER,
+)
+from .routes.editor import (
+    CaddyfileLockError,
+    editor_bp,
+    ensure_caddyfile_lock_available,
+)
 from .routes.ops import ops_bp
 
 # Known placeholder secrets that must never be used to sign real sessions.
@@ -62,6 +73,21 @@ def create_app():
         template_folder="templates",
     )
 
+    if AUTH_MODE not in ("google", "cloudflare"):
+        raise RuntimeError("AUTH_MODE must be 'google' or 'cloudflare'")
+
+    if AUTH_MODE == "google":
+        missing = [name for name in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET")
+                   if not os.environ.get(name, "").strip()]
+        if missing:
+            raise RuntimeError(f"Google OAuth requires {', '.join(missing)}")
+        public_url = urlsplit(SERVER_URL)
+        if (not public_url.scheme or not public_url.netloc or public_url.path.rstrip("/")
+                or public_url.query or public_url.fragment):
+            raise RuntimeError("SERVER_URL must be an origin such as https://console.example.com")
+        if public_url.hostname not in ("localhost", "127.0.0.1", "::1") and public_url.scheme != "https":
+            raise RuntimeError("SERVER_URL must use https outside localhost")
+
     secret_key = os.environ.get("SECRET_KEY", "").strip()
     if secret_key in _INSECURE_SECRETS:
         if AUTH_MODE == "google":
@@ -78,11 +104,26 @@ def create_app():
     # would otherwise be handed straight to `caddy fmt`.
     app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
 
+    @app.errorhandler(CaddyfileLockError)
+    def lock_unavailable(error):
+        app.logger.error("Caddyfile mutation lock unavailable: %s", error)
+        return jsonify({"ok": False, "error": str(error)}), 503
+
+    # Every mutation relies on a real inter-process file lock. Refuse to serve
+    # an editor that would only discover a broken backup/lock mount during save.
+    ensure_caddyfile_lock_available()
+
     if AUTH_MODE == "cloudflare" and not cf_jwt_enabled():
+        if not UNSAFE_ALLOW_UNVERIFIED_CF_HEADER:
+            raise RuntimeError(
+                "AUTH_MODE=cloudflare requires CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD "
+                "so Cloudflare Access JWTs can be verified. The unsigned identity-header "
+                "fallback is disabled by default."
+            )
         app.logger.warning(
-            "AUTH_MODE=cloudflare without CF_ACCESS_TEAM_DOMAIN/CF_ACCESS_AUD: trusting the "
-            "Cf-Access-Authenticated-User-Email header. Anything that can reach this port "
-            "directly can impersonate any user. Set both variables to verify the Access JWT."
+            "UNSAFE_ALLOW_UNVERIFIED_CF_HEADER is enabled: trusting the unsigned "
+            "Cf-Access-Authenticated-User-Email header. Use only behind the temporary "
+            "loopback-bound identity-injecting proxy; never enable this in production."
         )
 
     app.config.update(

@@ -50,7 +50,7 @@ class CacheTest(unittest.TestCase):
         self.next_result = (0, "", "")
         first = validator.caddy_validate("a b c")
         second = validator.caddy_validate("a b c")
-        self.assertEqual(first, (True, "Config is valid"))
+        self.assertEqual(first, (True, "Config passed local Caddy validation"))
         self.assertEqual(second, first)
         self.assertEqual(len(self.calls), 1, "second call should hit the cache")
 
@@ -130,7 +130,8 @@ class SmartValidateTest(unittest.TestCase):
     def test_accepts_real_looking_sites_snippets_and_ports(self):
         config = (
             "{\n\tadmin off\n}\n\n"
-            "(logme) {\n\tlog\n}\n\n"
+            "(logme) {\n\tlog {\n\t\tformat filter {\n\t\t\twrap json\n"
+            "\t\t\trequest>headers delete\n\t\t\tresp_headers delete\n\t\t}\n\t}\n}\n\n"
             "http://a.example.com {\n\timport logme\n}\n\n"
             "*.wild.example.com {\n\trespond 200\n}\n\n"
             ":8080 {\n\trespond 200\n}\n"
@@ -146,9 +147,50 @@ class SmartValidateTest(unittest.TestCase):
         )
         self.assertEqual(validator.smart_validate(config), [])
 
+    def test_warns_when_access_logs_are_not_filtered(self):
+        warnings = validator.smart_validate(
+            "example.com {\n\tlog {\n\t\toutput file /var/log/caddy/access.log\n\t}\n}\n"
+        )
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("format filter", warnings[0])
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_warns_when_filter_keeps_header_maps(self):
+        config = (
+            "example.com {\n\tlog {\n\t\tformat filter {\n\t\t\twrap json\n"
+            "\t\t}\n\t}\n}\n"
+        )
+        warnings = validator.smart_validate(config)
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(any("request>headers" in w for w in warnings))
+        self.assertTrue(any("resp_headers" in w for w in warnings))
+
+    def test_warns_when_file_mode_blocks_non_root_console(self):
+        config = (
+            "example.com {\n\tlog {\n\t\toutput file /var/log/caddy/access.log {\n"
+            "\t\t\troll_size 10mb\n\t\t}\n\t\tformat filter {\n\t\t\twrap json\n"
+            "\t\t\trequest>headers delete\n\t\t\tresp_headers delete\n\t\t}\n\t}\n}\n"
+        )
+        warnings = validator.smart_validate(config)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("mode 0644", warnings[0])
+
+    def test_global_runtime_log_is_not_mistaken_for_access_log(self):
+        config = "{\n\tlog {\n\t\tlevel INFO\n\t}\n}\n\nexample.com {\n\trespond 200\n}\n"
+        self.assertEqual(validator.smart_validate(config), [])
+
+    def test_single_line_access_log_is_detected(self):
+        warnings = validator.smart_validate("example.com { log }\n")
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("format filter", warnings[0])
+
+    def test_log_credentials_is_flagged_when_headers_remain(self):
+        config = (
+            "{\n\tservers {\n\t\tlog_credentials\n\t}\n}\n"
+            "example.com {\n\tlog {\n\t\tformat filter {\n\t\t\twrap json\n"
+            "\t\t}\n\t}\n}\n"
+        )
+        warnings = validator.smart_validate(config)
+        self.assertTrue(any("log_credentials" in w for w in warnings))
 
 
 class AdaptValidationTest(unittest.TestCase):
@@ -191,8 +233,9 @@ class AdaptValidationTest(unittest.TestCase):
 
     def test_adapt_success_is_valid_and_skips_the_local_binary(self):
         self._respond(200, '{"apps":{}}')
-        ok, message = validator.caddy_validate("example.com {\n}\n")
+        ok, message, level = validator.caddy_check("example.com {\n}\n")
         self.assertTrue(ok, message)
+        self.assertEqual(level, "adapted")
         self.assertTrue(self.posts, "should have asked the running Caddy")
         self.assertTrue(self.posts[0][0].endswith("/adapt"))
         self.assertEqual(self.posts[0][1]["headers"]["Content-Type"], "text/caddyfile")
@@ -210,8 +253,9 @@ class AdaptValidationTest(unittest.TestCase):
             raise validator.http_client.RequestException("connection refused")
 
         validator.http_client.post = boom
-        ok, _ = validator.caddy_validate("y")
+        ok, _, level = validator.caddy_check("y")
         self.assertTrue(ok)
+        self.assertEqual(level, "validated")
         self.assertTrue(self.ran, "should have fallen back to the binary")
         self.assertIn("validate", self.ran[0])
 
@@ -226,3 +270,7 @@ class AdaptValidationTest(unittest.TestCase):
         validator.caddy_validate("same")
         validator.caddy_validate("same")
         self.assertEqual(len(self.posts), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

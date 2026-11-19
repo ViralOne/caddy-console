@@ -27,6 +27,7 @@ from .config import (
     CF_ACCESS_TEAM_DOMAIN,
     SERVER_URL,
     SESSION_TIMEOUT_HOURS,
+    UNSAFE_ALLOW_UNVERIFIED_CF_HEADER,
 )
 
 auth_bp = Blueprint("auth", __name__)
@@ -138,9 +139,11 @@ def cloudflare_identity() -> str:
     if cf_jwt_enabled():
         token = request.headers.get(CF_JWT_HEADER) or request.cookies.get(CF_JWT_COOKIE, "")
         return verify_cf_token(token) or ""
-    # Legacy mode: trust the header. Only safe when nothing but the tunnel can
-    # reach this port; create_app() logs a warning about this at startup.
-    return request.headers.get(CF_EMAIL_HEADER, "").strip().lower()
+    if UNSAFE_ALLOW_UNVERIFIED_CF_HEADER:
+        # Deliberately limited to an explicit opt-in used by the committed
+        # loopback-only local/internal synthetic-login proxies.
+        return request.headers.get(CF_EMAIL_HEADER, "").strip().lower()
+    return ""
 
 
 oauth = OAuth()

@@ -25,10 +25,13 @@ const editorTheme = EditorView.theme({
     backgroundColor: 'var(--bg)', color: 'var(--ink-muted)',
     border: 'none', borderRight: '1px solid var(--border)',
   },
-  '.cm-activeLine': { backgroundColor: 'var(--surface)' },
+  '.cm-activeLine': { backgroundColor: 'var(--active-line-bg)' },
   '.cm-activeLineGutter': { backgroundColor: 'var(--surface)', color: 'var(--ink-secondary)' },
-  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': {
-    backgroundColor: 'var(--accent-quiet)',
+  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
+    backgroundColor: 'var(--selection-bg)',
+  },
+  '.cm-content ::selection': {
+    backgroundColor: 'var(--selection-bg)', color: 'var(--selection-ink)',
   },
   '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
     backgroundColor: 'var(--accent-quiet)', outline: '1px solid var(--accent)', color: 'inherit',

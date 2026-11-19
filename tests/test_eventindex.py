@@ -1,11 +1,16 @@
 """Columnar event index + query engine behind /api/explore."""
+import gzip
 import json
+import math
 import os
 import tempfile
+import time
 import unittest
+from datetime import datetime, timezone
 
 import tests._env as env  # noqa: F401  (sets env before src is imported)
 
+from src import logfiles
 from src.eventindex import EventIndex, parse_query
 
 MB = 1024 * 1024
@@ -477,6 +482,231 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(s["requests"], 0)
         self.assertIsNone(s["first_ts"])
         self.assertEqual(s["hosts"], [])
+
+
+class SupersetCacheTest(unittest.TestCase):
+    """Sliding and narrower ranges reuse the loaded index instead of rebuilding.
+
+    A rebuild replaces the column arrays, so `index.ts is before` means reuse.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="superset-")
+        self.path = os.path.join(self.dir, "access.log")
+        self.index = EventIndex(self.path)
+        self.future = time.time() + 3600   # "now" for an open-ended relative range
+
+    def write(self, *entries):
+        with open(self.path, "a") as f:
+            for e in entries:
+                f.write(json.dumps(e) + "\n")
+
+    def test_shifted_open_range_reuses_the_cache_and_stays_exact(self):
+        self.write(*[entry(ts=T0 + i, uri=f"/{i}") for i in range(100)])
+        first = self.index.query("", from_ts=T0 + 10, to_ts=self.future)
+        self.assertEqual(first["total"], 90)
+        ts_before = self.index.ts
+
+        second = self.index.query("", from_ts=T0 + 20, to_ts=self.future + 5)
+        self.assertIs(self.index.ts, ts_before, "a narrower from must not rebuild")
+        self.assertEqual(second["total"], 80)           # honours the requested from
+        self.assertAlmostEqual(second["entries"][-1]["ts"], T0 + 20, places=3)
+
+    def test_relative_range_resolved_at_request_time_is_open_ended(self):
+        # The route resolves "last 30m" as (now - 1800, now), so `to` is already a
+        # few microseconds old when the index sees it. That must still follow the
+        # live file instead of rebuilding on every poll.
+        now = time.time()
+        self.write(*[entry(ts=now - 60 + i, uri=f"/a{i}") for i in range(10)])
+        t = time.time()
+        first = self.index.query("", from_ts=t - 1800, to_ts=t)
+        self.assertEqual(first["total"], 10)
+        ts_before = self.index.ts
+
+        self.write(*[entry(ts=now - 20 + i, uri=f"/b{i}") for i in range(5)])
+        t = time.time()
+        second = self.index.query("", from_ts=t - 1800, to_ts=t)
+        self.assertIs(self.index.ts, ts_before, "a sliding range must not rebuild")
+        self.assertEqual(second["total"], 15)
+        self.assertEqual(len({e["offset"] for e in second["entries"]}), 15)
+
+        # Paging echoes ceil(to) of the first request, which can sit just ahead
+        # of or a few seconds behind the current time; both stay on the cache.
+        paged = self.index.query("", from_ts=math.floor(t - 1800), to_ts=math.ceil(t) - 5)
+        self.assertIs(self.index.ts, ts_before)
+        self.assertEqual(paged["total"], 15)
+
+    def test_historical_subrange_reuses_the_cache_and_honours_to(self):
+        self.write(*[entry(ts=T0 + i) for i in range(100)])
+        self.index.query("", from_ts=T0, to_ts=self.future)
+        ts_before = self.index.ts
+        r = self.index.query("", from_ts=T0 + 20, to_ts=T0 + 50)
+        self.assertIs(self.index.ts, ts_before)
+        self.assertEqual(r["total"], 31)
+        self.assertAlmostEqual(r["entries"][0]["ts"], T0 + 50, places=3)
+
+    def test_growing_live_file_is_folded_into_a_shifted_range(self):
+        self.write(*[entry(ts=T0 + i) for i in range(10)])
+        self.index.query("", from_ts=T0, to_ts=self.future)
+        ts_before = self.index.ts
+        self.write(*[entry(ts=T0 + 10 + i) for i in range(5)])
+        r = self.index.query("", from_ts=T0 + 5, to_ts=self.future + 1)
+        self.assertIs(self.index.ts, ts_before, "growth must be folded, not rebuilt")
+        self.assertEqual(r["total"], 10)                # T0+5 .. T0+14, none twice
+        r = self.index.query("", from_ts=T0 + 5, to_ts=self.future + 2)
+        self.assertEqual(r["total"], 10, "an unchanged poll must not re-count")
+
+    def test_a_wider_range_rebuilds(self):
+        self.write(*[entry(ts=T0 + i) for i in range(20)])
+        self.index.query("", from_ts=T0 + 10, to_ts=self.future)
+        ts_before = self.index.ts
+        r = self.index.query("", from_ts=T0, to_ts=self.future)
+        self.assertIsNot(self.index.ts, ts_before)
+        self.assertEqual(r["total"], 20)
+
+    def test_replaced_live_file_is_detected_and_rebuilt(self):
+        self.write(*[entry(ts=T0 + i, uri="/old") for i in range(10)])
+        self.index.query("", from_ts=T0, to_ts=self.future)
+        ts_before = self.index.ts
+        # Rotation: the old file keeps existing under another name, so the new
+        # one is guaranteed a different inode. The new file is larger, so size
+        # alone would wrongly look like growth.
+        os.rename(self.path, self.path + ".old")
+        self.write(*[entry(ts=T0 + 100 + i, uri="/new") for i in range(30)])
+        r = self.index.query("", from_ts=T0, to_ts=self.future + 1)
+        self.assertIsNot(self.index.ts, ts_before)
+        self.assertEqual(r["total"], 30)
+        self.assertEqual({e["uri"] for e in r["entries"]}, {"/new"})
+
+    def test_event_cap_still_applies_when_folding(self):
+        idx = EventIndex(self.path, max_events=20)
+        self.write(*[entry(ts=T0 + i) for i in range(15)])
+        idx.query("", from_ts=T0, to_ts=self.future)
+        self.write(*[entry(ts=T0 + 15 + i) for i in range(15)])
+        r = idx.query("", from_ts=T0, to_ts=self.future + 1)
+        self.assertLessEqual(r["indexed"], 20)
+        self.assertGreater(r["dropped"], 0)
+        self.assertAlmostEqual(r["entries"][0]["ts"], T0 + 29, places=3)
+
+
+class RawReferenceTest(unittest.TestCase):
+    """Raw-line references work in any worker and cannot name other files."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="rawref-")
+        self.path = os.path.join(self.dir, "access.log")
+        stamp = datetime.fromtimestamp(T0 + 60, timezone.utc).strftime("%Y-%m-%dT%H-%M-%S.%f")[:-3]
+        self.archive = os.path.join(self.dir, f"access-{stamp}-size.log.gz")
+        with gzip.open(self.archive, "wt") as f:
+            for i in range(5):
+                f.write(json.dumps(entry(ts=T0 + i, host="old.example.com", uri=f"/old{i}")) + "\n")
+        with open(self.path, "w") as f:
+            for i in range(5):
+                f.write(json.dumps(entry(ts=T0 + 7200 + i, host="live.example.com", uri=f"/live{i}")) + "\n")
+
+    def entries(self):
+        r = EventIndex(self.path).query("", from_ts=T0, to_ts=T0 + 8000, limit=100)
+        return {e["uri"]: e for e in r["entries"]}
+
+    def test_reference_resolves_in_a_fresh_index_without_loading_anything(self):
+        found = self.entries()
+        other = EventIndex(self.path)   # another worker: nothing loaded, other range
+        for uri in ("/old3", "/live2"):
+            e = found[uri]
+            raw = other.raw_line(e["file"], e["offset"])
+            self.assertEqual(json.loads(raw)["request"]["uri"], uri)
+        self.assertFalse(other._built)
+
+    def test_reference_does_not_depend_on_the_requested_range(self):
+        wide = self.entries()["/live1"]
+        narrow = EventIndex(self.path).query("", from_ts=T0 + 7200, to_ts=T0 + 8000)
+        same = next(e for e in narrow["entries"] if e["uri"] == "/live1")
+        self.assertEqual((wide["file"], wide["offset"]), (same["file"], same["offset"]))
+
+    def test_reference_is_not_a_path(self):
+        e = self.entries()["/old1"]
+        self.assertNotIn(os.sep, e["file"])
+        self.assertIsInstance(e["file"], str)
+
+    def test_unsafe_and_unknown_references_are_rejected(self):
+        with open(os.path.join(self.dir, "secret.txt"), "w") as f:
+            f.write("secret\n")
+        idx = EventIndex(self.path)
+        for bad in ("../secret.txt", "/etc/passwd", os.path.join(self.dir, "secret.txt"),
+                    "secret.txt", "..", ".", "", "a\0b", "sub/../access.log",
+                    "access.log",          # live file without its identity suffix
+                    "nope.log", 3, None):
+            self.assertIsNone(idx.raw_line(bad, 0), repr(bad))
+
+    def test_reference_to_a_rotated_live_file_stops_resolving(self):
+        e = self.entries()["/live0"]
+        os.rename(self.path, self.path + ".old")
+        with open(self.path, "w") as f:
+            f.write(json.dumps(entry(ts=T0 + 9000, uri="/other")) + "\n")
+        self.assertIsNone(EventIndex(self.path).raw_line(e["file"], e["offset"]))
+
+    def test_offset_past_the_end_is_none(self):
+        e = self.entries()["/old0"]
+        idx = EventIndex(self.path)
+        self.assertIsNone(idx.raw_line(e["file"], 10 ** 9))
+        self.assertIsNone(idx.raw_line(e["file"], -1))
+
+
+class CorruptArchiveTest(unittest.TestCase):
+    """A damaged archive must not leave a partial or replaced index behind."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="corrupt-")
+        self.path = os.path.join(self.dir, "access.log")
+        stamp = datetime.fromtimestamp(T0 + 600, timezone.utc).strftime("%Y-%m-%dT%H-%M-%S.%f")[:-3]
+        self.archive = os.path.join(self.dir, f"access-{stamp}-size.log.gz")
+        with gzip.open(self.archive, "wt") as f:
+            for i in range(400):
+                f.write(json.dumps(entry(ts=T0 + i, uri=f"/old/{i}/{'x' * (i % 17)}")) + "\n")
+        with open(self.path, "w") as f:
+            for i in range(10):
+                f.write(json.dumps(entry(ts=T0 + 7200 + i, uri=f"/live{i}")) + "\n")
+
+    def truncate_archive(self):
+        with open(self.archive, "rb") as f:
+            data = f.read()
+        with open(self.archive, "wb") as f:
+            f.write(data[: len(data) // 2])
+
+    def test_a_failed_first_build_leaves_nothing_marked_built(self):
+        self.truncate_archive()
+        idx = EventIndex(self.path)
+        with self.assertRaises(logfiles.READ_ERRORS):
+            idx.query("", from_ts=T0, to_ts=T0 + 8000)
+        self.assertFalse(idx._built)
+        self.assertEqual(len(idx.ts), 0)
+
+    def test_a_failed_rebuild_keeps_the_previous_good_index(self):
+        idx = EventIndex(self.path)
+        good = idx.query("", from_ts=T0 + 7200, to_ts=T0 + 8000)
+        self.assertEqual(good["total"], 10)
+        ts_before, n_before = idx.ts, len(idx.ts)
+
+        self.truncate_archive()
+        with self.assertRaises(logfiles.READ_ERRORS):
+            idx.query("", from_ts=T0, to_ts=T0 + 8000)   # wider: needs the archive
+
+        self.assertIs(idx.ts, ts_before)
+        self.assertEqual(len(idx.ts), n_before)
+        self.assertTrue(idx._built)
+        # A range that never touches the damaged archive still works.
+        again = idx.query("", from_ts=T0 + 7200, to_ts=T0 + 8000)
+        self.assertEqual(again["total"], 10)
+
+    def test_a_failed_rebuild_keeps_a_previously_good_wide_index(self):
+        idx = EventIndex(self.path)
+        self.assertEqual(idx.query("", from_ts=T0, to_ts=T0 + 8000)["total"], 410)
+        ts_before = idx.ts
+        self.truncate_archive()
+        with self.assertRaises(logfiles.READ_ERRORS):
+            idx.query("", from_ts=T0 - 5, to_ts=T0 + 8000)
+        self.assertIs(idx.ts, ts_before)
+        self.assertEqual(len(idx.ts), 410)
 
 
 if __name__ == "__main__":

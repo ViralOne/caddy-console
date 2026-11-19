@@ -3,6 +3,11 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+export CADDY_CONSOLE_UID="$(id -u)"
+export CADDY_CONSOLE_GID="$(id -g)"
+# Avoid inheriting a remote/custom buildx builder that cannot see Docker's local
+# image store. Callers can still override this explicitly when needed.
+export BUILDX_BUILDER="${BUILDX_BUILDER:-default}"
 COMPOSE=(docker compose -f docker-compose.dev.yaml)
 URL="http://localhost:8888"
 
@@ -43,13 +48,13 @@ case "${1:-up}" in
     ;;
   logs)
     shift
-    "${COMPOSE[@]}" logs -f "${@:-}"
+    "${COMPOSE[@]}" logs -f "$@"
     ;;
   reset)
     seed
-    # Rewrite in place. Deleting the file would break the bind mount: the
-    # containers keep the old inode and then see a missing Caddyfile.
-    cat dev/Caddyfile.seed > dev/run/Caddyfile
+    tmp="dev/run/.Caddyfile.reset.$$"
+    cp dev/Caddyfile.seed "$tmp"
+    mv "$tmp" dev/run/Caddyfile
     "${COMPOSE[@]}" restart caddy-target
     echo "dev/run/Caddyfile reset to the seed"
     ;;

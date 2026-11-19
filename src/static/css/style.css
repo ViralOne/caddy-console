@@ -1,6 +1,14 @@
 /* Component styles. Every value comes from tokens.css — no literal colours,
  * sizes or spacing below this line. */
 * { margin: 0; padding: 0; box-sizing: border-box; }
+
+/* Native selection is intentionally stronger than passive accent surfaces so
+   selected text is obvious in logs, diffs, panels and ordinary copyable text. */
+::selection {
+  background: var(--selection-bg);
+  color: var(--selection-ink);
+}
+
 body {
   font-family: var(--font);
   background: var(--bg);
@@ -100,6 +108,16 @@ body {
 .warnings div { padding: 2px 0; }
 .user-info { font-size: var(--text-sm); color: var(--ink-muted); }
 
+
+/* CodeMirror draws selections in a separate layer whose built-in selector is
+   more specific than theme rules. Keep it aligned with native selection. */
+#cm-editor .cm-editor .cm-selectionLayer .cm-selectionBackground {
+  background: var(--selection-bg) !important;
+}
+#cm-editor .cm-content ::selection {
+  background: transparent;
+  color: var(--selection-ink);
+}
 /* --- Account menu --- */
 .user-menu { position: relative; }
 .menu-trigger { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); background: none; border: 1px solid transparent; border-radius: var(--radius-pill); color: var(--ink-secondary); font-size: var(--text-sm); font-family: var(--font); cursor: pointer; }

@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 
 import tests._env as env  # noqa: F401  (sets env before src is imported)
 
@@ -225,6 +226,18 @@ class UpdaterTest(unittest.TestCase):
         s = FakeSession(body=b"<html>rate limited</html>")
         self.assertEqual(geoip_update.update_once(self.dir, OCT, s), "failed")
         self.assertEqual(self.meta()["month"], "2026-09")
+        self.assertEqual(self.leftovers(), [])
+
+
+    def test_oversized_decompressed_file_keeps_the_old_files(self):
+        self.install("2026-09")
+        before = self.city_bytes()
+        body = gzip.compress(b"x" * 1025)
+        with mock.patch.object(geoip_update, "MAX_UNCOMPRESSED_BYTES", 1024):
+            outcome = geoip_update.update_once(self.dir, OCT, FakeSession(body=body))
+        self.assertEqual(outcome, "failed")
+        self.assertEqual(self.city_bytes(), before)
+        self.assertIn("expands beyond", self.meta()["last_error"])
         self.assertEqual(self.leftovers(), [])
 
     def test_network_error_records_the_error(self):

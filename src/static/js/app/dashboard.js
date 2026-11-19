@@ -153,8 +153,11 @@ function App() {
         <div class="dash-kpi dash-kpi-wide">
           <div class="dash-kpi-label">Config</div>
           <div class="dash-kpi-line">
-            <span class=${'tone-' + (cfg.config_valid ? 'good' : 'critical')}>
-              ${cfg.config_valid ? '● valid' : '● invalid'}
+            <span class=${'tone-' + (cfg.config_valid ? 'good' : 'critical')}
+                  title=${cfg.config_check_message || ''}>
+              ${cfg.config_valid
+                ? (cfg.config_check_level === 'adapted' ? '● syntax + modules OK' : '● locally validated')
+                : '● check failed'}
             </span>
             <span class="dash-muted">${shortVersion(cfg.caddy_version)}</span>
           </div>
@@ -164,8 +167,9 @@ function App() {
       </div>
 
       ${failing.length > 0 && html`
-        <div class="dash-alert">
-          <strong>${failing.length} upstream${failing.length > 1 ? 's' : ''} unhealthy:</strong>
+        <div class="dash-alert"
+             title="From caddy_reverse_proxy_upstreams_healthy; configure health_uri on the reverse_proxy to enable active checks">
+          <strong>Caddy reports ${failing.length} unhealthy upstream${failing.length > 1 ? 's' : ''}:</strong>
           ${failing.map(u => html`<span class="dash-alert-item">${u.address}${u.domains?.length ? ' (' + u.domains.join(', ') + ')' : ''}</span>`)}
         </div>`}
 

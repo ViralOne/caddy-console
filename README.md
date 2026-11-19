@@ -43,9 +43,10 @@ else that IP did: its hosts, paths and status mix, each one click from a filter.
 ## Editor — fix it
 
 CodeMirror 6 with Caddyfile syntax highlighting, find and replace, and `Cmd+S` to
-save. **Validate** formats and checks the config without saving; **Save & Reload**
-writes the file and reloads Caddy through its admin API. Every save takes a backup
-first, with an inline diff and one-click restore.
+save. **Check** formats the file and verifies syntax/module availability without
+saving; **Save & Reload** asks Caddy to perform its full transactional load, then
+keeps the file on disk. Every save takes a backup first, with an inline diff and
+one-click restore.
 
 ![Editor](docs/screenshots/editor.png)
 
@@ -54,8 +55,12 @@ first, with an inline diff and one-click restore.
 ```bash
 git clone https://github.com/ViralOne/caddy-console.git
 cd caddy-console
-cp .env.example .env          # set AUTH_MODE, SECRET_KEY, ALLOWED_EMAILS
-sudo mkdir -p /opt/caddy     # then write /opt/caddy/Caddyfile (example in docs/setup.md)
+cp .env.example .env          # set CADDY_CONSOLE_IMAGE and authentication values
+chmod 600 .env
+sudo mkdir -p /opt/caddy
+# write /opt/caddy/Caddyfile (example in docs/setup.md), then:
+sudo chown -R 10001:10001 /opt/caddy  # console image runs as UID/GID 10001
+sudo chmod 0755 /opt/caddy && sudo chmod 0644 /opt/caddy/Caddyfile
 docker compose -f docker-compose.prod.yaml up -d
 ```
 
@@ -63,25 +68,30 @@ docker compose -f docker-compose.prod.yaml up -d
 
 - **Caddyfile lives at `/opt/caddy/Caddyfile` on the host.** It is gitignored, so
   create it before the first deploy; otherwise Docker mounts an empty directory.
-- **Caddy publishes 8080/8443 (TCP + UDP 443 for HTTP/3).** Forward WAN 80 → 8080
-  and WAN 443 → 8443 on the router; Caddy still sees 80/443 from the internet, so
-  automatic HTTPS works. Use bare hostnames (`app.example.com {`), not `http://`.
-- **Never forward 9090, 8888 or 2019.** `admin 0.0.0.0:2019` has no auth, so Caddy
-  sits only on the `console` network; reach proxied apps by LAN IP or a
-  host-published port instead of attaching them to that network.
-- **Environment:** set variables in the Portainer stack (or a `.env` next to the
-  compose file). Unset ones are not passed, so the app defaults apply.
+- **Port choice is deployment-specific.** The temporary internal stack publishes
+  Caddy on 8080/8443 so it can run beside Nginx. The production stack claims host
+  ports 80/443 after cutover. Do not run both stacks simultaneously.
+- **Never forward 9090, 8888 or 2019.** The unauthenticated Caddy admin API is
+  reachable only on the dedicated `caddy-admin` network shared by Caddy and the
+  console. Do not attach other services to that network.
+- **Environment:** set variables in the Portainer stack (or a mode-`0600` `.env`
+  next to the compose file). `CADDY_CONSOLE_IMAGE` and the tunnel token are
+  required by Compose; authentication settings are validated by the app.
 
 ### Internal stack (temporary, no login)
 
-`docker-compose.internal.yaml` runs the console without any login, for a trusted
-LAN until Google OAuth or Cloudflare Access is set up. Open `http://<server-ip>:8888`.
+`docker-compose.internal.yaml` runs the console without any login, for temporary
+transition work only. Its synthetic-login proxy is bound to `127.0.0.1:8888`;
+open `http://localhost:8888` on the host or use an SSH local port forward from an
+administrator workstation.
 
-Anyone who can reach port 8888 is a full admin: they can rewrite and reload the
-Caddyfile, so they control every site Caddy serves. `console-proxy` logs every
-visitor in as `admin@local` (the console runs in `AUTH_MODE=cloudflare`, trusting
-that header; no Cloudflare account involved), and the console itself publishes no
-port. Switch to `docker-compose.prod.yaml` as soon as auth is in place.
+Anyone who reaches that loopback port is a full admin: they can rewrite and reload
+the Caddyfile, so they control every site Caddy serves. `console-proxy` logs every
+visitor in as `admin@local` through the explicit
+`UNSAFE_ALLOW_UNVERIFIED_CF_HEADER` escape hatch. Production Cloudflare mode has
+no fallback and refuses to start unless Access JWT verification is configured.
+Switch to `docker-compose.prod.yaml` as soon as Google OAuth or Cloudflare Access
+is ready.
 
 Two things to do next, both in [docs/setup.md](docs/setup.md):
 
@@ -106,6 +116,7 @@ Two things to do next, both in [docs/setup.md](docs/setup.md):
 
 ## Requirements
 
-Docker, and a Caddy instance with its admin API reachable (`admin 0.0.0.0:2019` in
-the global block). Nothing else: app code ships as plain ES modules, so there is no
-build step and a clone needs no npm.
+Docker, and a Caddy instance with its admin API reachable only from the console's
+dedicated `caddy-admin` network (`admin 0.0.0.0:2019` inside the container global
+block). Nothing else: app code ships as plain ES modules, so there is no build step
+and a clone needs no npm.

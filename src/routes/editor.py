@@ -4,7 +4,8 @@ import json
 import os
 import re
 import shutil
-import threading
+import stat
+import tempfile
 from contextlib import contextmanager
 from datetime import datetime
 from urllib.parse import urlparse
@@ -25,7 +26,7 @@ from ..config import (
     CADDYFILE,
     SESSION_TIMEOUT_HOURS,
 )
-from ..validator import caddy_fmt, caddy_validate, smart_validate
+from ..validator import caddy_check, caddy_fmt, caddy_validate, smart_validate
 
 
 editor_bp = Blueprint("editor", __name__)
@@ -38,7 +39,7 @@ def _version(content: str) -> str:
 
 def _current_file_version() -> str:
     try:
-        with open(CADDYFILE) as f:
+        with open(CADDYFILE, encoding="utf-8", newline="") as f:
             return _version(f.read())
     except OSError:
         return ""
@@ -50,35 +51,99 @@ def _current_file_version() -> str:
 # enough: the version check and the write have to happen under a file lock or two
 # editors can both pass the check and both write.
 
+
+
+class CaddyfileLockError(RuntimeError):
+    """The required cross-process mutation lock is unavailable."""
 _LOCK_PATH = os.path.join(BACKUP_DIR, ".lock")
-_fallback_lock = threading.Lock()
 
 
 @contextmanager
 def caddyfile_lock():
+    """Cross-process lock for every Caddyfile mutation.
+
+    Correctness depends on this lock spanning the disk write, Caddy reload and
+    any rollback. If it cannot be created or acquired, fail closed instead of
+    degrading to a process-local lock that cannot protect multiple workers.
+    """
     try:
         fd = os.open(_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
-    except OSError:
-        # Read-only backup volume: process-local lock is the best we can do.
-        with _fallback_lock:
-            yield
-        return
+    except OSError as e:
+        raise CaddyfileLockError(f"Cannot open Caddyfile lock {_LOCK_PATH}: {e}") from e
+    locked = False
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            locked = True
+        except OSError as e:
+            raise CaddyfileLockError(f"Cannot acquire Caddyfile lock {_LOCK_PATH}: {e}") from e
         yield
     finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
+        try:
+            if locked:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def ensure_caddyfile_lock_available() -> None:
+    """Fail application startup when cross-process mutation locking is unavailable."""
+    with caddyfile_lock():
+        pass
+
+
+def _fsync_directory(directory: str) -> None:
+    """Best-effort directory flush after an atomic replace.
+
+    The replacement has already happened when this runs, so a filesystem that
+    rejects directory fsync must not turn a successful write into a false
+    `saved: false` response or prevent the matching reload.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        fd = os.open(directory, flags)
+    except OSError:
+        return
+    try:
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+    finally:
         os.close(fd)
 
 
 def _write_caddyfile(content: str) -> None:
-    # The Caddyfile is a bind-mounted single file, so an atomic rename would
-    # replace the inode the containers hold open. Write in place, but make sure
-    # it reaches disk before we tell Caddy about it.
-    with open(CADDYFILE, "w") as f:
-        f.write(content)
-        f.flush()
-        os.fsync(f.fileno())
+    """Atomically replace the Caddyfile with fully flushed UTF-8 content.
+
+    Deployment mounts the containing directory, not the file itself, so the
+    temporary file and destination share a filesystem and os.replace() is
+    atomic. Readers see either the complete old file or the complete new file.
+    """
+    directory = os.path.dirname(CADDYFILE) or "."
+    basename = os.path.basename(CADDYFILE)
+    try:
+        mode = stat.S_IMODE(os.stat(CADDYFILE).st_mode)
+    except OSError:
+        mode = 0o644
+
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix=f".{basename}.", suffix=".tmp")
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            fd = -1
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, CADDYFILE)
+        _fsync_directory(directory)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
 
 
 _BACKUP_NAME_RE = re.compile(r"^(.*?\d{8}-\d{6})(?:-(\d+))?$")
@@ -157,88 +222,126 @@ def _backup_path(name: str) -> str | None:
 
 
 def _apply_config(content: str, user: str, source: str, expected_version: str | None = None, detail: str = ""):
-    """Back up the current Caddyfile, write new content, reload Caddy.
+    """Atomically persist and reload one Caddyfile change under one lock.
 
-    `content` must already be formatted and validated. Returns a Flask response
-    tuple. Shared by /api/save and /api/backups/<name>/restore.
+    `content` must already be formatted and checked. The cross-process lock spans
+    the version check, backup, atomic write, blocking Caddy /load request and any
+    rollback, so two workers cannot reorder disk and running configurations.
 
-    If Caddy rejects the config the on-disk file is rolled back to the backup,
-    so what is on disk always matches what is running.
+    A transport failure cannot prove whether Caddy applied the request. In that
+    case the complete file remains on disk, but the response is explicitly not
+    successful and reports the reload state as failed or unknown.
     """
-    with caddyfile_lock():
-        if expected_version is not None:
-            current = _current_file_version()
-            if current and expected_version != current:
-                log_action("save_conflict", user, f"client={expected_version} disk={current}")
-                return jsonify({
-                    "ok": False,
-                    "conflict": True,
-                    "message": "The Caddyfile changed on disk since you loaded it. Reload to get the latest version before saving.",
-                    "version": current,
-                }), 409
-        previous_version = _current_file_version()
-        backup_name = _make_backup()
-        _write_caddyfile(content)
-        prune_backups()
-
     new_version = _version(content)
     extra = f", {detail}" if detail else ""
 
-    try:
-        resp = http_client.post(
-            f"{CADDY_API_URL}/load",
-            data=content.encode("utf-8"),
-            headers={"Content-Type": "text/caddyfile"},
-            timeout=10,
-        )
-    except http_client.ConnectionError:
-        log_action(f"{source}_no_reload", user, f"backup={backup_name}, caddy not reachable{extra}")
-        return jsonify({
-            "ok": True,
-            "message": f"Saved by {user} (Caddy not reachable — reload skipped)",
-            "content": content,
-            "version": new_version,
-        })
-    except http_client.RequestException as e:
-        # Typically a read timeout: Caddy got the config but hasn't answered.
-        # It may well have applied it, so leave the file in place.
-        log_action(f"{source}_reload_unknown", user, f"backup={backup_name}, {type(e).__name__}{extra}")
-        return jsonify({
-            "ok": True,
-            "message": f"Saved by {user}, but Caddy did not confirm the reload in time. Check the Status panel.",
-            "content": content,
-            "version": new_version,
-        })
-    finally:
-        invalidate_servers_cache()
+    with caddyfile_lock():
+        try:
+            with open(CADDYFILE, encoding="utf-8", newline="") as f:
+                previous_content = f.read()
+            had_previous = True
+        except FileNotFoundError:
+            previous_content = ""
+            had_previous = False
+        except (OSError, UnicodeError) as e:
+            return jsonify({"ok": False, "message": f"Cannot read {CADDYFILE}: {e}"}), 500
 
-    if resp.status_code == 200:
-        log_action(f"{source}_reload", user, f"backup={backup_name}{extra}")
-        return jsonify({
-            "ok": True,
-            "message": f"Saved and reloaded by {user}",
-            "content": content,
-            "version": new_version,
-        })
+        current = _version(previous_content) if had_previous else ""
+        if expected_version is not None and current and expected_version != current:
+            log_action("save_conflict", user, f"client={expected_version} disk={current}")
+            return jsonify({
+                "ok": False,
+                "conflict": True,
+                "message": "The Caddyfile changed on disk since you loaded it. Reload to get the latest version before saving.",
+                "version": current,
+            }), 409
 
-    # Caddy refused it (runtime-only problems that `caddy validate` can't see,
-    # like a port already in use). Put the previous file back so a container
-    # restart doesn't load a config Caddy just rejected.
-    rolled_back = False
-    if backup_name:
-        with caddyfile_lock():
-            try:
-                shutil.copy2(os.path.join(BACKUP_DIR, backup_name), CADDYFILE)
-                rolled_back = True
-            except OSError:
-                pass
-    log_action(f"{source}_reload_failed", user, f"rolled_back={rolled_back}, {resp.text[:160]}")
-    where = "on-disk config restored" if rolled_back else "on-disk config NOT restored"
-    return jsonify({
-        "ok": False,
-        "message": f"Caddy rejected the config ({where}): {resp.text}",
-        "version": previous_version if rolled_back else new_version,
-    }), 500
+        previous_version = current
+        try:
+            backup_name = _make_backup()
+            _write_caddyfile(content)
+            prune_backups()
+        except OSError as e:
+            log_action(f"{source}_write_failed", user, f"{type(e).__name__}: {e}{extra}")
+            return jsonify({
+                "ok": False,
+                "saved": False,
+                "reload_status": "not_attempted",
+                "message": f"Could not atomically write the Caddyfile: {e}",
+                "version": previous_version,
+            }), 500
+
+        try:
+            resp = http_client.post(
+                f"{CADDY_API_URL}/load",
+                data=content.encode("utf-8"),
+                headers={"Content-Type": "text/caddyfile"},
+                timeout=10,
+            )
+        except http_client.ConnectTimeout as e:
+            log_action(f"{source}_no_reload", user,
+                       f"backup={backup_name}, {type(e).__name__}{extra}")
+            return jsonify({
+                "ok": False,
+                "saved": True,
+                "reload_status": "failed",
+                "message": f"Saved to disk by {user}, but a connection to Caddy could not be established.",
+                "content": content,
+                "version": new_version,
+            }), 503
+        except http_client.RequestException as e:
+            # Connection resets and read timeouts can happen after Caddy accepts
+            # the body. Rolling back the file could create a disk/running mismatch.
+            log_action(f"{source}_reload_unknown", user,
+                       f"backup={backup_name}, {type(e).__name__}{extra}")
+            return jsonify({
+                "ok": False,
+                "saved": True,
+                "reload_status": "unknown",
+                "message": f"Saved to disk by {user}, but Caddy did not confirm the reload. Verify the running configuration before another change.",
+                "content": content,
+                "version": new_version,
+            }), 504
+        finally:
+            invalidate_servers_cache()
+
+        if resp.status_code == 200:
+            log_action(f"{source}_reload", user, f"backup={backup_name}{extra}")
+            return jsonify({
+                "ok": True,
+                "saved": True,
+                "reload_status": "applied",
+                "message": f"Saved and reloaded by {user}",
+                "content": content,
+                "version": new_version,
+            })
+
+        # Caddy guarantees that a rejected /load leaves its previous running
+        # configuration active. Restore the matching disk state atomically.
+        rolled_back = False
+        try:
+            if had_previous:
+                _write_caddyfile(previous_content)
+            else:
+                os.remove(CADDYFILE)
+                _fsync_directory(os.path.dirname(CADDYFILE) or ".")
+            rolled_back = True
+        except OSError as e:
+            log_action(f"{source}_rollback_failed", user,
+                       f"backup={backup_name}, {type(e).__name__}: {e}{extra}")
+
+        error_text = (resp.text or "Caddy rejected the configuration")[:2000]
+        log_action(f"{source}_reload_failed", user,
+                   f"rolled_back={rolled_back}, {error_text[:160]}{extra}")
+        where = "on-disk config restored" if rolled_back else "on-disk config NOT restored"
+        return jsonify({
+            "ok": False,
+            "saved": not rolled_back,
+            "reload_status": "rejected",
+            "message": f"Caddy rejected the config ({where}): {error_text}",
+            "content": content if not rolled_back else None,
+            "version": previous_version if rolled_back else new_version,
+        }), 500
 
 
 # Every view is the same document; the client reads location.pathname to decide
@@ -285,11 +388,11 @@ def me():
 @login_required
 def get_caddyfile():
     try:
-        with open(CADDYFILE) as f:
+        with open(CADDYFILE, encoding="utf-8", newline="") as f:
             content = f.read()
-    except OSError as e:
+    except (OSError, UnicodeError) as e:
         return jsonify({
-            "error": f"Cannot read {CADDYFILE}: {e.strerror or e}",
+            "error": f"Cannot read {CADDYFILE}: {getattr(e, 'strerror', None) or e}",
         }), 500
     return jsonify({"content": content, "version": _version(content)})
 
@@ -311,15 +414,21 @@ def validate():
 
     formatted = caddy_fmt(content)
     warnings = smart_validate(formatted)
-    is_valid, message = caddy_validate(formatted)
+    is_valid, message, check_level = caddy_check(formatted)
 
     if not is_valid:
-        return jsonify({"valid": False, "message": message, "warnings": [], "formatted": None})
+        return jsonify({"valid": False, "message": message, "warnings": [],
+                        "formatted": None, "check_level": check_level})
 
     if warnings:
-        return jsonify({"valid": True, "message": "Caddy valid, but check warnings", "warnings": warnings, "formatted": formatted if formatted != content else None})
+        return jsonify({"valid": True, "message": "Caddyfile check passed, but review warnings",
+                        "warnings": warnings,
+                        "formatted": formatted if formatted != content else None,
+                        "check_level": check_level})
 
-    return jsonify({"valid": True, "message": "Config is valid", "warnings": [], "formatted": formatted if formatted != content else None})
+    return jsonify({"valid": True, "message": message, "warnings": [],
+                    "formatted": formatted if formatted != content else None,
+                    "check_level": check_level})
 
 
 @editor_bp.route("/api/save", methods=["POST"])
@@ -402,7 +511,15 @@ def restore_backup(name):
         log_action("restore_failed", user, f"{safe_name}: {message[:160]}")
         return jsonify({"ok": False, "message": f"Backup is not valid, not restored: {message}"}), 400
 
-    return _apply_config(content, user, "restore", detail=f"from={safe_name}")
+    data = request.get_json(silent=True) or {}
+    expected_version = data.get("version") if isinstance(data, dict) else None
+    return _apply_config(
+        content,
+        user,
+        "restore",
+        expected_version=expected_version,
+        detail=f"from={safe_name}",
+    )
 
 
 @editor_bp.route("/api/logs/ping", methods=["POST"])

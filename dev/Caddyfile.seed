@@ -9,6 +9,7 @@
 (access_log) {
 	log {
 		output file /var/log/caddy/access.log {
+			mode 0644
 			roll_size 10mb
 			roll_keep 3
 			roll_keep_for 168h

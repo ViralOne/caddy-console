@@ -23,9 +23,12 @@ export async function doValidate() {
   let data;
   try { data = await _validateRequest(getContent()); }
   catch (e) { setStatus(e.message, 'err'); setDot('red'); return; }
-  if (data.formatted) { setContent(data.formatted); setStatus('Formatted + valid', 'ok'); setDot(isDirty() ? 'yellow' : 'green'); }
-  else if (data.valid && !data.warnings.length) { setStatus('Valid config', 'ok'); setDot(isDirty() ? 'yellow' : 'green'); }
-  else if (data.valid && data.warnings.length) { setStatus('Valid with warnings', 'ok'); setDot('yellow'); showWarnings(data.warnings); }
+  const passed = data.check_level === 'adapted'
+    ? 'Syntax + modules accepted; full check runs on save'
+    : 'Config passed local validation';
+  if (data.formatted) { setContent(data.formatted); setStatus(`Formatted · ${passed}`, 'ok'); setDot(isDirty() ? 'yellow' : 'green'); }
+  else if (data.valid && !data.warnings.length) { setStatus(passed, 'ok'); setDot(isDirty() ? 'yellow' : 'green'); }
+  else if (data.valid && data.warnings.length) { setStatus('Check passed with warnings', 'warn'); setDot('yellow'); showWarnings(data.warnings); }
   else { setStatus(data.message, 'err'); setDot('red'); }
 }
 
@@ -79,11 +82,20 @@ async function _doSave() {
     if (data.version) setVersion(data.version);
     setStatus(data.message, 'ok'); setDot('green');
     markSaved(); hideWarnings();
+  } else if (data.saved) {
+    // The atomic disk write succeeded, but Caddy either could not reload or did
+    // not confirm the outcome. Keep editor/disk state aligned without claiming
+    // that the running configuration matches them.
+    if (data.content) setContent(data.content);
+    setOriginal(data.content || content);
+    if (data.version) setVersion(data.version);
+    setStatus(data.message, 'warn'); setDot('yellow');
   } else {
     // Caddy rejected it and the server rolled the file back; keep its version
     // so a retry after fixing the config isn't reported as a conflict.
     if (data.version) setVersion(data.version);
-    setStatus(data.message, 'err'); setDot('red');
+    setStatus(data.message || data.error || `Save failed: HTTP ${res.status}`, 'err');
+    setDot('red');
   }
 }
 

@@ -120,7 +120,7 @@ function App() {
   const [older, setOlder] = useState([]);          // pages fetched behind the first
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [exhausted, setExhausted] = useState(false);
-  const [raw, setRaw] = useState({});              // offset -> original log line
+  const [raw, setRaw] = useState({});              // "file:offset" -> original log line
   const [fieldMenu, setFieldMenu] = useState(null);  // "<rowKey>|<field label>"
   const [ipPop, setIpPop] = useState(null);          // {id, anchor rect}, for the client IP
   const [note, setNote] = useState('');            // transient confirmation
@@ -265,15 +265,19 @@ function App() {
     }
   };
 
-  const showRaw = async (fileId, offset) => {
-    if (raw[offset] !== undefined) { setRaw(prev => ({ ...prev, [offset]: undefined })); return; }
+  // Offsets repeat across files, so raw lines are keyed by file and offset.
+  const rawKey = (file, offset) => `${file}:${offset}`;
+
+  const showRaw = async (file, offset) => {
+    const key = rawKey(file, offset);
+    if (raw[key] !== undefined) { setRaw(prev => ({ ...prev, [key]: undefined })); return; }
     // Updater form, not a spread of the captured `raw`: two rows fetched at once
     // would otherwise have the second response discard the first.
     try {
-      const res = await fetch(`/api/explore/raw?file=${fileId}&offset=${offset}`);
+      const res = await fetch(`/api/explore/raw?file=${encodeURIComponent(file)}&offset=${offset}`);
       const body = await res.json();
       if (body.line) {
-        setRaw(prev => ({ ...prev, [offset]: body.line }));
+        setRaw(prev => ({ ...prev, [key]: body.line }));
       } else {
         // Failures are shown but not cached, so clicking again actually retries
         // instead of re-displaying a stale error — it can succeed on a retry
@@ -517,9 +521,9 @@ function App() {
                         <span class="field-value">
                           <button class="btn btn-secondary btn-sm"
                                   onClick=${() => showRaw(e.file, e.offset)}>
-                            ${raw[e.offset] !== undefined ? 'hide' : 'show original line'}
+                            ${raw[rawKey(e.file, e.offset)] !== undefined ? 'hide' : 'show original line'}
                           </button>
-                          ${raw[e.offset] !== undefined && html`<${JsonView} text=${raw[e.offset]} />`}
+                          ${raw[rawKey(e.file, e.offset)] !== undefined && html`<${JsonView} text=${raw[rawKey(e.file, e.offset)]} />`}
                         </span>
                       </div>
                     </div>`}

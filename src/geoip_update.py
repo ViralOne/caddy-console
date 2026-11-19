@@ -20,7 +20,6 @@ import gzip
 import json
 import logging
 import os
-import shutil
 import tempfile
 import threading
 
@@ -39,8 +38,11 @@ LOCK_FILE = ".update.lock"
 CHECK_INTERVAL = 24 * 3600
 RETRY_INTERVAL = 3600            # after a network error, not a 404
 TIMEOUT = 60
-# The city file is ~60 MB compressed; anything far past that is not DB-IP.
+# The city file is ~60 MB compressed and the two installed databases are about
+# 135 MB decompressed. Bound both sides independently: a small gzip can otherwise
+# expand until it fills the GeoIP volume.
 MAX_DOWNLOAD_BYTES = 512 * 1024 * 1024
+MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 
 
 class NotPublished(Exception):
@@ -107,8 +109,18 @@ def _fetch(url, dest, session):
                     if total > MAX_DOWNLOAD_BYTES:
                         raise ValueError(f"{url} is larger than {MAX_DOWNLOAD_BYTES} bytes")
                     out.write(chunk)
+        decompressed = 0
         with gzip.open(gz_path, "rb") as src, open(dest, "wb") as out:
-            shutil.copyfileobj(src, out, 1024 * 1024)
+            while True:
+                chunk = src.read(1024 * 1024)
+                if not chunk:
+                    break
+                decompressed += len(chunk)
+                if decompressed > MAX_UNCOMPRESSED_BYTES:
+                    raise ValueError(
+                        f"{url} expands beyond {MAX_UNCOMPRESSED_BYTES} bytes"
+                    )
+                out.write(chunk)
     finally:
         try:
             os.remove(gz_path)

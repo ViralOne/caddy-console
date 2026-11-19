@@ -19,8 +19,10 @@ and refactoring a module that is about to be deleted would be work thrown away.
 """
 import bisect
 import json
+import math
 import os
 import threading
+import time
 from array import array
 
 from . import logfiles
@@ -28,6 +30,12 @@ from .config import CADDY_LOG_FILE, EXPLORE_MAX_EVENTS
 
 CHUNK = 1024 * 1024
 REBUILD_SLACK = 1.5
+HEAD_BYTES = 256
+# How far in the past a range's upper bound may be and still count as "now".
+OPEN_SLACK = 60
+
+# Attributes that belong to the EventIndex itself rather than to one loaded state.
+_SHARED = ("_path", "_max", "_lock")
 
 # Buckets are chosen from this ladder so the histogram lands near TARGET_BUCKETS
 # columns whatever the span, and always on a round, human-readable width.
@@ -196,56 +204,153 @@ class EventIndex:
         self._series_starts_at = None
         self._rolls_available = 0
         self._rolls_read = 0
+        # Cache validity: whether the span is open at the top (it follows the live
+        # tail), and what the files looked like when it was built.
+        self._open = False
+        self._live_ident = None
+        self._live_head = b""
+        self._archive_sig = ()
 
     # --- loading -----------------------------------------------------------
 
     def _load(self, from_ts, to_ts):
-        """Index every entry in [from_ts, to_ts], across rolls if needed.
+        """Make the index answer [from_ts, to_ts]; False if there is no log at all.
 
-        Reloads only when the requested span is not already covered. When the
-        span is unchanged and the live file has grown, the tail is folded in
-        incrementally so Live mode does not re-read anything.
+        A loaded state is a *superset cache*. It is reused for any request whose
+        range lies inside the span it was built for, so a sliding relative range
+        ("last hour", re-resolved every poll) does not rebuild. Queries filter to
+        the exact requested range themselves. A span that ended at "now" is
+        open-ended: the unchanged, growing live file is folded in incrementally.
+        Rotation or replacement of any file, or a live file that shrank, forces a
+        rebuild.
+
+        A rebuild is staged in a separate EventIndex and adopted only once it has
+        read everything, so a corrupt archive leaves the previous index intact.
         """
         series = logfiles.discover(self._path)
         if not series:
             self._clear()
             return False
 
-        live = series[-1] if series[-1].is_live else None
-        live_size = live.size() if live else 0
-
-        same_span = (self._from == from_ts and self._to == to_ts and self._built)
-        if same_span and live is not None and live_size >= self._live_size:
-            if live_size > self._live_size:
-                # A resume position, so it is already on a line boundary.
-                self._fold_file(live, self._live_pos, len(self._files) - 1, exact=True)
-                self._live_size = live_size
+        if self._built and self._covers(from_ts, to_ts) and self._reuse(series):
             return True
 
-        self._clear()
-        self._from, self._to = from_ts, to_ts
-        self._built = True
+        stage = EventIndex(self._path, self._max)
+        stage._build(series, from_ts, to_ts)   # raises before touching self
+        self._adopt(stage)
+        return True
 
-        wanted = [f for f in series if f.covers(from_ts, to_ts)]
+    def _adopt(self, stage):
+        for key, value in stage.__dict__.items():
+            if key not in _SHARED:
+                setattr(self, key, value)
+
+    def _covers(self, from_ts, to_ts):
+        """Does the cached span contain the requested one?"""
+        if self._from is not None and (from_ts is None or from_ts < self._from):
+            return False
+        if self._to is not None and (to_ts is None or to_ts > self._to):
+            return False
+        # The event cap evicts the oldest events, so the index may hold less than
+        # its span. A narrower historical range ending before the cached tail may
+        # live in what was dropped; rebuilding reads just that range. Ranges that
+        # reach the tail would drop the same events again, so they are not rebuilt.
+        if (self._dropped and len(self.ts) and to_ts is not None
+                and to_ts < self.ts[-1]
+                and (from_ts is None or from_ts < self.ts[0])):
+            return False
+        return True
+
+    def _reuse(self, series):
+        """Validate the cached files against disk and fold in live growth."""
+        wanted = [f for f in series if f.covers(self._from, self._to)]
+        if tuple(f.signature() for f in wanted if not f.is_live) != self._archive_sig:
+            return False
+        live = wanted[-1] if wanted and wanted[-1].is_live else None
+        if (live is not None) != (self._live_ident is not None):
+            return False
+        if live is None:
+            return True
+        # Same inode, not shrunk, same first bytes: the file only grew.
+        if live.ident != self._live_ident:
+            return False
+        size = live.size()
+        if size < self._live_size or not self._head_matches(live):
+            return False
+        if not self._open or size == self._live_size:
+            return True
+
+        snap = (len(self.ts), self._skipped, self._dropped)
+        try:
+            # Eviction waits until the fold succeeds, so a failure can be undone.
+            consumed = self._fold_file(live, self._live_pos, len(self._files) - 1,
+                                       exact=True, evict=False)
+        except Exception:
+            for col in self._columns():
+                del col[snap[0]:]
+            self._skipped, self._dropped = snap[1], snap[2]
+            raise
+        self._live_pos = consumed
+        self._live_size = max(size, consumed)
+        self._evict()
+        return True
+
+    def _columns(self):
+        return (self.ts, self.status, self.duration_ms, self.size, self.offset,
+                self.file_id, self.host_id, self.method_id, self.uri_id, self.client_id)
+
+    @staticmethod
+    def _read_head(logfile):
+        try:
+            with open(logfile.path, "rb") as f:
+                return f.read(HEAD_BYTES)
+        except OSError:
+            return b""
+
+    def _head_matches(self, logfile):
+        return self._read_head(logfile)[:len(self._live_head)] == self._live_head
+
+    def _build(self, series, from_ts, to_ts):
+        """Read the whole span into this (fresh) instance."""
+        # Widened to whole seconds, so the absolute bounds a client echoes back
+        # for paging (floor/ceil of what it was given) still fall inside.
+        self._from = math.floor(from_ts) if from_ts is not None else None
+        # A relative range is resolved to `to = time.time()` when the request
+        # starts, so by the time it is built it is already slightly in the past.
+        # "Ends at now" therefore has to tolerate a little age, or a sliding
+        # range would never count as open-ended and would rebuild on every poll.
+        self._open = to_ts is None or to_ts >= time.time() - OPEN_SLACK
+        self._to = None if self._open else math.ceil(to_ts)
+
+        wanted = [f for f in series if f.covers(self._from, self._to)]
         self._files = wanted
         for i, f in enumerate(wanted):
             # Only the live file is seekable, so only it can be bisected; an
             # archive is read whole, which is why filename-based selection above
             # matters so much.
             start_offset = 0
-            if f.is_live and from_ts is not None:
-                start_offset = logfiles.offset_at(f.path, from_ts)
-            self._fold_file(f, start_offset, i)
             if f.is_live:
-                self._live_size = f.size()
+                live_size = f.size()
+                self._live_ident = f.ident
+                self._live_head = self._read_head(f)
+                if self._from is not None:
+                    start_offset = logfiles.offset_at(f.path, self._from)
+            consumed = self._fold_file(f, start_offset, i)
+            if f.is_live:
+                self._live_pos = consumed
+                # Size from before the read: anything appended meanwhile is
+                # picked up from _live_pos on the next fold.
+                self._live_size = live_size
 
+        self._archive_sig = tuple(f.signature() for f in wanted if not f.is_live)
         self._earliest_possible = wanted[0].starts_at if wanted else None
         self._series_starts_at = series[0].starts_at
         self._rolls_available = sum(1 for f in series if not f.is_live)
         self._rolls_read = sum(1 for f in wanted if not f.is_live)
-        return True
+        self._built = True
 
-    def _fold_file(self, logfile, start_offset, file_id, exact=False):
+    def _fold_file(self, logfile, start_offset, file_id, exact=False, evict=True):
+        """Index a file from start_offset; returns where the next read resumes."""
         count = 0
         consumed = start_offset
         for offset, line in logfiles.iter_lines(logfile, start_offset, exact=exact):
@@ -255,11 +360,11 @@ class EventIndex:
             # outside the span are read and discarded.
             consumed = offset + len(line) + 1
             count += 1
-            if count % 20000 == 0:
+            if evict and count % 20000 == 0:
                 self._evict()
-        if logfile.is_live:
-            self._live_pos = consumed
-        self._evict()
+        if evict:
+            self._evict()
+        return consumed
 
     def _add(self, raw, offset=0, file_id=0):
         if not raw.strip():
@@ -316,9 +421,7 @@ class EventIndex:
         if over <= 0:
             return
         cut = min(over + max(1, self._max // 10), len(self.ts))
-        for col in (self.ts, self.status, self.duration_ms, self.size, self.offset,
-                    self.file_id, self.host_id, self.method_id, self.uri_id,
-                    self.client_id):
+        for col in self._columns():
             del col[:cut]
         self._dropped += cut
 
@@ -662,20 +765,25 @@ class EventIndex:
             "size": self.size[i],
             "client_ip": self.clients.values[self.client_id[i]],
             "offset": self.offset[i],
-            "file": self.file_id[i],
+            # A token, not a position in this worker's file list, so the pair is
+            # valid in any worker and for any range.
+            "file": self._files[self.file_id[i]].token,
         }
 
-    def raw_line(self, file_id, offset):
+    def raw_line(self, file_ref, offset):
         """The original log line, for the raw view in Explore.
 
+        `file_ref` is an entry's "file" token. It is resolved against the files
+        on disk right now, not against this index, so any worker can answer for
+        any entry. None means the file is unknown, was rotated away, or has no
+        line at that offset.
+
         Read on demand rather than retained: at ~378 bytes per entry, keeping
-        every line would cost as much memory as the log itself. An archived line
-        means decompressing up to that offset, which is acceptable for one click.
+        every line would cost as much memory as the log itself.
         """
-        with self._lock:
-            if not (0 <= file_id < len(self._files)):
-                return None
-            logfile = self._files[file_id]
+        logfile = logfiles.resolve(self._path, file_ref)
+        if logfile is None:
+            return None
         return logfiles.read_line_at(logfile, offset)
 
 

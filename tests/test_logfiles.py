@@ -204,5 +204,60 @@ class AcrossFilesTest(unittest.TestCase):
         self.assertIn("access.log", r["history"]["files_read"])
 
 
+class SafeReadingTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="safe-")
+        self.live = os.path.join(self.dir, "access.log")
+        with open(self.live, "w") as f:
+            f.write(line(T0))
+        stamp = datetime.fromtimestamp(T0 - 10, timezone.utc).strftime("%Y-%m-%dT%H-%M-%S.%f")[:-3]
+        self.gz = os.path.join(self.dir, f"access-{stamp}-size.log.gz")
+        self.lines = [line(T0 - 100 + i, uri=f"/{i}") for i in range(300)]
+        with gzip.open(self.gz, "wt") as f:
+            f.write("".join(self.lines))
+
+    def test_resolve_only_returns_files_of_the_series(self):
+        series = logfiles.discover(self.live)
+        for f in series:
+            self.assertEqual(logfiles.resolve(self.live, f.token).path, f.path)
+        for bad in ("../access.log", "/etc/passwd", "x/../access.log", "..", "", None):
+            self.assertIsNone(logfiles.resolve(self.live, bad), repr(bad))
+
+    def test_live_token_changes_when_the_file_is_replaced(self):
+        before = logfiles.discover(self.live)[-1].token
+        os.rename(self.live, self.live + ".old")
+        open(self.live, "w").close()
+        after = logfiles.discover(self.live)[-1].token
+        self.assertNotEqual(before, after)
+        self.assertIsNone(logfiles.resolve(self.live, before))
+
+    def test_gzip_start_offset_matches_the_plain_reading(self):
+        gz = logfiles.discover(self.live)[0]
+        offsets = [o for o, _ in logfiles.iter_lines(gz)]
+        self.assertEqual(len(offsets), 300)
+        start = offsets[120]
+        resumed = list(logfiles.iter_lines(gz, start, exact=True))
+        self.assertEqual([o for o, _ in resumed], offsets[120:])
+        # A mid-line offset discards the fragment and still reports true offsets.
+        mid = list(logfiles.iter_lines(gz, start + 5))
+        self.assertEqual([o for o, _ in mid], offsets[121:])
+
+    def test_read_line_at_gzip_and_past_the_end(self):
+        gz = logfiles.discover(self.live)[0]
+        offsets = [o for o, _ in logfiles.iter_lines(gz)]
+        self.assertEqual(json.loads(logfiles.read_line_at(gz, offsets[200]))["request"]["uri"], "/200")
+        self.assertIsNone(logfiles.read_line_at(gz, 10 ** 9))
+        self.assertIsNone(logfiles.read_line_at(gz, -1))
+
+    def test_truncated_archive_raises_a_listed_error(self):
+        with open(self.gz, "rb") as f:
+            data = f.read()
+        with open(self.gz, "wb") as f:
+            f.write(data[: len(data) // 2])
+        gz = logfiles.discover(self.live)[0]
+        with self.assertRaises(logfiles.READ_ERRORS):
+            list(logfiles.iter_lines(gz))
+
+
 if __name__ == "__main__":
     unittest.main()

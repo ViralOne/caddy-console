@@ -13,7 +13,7 @@ HEADER = """{
 
 (access_log) {
 \tlog {
-\t\toutput file /var/log/caddy/access.log {
+\t\toutput file /var/log/caddy/access.log {\n\t\t\tmode 0644
 \t\t\troll_size 10mb
 \t\t\troll_keep 3
 \t\t\troll_keep_for 168h

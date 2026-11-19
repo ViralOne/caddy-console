@@ -1,6 +1,6 @@
 // Backups panel: list, preview, diff, load-to-editor, and rollback+reload.
 import {
-  fetchJson, getContent, markSaved, setContent, setDot, setOriginal, setStatus,
+  fetchJson, getContent, getVersion, markSaved, setContent, setDot, setOriginal, setStatus,
   setVersion, showError,
 } from './core.js';
 import { renderDiff } from './diff.js';
@@ -71,7 +71,11 @@ export async function rollbackFromPreview() {
   setStatus('Restoring + reloading...', 'info'); setDot('yellow');
   let res, data = null;
   try {
-    res = await fetch(`/api/backups/${encodeURIComponent(currentPreviewName)}/restore`, { method: 'POST', headers: {'Content-Type': 'application/json'} });
+    res = await fetch(`/api/backups/${encodeURIComponent(currentPreviewName)}/restore`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ version: getVersion() }),
+    });
     try { data = await res.json(); } catch (e) {}
   } catch (e) { setStatus(`Restore failed: ${e.message}`, 'err'); setDot('red'); return; }
   if (data && data.ok) {
@@ -79,6 +83,15 @@ export async function rollbackFromPreview() {
     setContent(restored); setOriginal(restored); if (data.version) setVersion(data.version);
     setStatus(data.message, 'ok'); setDot('green');
     markSaved();
+    closePanel('backups');
+  } else if (data && data.conflict) {
+    if (data.version) setVersion(data.version);
+    setStatus('Restore blocked: file changed on disk', 'err'); setDot('red');
+    alert(data.message || 'The live Caddyfile changed. Reload it before restoring a backup.');
+  } else if (data && data.saved) {
+    const restored = data.content || previewBackupContent;
+    setContent(restored); setOriginal(restored); if (data.version) setVersion(data.version);
+    setStatus(data.message, 'warn'); setDot('yellow');
     closePanel('backups');
   } else {
     const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;

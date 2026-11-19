@@ -5,33 +5,60 @@ to poke at it locally, see [development.md](development.md) instead.
 
 ## What you end up with
 
+The production stack supports two authentication layouts:
+
+```text
+Google mode:
+internet → cloudflared tunnel → caddy-console:9090 → Google OAuth
+
+Cloudflare mode:
+internet → Cloudflare Access → cloudflared tunnel → caddy-console:9090
+
+Public sites in either mode:
+internet → Caddy :80/:443 → your services
 ```
-internet → Cloudflare Access (auth) → cloudflared tunnel → caddy-console:9090
-internet → Cloudflare proxy (SSL)  → caddy:80/443       → your services
-```
 
-Three containers:
+Three containers run in production:
 
-- **caddy** — the reverse proxy serving your sites (host ports 8080/8443)
-- **caddy-console** — the web UI (no port published; reached through the tunnel)
-- **cloudflared** — the tunnel that exposes the console without opening a port
+- **caddy** publishes host ports 80/443 after the Nginx cutover.
+- **caddy-console** has no published port and is reached only through cloudflared.
+- **cloudflared** provides the outbound tunnel.
 
-All three share the host's `/opt/caddy/Caddyfile` through volume mounts. Saving in
-the UI rewrites that file and reloads Caddy through its admin API
-(`POST http://caddy:2019/load`), so there is no downtime and no container restart.
+Caddy and the console alone share the internal `caddy-admin` network. Cloudflared
+and the console share a separate `console-ui` network, so cloudflared cannot reach
+Caddy's unauthenticated admin API. Caddy has its own `caddy-public` network for
+ACME egress. Do not attach other services to `caddy-admin`.
 
-`docker-compose.prod.yaml` puts Caddy, the console and the tunnel on one `console`
-network and nothing else. Caddy's admin API has no auth, so any container sharing a
-network with Caddy could rewrite its config: proxy to apps by LAN IP or a
-host-published port, not by attaching them to that network.
+The host directory `/opt/caddy` is mounted read-only into Caddy and read-write
+into the console. Directory mounting is required: the console writes a temporary
+file, flushes it, and atomically replaces `/etc/caddy/Caddyfile`, then holds one
+cross-process lock until Caddy's blocking `POST /load` succeeds or rollback is
+complete.
 
-## 1. Start it
+The temporary `docker-compose.internal.yaml` stack instead publishes Caddy on
+8080/8443 so it can run beside Nginx. Its synthetic-login proxy is loopback-only
+on `127.0.0.1:8888`; use an SSH local port forward from an administrator machine.
+Do not run the internal and production stacks simultaneously. While Nginx still
+owns public 80/443, Caddy cannot complete HTTP-01 or TLS-ALPN certificate
+challenges through 8080/8443. Use DNS-01 for pre-cutover certificates, or expect
+certificate issuance only after traffic moves to Caddy.
+
+Compose volumes remain project-scoped. Keep the same Compose project or Portainer
+stack name when switching files. A different name creates new empty certificate,
+backup, log and GeoIP volumes; migrate or declare those volumes external before
+changing the stack name.
+
+## 1. Prepare the host and image reference
+
+The console image runs as UID/GID 10001 and must be able to atomically replace
+files inside `/opt/caddy`:
 
 ```bash
 sudo mkdir -p /opt/caddy
 
 sudo tee /opt/caddy/Caddyfile > /dev/null << 'EOF'
 {
+    # Unpublished and reachable only on the caddy-admin Docker network.
     admin 0.0.0.0:2019
     metrics
 }
@@ -40,36 +67,75 @@ app.yourdomain.com {
     reverse_proxy 10.0.0.1:8080
 }
 EOF
+sudo chown -R 10001:10001 /opt/caddy
+sudo chmod 0755 /opt/caddy
+sudo chmod 0644 /opt/caddy/Caddyfile
 
 cp .env.example .env
-# Set at minimum: AUTH_MODE, SECRET_KEY, ALLOWED_EMAILS, CLOUDFLARE_TUNNEL_TOKEN
+chmod 600 .env
+# Set CADDY_CONSOLE_IMAGE to the immutable sha-* tag or digest published by CI.
+# Then configure one authentication mode below.
 
 docker compose -f docker-compose.prod.yaml up -d
 ```
 
-No `.env` file is needed if you deploy from Portainer, or anywhere else that sets
-environment variables: set the same variables as stack environment variables.
-Compose passes each one through by name. Anything left unset never reaches the
-container, so the default in the table below applies.
+In Portainer, set the same values as stack environment variables. The production
+Compose file deliberately has no `latest` image fallback and refuses to render
+until `CADDY_CONSOLE_IMAGE` and `CLOUDFLARE_TUNNEL_TOKEN` are set.
 
-## 2. Choose how people sign in
 
-Set `AUTH_MODE` (in `.env` or your stack's environment):
+### One-time permissions when upgrading an existing stack
 
-| Mode | How it works | Session length |
-|------|--------------|----------------|
-| `google` | Google OAuth login page (needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`) | `SESSION_TIMEOUT_HOURS`, default 8h |
-| `cloudflare` | Cloudflare Access authenticates before traffic reaches the app | Set in Cloudflare Zero Trust, default 24h |
+Earlier images ran as root, so existing backup and GeoIP volumes may still be
+root-owned. Keep the same Compose project/Portainer stack name and, before the
+first non-root start, change only those two data directories to UID/GID 10001.
+For plain Compose:
 
-Both honour `ALLOWED_DOMAIN` and `ALLOWED_EMAILS` as extra filters.
+```bash
+docker compose -f docker-compose.internal.yaml run --rm --no-deps --user 0 \
+  --cap-add CHOWN --entrypoint chown caddy-console \
+  -R 10001:10001 /backups /data/geoip
+```
 
-> **In `cloudflare` mode, set `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD`.**
-> With both set, every request's signed `Cf-Access-Jwt-Assertion` token is verified
-> (signature, issuer, audience, expiry) and the identity is taken from it. Without
-> them the app falls back to trusting the `Cf-Access-Authenticated-User-Email`
-> header and warns at startup. That fallback is only safe if nothing but the tunnel
-> can reach port 9090 — any other container on the same Docker network could set
-> that header and get full control of your reverse proxy config.
+Use `docker-compose.prod.yaml` instead if that is the existing stack. Also apply
+the `/opt/caddy` ownership command above. Do not rename or recreate the volumes.
+
+## 2. Choose exactly one authentication mode
+
+Both modes also honor `ALLOWED_DOMAIN` and `ALLOWED_EMAILS`. Keep at least one
+restriction configured.
+
+### Google OAuth
+
+Use this when the application itself should own the login session:
+
+1. Set `AUTH_MODE=google`.
+2. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and a strong `SECRET_KEY`.
+3. Set `SERVER_URL` to the public HTTPS console origin, for example
+   `https://caddy-console.example.com`.
+4. Register exactly `${SERVER_URL}/auth/callback` as an authorized redirect URI.
+5. Configure the Cloudflare Tunnel hostname, but do **not** add a Cloudflare
+   Access application in front unless you intentionally want two login gates.
+
+The application session defaults to eight hours (`SESSION_TIMEOUT_HOURS`).
+
+### Cloudflare Access
+
+Use this when Cloudflare Access should authenticate every request before it reaches
+the tunnel:
+
+1. Set `AUTH_MODE=cloudflare`.
+2. Set `CF_ACCESS_TEAM_DOMAIN` to `<team>.cloudflareaccess.com`.
+3. Set `CF_ACCESS_AUD` to the application's AUD tag.
+4. Create an Access application and policy for the tunnel hostname.
+
+Both values are mandatory. The application verifies the signed Access JWT's
+signature, issuer, audience and expiry and refuses to start if verification is not
+configured. Production has no unsigned-header fallback.
+
+`UNSAFE_ALLOW_UNVERIFIED_CF_HEADER` exists only inside the committed internal/dev
+Compose files for their loopback-bound synthetic login. Never pass it to the
+production service.
 
 ## 3. Turn on access logging
 
@@ -80,6 +146,7 @@ directive **inside each site block**. Define a snippet once and import it:
 (access_log) {
     log {
         output file /var/log/caddy/access.log {
+            mode 0644
             roll_size 10mb
             roll_keep 6
             roll_keep_for 168h
@@ -99,20 +166,39 @@ app.yourdomain.com {
 ```
 
 The `caddy-logs` volume is shared between the Caddy and console containers, which
-both compose files already configure. To use a different path, set
+both compose files already configure. The console mounts that volume read-only and
+runs as UID 10001, while Caddy creates files as its own user. The `mode 0644`
+setting is therefore required for the console to read them; the volume is not
+published or shared with unrelated containers. To use a different path, set
 `CADDY_LOG_FILE` in `.env` to match your Caddyfile.
+
+When upgrading an existing log volume, update current files once before starting
+the non-root console:
+
+```bash
+docker compose -f docker-compose.internal.yaml exec caddy \
+  find /var/log/caddy -maxdepth 1 -type f -name 'access*.log*' \
+  -exec chmod 0644 {} +
+```
 
 ### Strip the headers — this is not optional
 
 `format filter` with `wrap json` keeps every field the UI uses (`ts`, host, method,
 uri, status, duration, size, client_ip) and drops the header maps. Two reasons:
 
-- **Request headers carry session tokens and API keys in plaintext.** Caddy redacts
-  `Cookie` automatically but nothing else, so a bare `format json` writes live
-  credentials to disk and then renders them in your browser.
+- **Request headers can carry session tokens, API keys and personal data.** Caddy
+  redacts common credential headers by default unless `log_credentials` is set,
+  but dropping the complete maps prevents less common secrets and identifying
+  metadata from being written and rendered.
 - **Headers are roughly 90% of each entry.** Dropping them takes an entry from
   ~4 KB to ~300 bytes, so the same `roll_size` covers more than ten times the
   history.
+
+The editor's **Check** action warns when it sees site/snippet access logging without
+`format filter`, or when the filter does not delete both header maps. This is a
+warning rather than a parser-level block because Caddyfiles can import external
+files, but production deployment should not proceed until the effective config is
+verified.
 
 To keep one specific header, delete the others individually instead of the whole
 map — `request>headers>Authorization delete`. The filter encoder also supports
@@ -148,7 +234,9 @@ You do not need to do anything: on startup, and then once a day, the console
 checks whether the installed release is older than the current month and, if so,
 downloads the new one (~65 MB, about 135 MB on disk) into `GEOIP_DIR`. The
 compose files mount a `caddy-geoip` volume there so a rebuild does not
-re-download. A failed or partial download never replaces the working files.
+re-download. Downloads are rejected above 512 MiB compressed or 512 MiB
+uncompressed per database. A failed, oversized or partial download never replaces
+the working files.
 
 On a host without internet egress, set `GEOIP_AUTO_UPDATE=false` and drop
 `dbip-city-lite.mmdb` and `dbip-asn-lite.mmdb` (decompressed, from
@@ -173,13 +261,15 @@ changes:
 image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine
 ```
 
-Validation is done by that container, through its admin API (`POST /adapt`), so
-whatever modules it has are the modules your config is checked against. The
-console also ships a plain Caddy binary, but only for `caddy fmt` and as a
-fallback when the admin API is unreachable.
+The **Check** action first asks the running container to adapt the Caddyfile through
+`POST /adapt`, so syntax and module availability are checked against the exact
+custom build. Adaptation does not provision or run the configuration; the full
+transactional check happens during `POST /load` after **Save & Reload**. The UI
+labels these states separately.
 
-If you rely on that fallback and your config needs a plugin, build the console
-image against a matching Caddy:
+The console also ships a plain Caddy binary for `caddy fmt` and for full local
+validation when the admin API is unreachable. If that fallback must understand a
+plugin, build the console image against the same Caddy distribution:
 
 ```bash
 docker build --build-arg CADDY_IMAGE=ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine .
@@ -225,30 +315,46 @@ dashboard uses for server-level counters:
 }
 ```
 
-## Cloudflare setup
+## Cloudflare Tunnel and Access setup
 
-1. Add your domain to Cloudflare (nameservers must point to CF)
-2. SSL/TLS mode → **Full** (Caddy uses local certs, CF handles public SSL)
-3. Zero Trust → Tunnels → create tunnel, copy token to `CLOUDFLARE_TUNNEL_TOKEN`
-4. Tunnel public hostname: `caddy-console.yourdomain.com` → `http://caddy-console:9090`
-5. Zero Trust → Access → Applications → add policy (email OTP for your allowed emails)
-6. Open the application, click on Application settings (tab) -> AUD tag into `CF_ACCESS_TEAM_DOMAIN`
+Both authentication modes use Tunnel as the private transport:
+
+1. Add the domain to Cloudflare and choose the required SSL/TLS mode for the
+   public Caddy sites.
+2. Create a remotely managed tunnel and set its token as
+   `CLOUDFLARE_TUNNEL_TOKEN`. Compose passes it through `TUNNEL_TOKEN`, not the
+   process command line. Platforms with file secrets may use cloudflared's
+   `TUNNEL_TOKEN_FILE` instead.
+3. Route `caddy-console.yourdomain.com` to `http://caddy-console:9090`.
+
+For `AUTH_MODE=cloudflare` only:
+
+4. Zero Trust → Access → Applications → create an application and policy for the
+   console hostname.
+5. Copy the team domain into `CF_ACCESS_TEAM_DOMAIN`.
+6. Open that Access application → Application settings → copy the AUD tag into
+   `CF_ACCESS_AUD`.
+
+For `AUTH_MODE=google`, skip steps 4–6 and configure Google's callback as described
+in the authentication section.
 
 ## Environment variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
+| `CADDY_CONSOLE_IMAGE` | production/internal | — | Immutable `sha-*` tag or image digest; no `latest` fallback |
 | `AUTH_MODE` | yes | `google` | Auth mode: `google` or `cloudflare` |
-| `SECRET_KEY` | yes | — | Flask session secret |
+| `SECRET_KEY` | google mode | — | Strong Flask session secret; Cloudflare mode persists a generated key if omitted |
 | `GOOGLE_CLIENT_ID` | google mode | — | OAuth client ID |
 | `GOOGLE_CLIENT_SECRET` | google mode | — | OAuth client secret |
-| `CLOUDFLARE_TUNNEL_TOKEN` | cloudflare mode | — | Tunnel token |
-| `CF_ACCESS_TEAM_DOMAIN` | recommended (cloudflare mode) | — | `<team>.cloudflareaccess.com`; enables JWT verification together with `CF_ACCESS_AUD` |
-| `CF_ACCESS_AUD` | recommended (cloudflare mode) | — | Access application AUD tag |
-| `ALLOWED_DOMAIN` | no | — | Restrict to email domain |
+| `SERVER_URL` | google mode outside localhost | `http://localhost:9090` | Public HTTPS origin used for the exact OAuth callback URI |
+| `CLOUDFLARE_TUNNEL_TOKEN` | production stack | — | Remotely managed Tunnel token; passed to cloudflared outside argv |
+| `CF_ACCESS_TEAM_DOMAIN` | cloudflare mode | — | `<team>.cloudflareaccess.com`; mandatory for JWT issuer and JWKS validation |
+| `CF_ACCESS_AUD` | cloudflare mode | — | Access application AUD tag; mandatory for JWT audience validation |
+| `UNSAFE_ALLOW_UNVERIFIED_CF_HEADER` | never in production | `false` | Explicit synthetic-login escape hatch used only by internal/dev Compose |
+| `ALLOWED_DOMAIN` | no | — | Restrict to an email domain |
 | `ALLOWED_EMAILS` | no | — | Comma-separated allowed emails |
-| `SESSION_TIMEOUT_HOURS` | no | `8` | Session lifetime (google mode) |
-| `SERVER_URL` | no | `http://localhost:9090` | OAuth callback base URL |
+| `SESSION_TIMEOUT_HOURS` | no | `8` | Session lifetime in Google mode |
 | `CADDY_API_URL` | no | `http://caddy:2019` | Caddy admin API address |
 | `CADDYFILE_PATH` | no | `/etc/caddy/Caddyfile` | Path to Caddyfile |
 | `BACKUP_DIR` | no | `/backups` | Backup storage directory |
@@ -261,6 +367,25 @@ dashboard uses for server-level counters:
 | `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
 | `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
 
+## Nginx-to-Caddy cutover
+
+Use the same Compose project/Portainer stack name so the named volumes are reused.
+Before Caddy claims host ports 80/443:
+
+1. Verify the production authentication variables and immutable image reference.
+2. Stop the synthetic-login proxy:
+   `docker compose -f docker-compose.internal.yaml stop console-proxy`.
+3. Stop Nginx using the host's service manager, freeing 80/443.
+4. Start the production definition and remove the internal-only orphan:
+
+   ```bash
+   docker compose -f docker-compose.prod.yaml up -d --remove-orphans
+   ```
+
+Without `--remove-orphans`, `console-proxy` can remain running on loopback and keep
+injecting `admin@local` after the authenticated stack starts. Do not add `-v` to
+`down` during cutover because that deletes the certificate, backup and log volumes.
+
 ## Day-to-day commands
 
 ```bash
@@ -270,10 +395,14 @@ docker compose -f docker-compose.prod.yaml up -d
 # Logs
 docker compose -f docker-compose.prod.yaml logs -f
 
-# Update (pull new image from GHCR)
+# Update: set CADDY_CONSOLE_IMAGE to the new immutable sha tag or digest first
 docker compose -f docker-compose.prod.yaml pull caddy-console
 docker compose -f docker-compose.prod.yaml up -d caddy-console
 
-# Restart caddy (only needed for admin address changes or image upgrades)
+# Upgrade Caddy: edit its image reference in this Compose file first
+docker compose -f docker-compose.prod.yaml pull caddy
+docker compose -f docker-compose.prod.yaml up -d caddy
+
+# Restart without changing the image (needed for output-file option changes)
 docker compose -f docker-compose.prod.yaml restart caddy
 ```

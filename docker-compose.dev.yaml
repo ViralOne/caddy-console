@@ -3,73 +3,122 @@
 #   ./dev/run.sh up      start it and print the URL
 #   ./dev/run.sh down    stop it and remove volumes
 #
-# There is no real authentication here: caddy-front injects the identity header
-# that Cloudflare Access would normally set, so anyone who can reach the port is
-# a logged-in console user. Every published port is therefore bound to 127.0.0.1.
+# There is no real authentication here: caddy-front injects the identity
+# header Cloudflare Access would normally set. All ports are loopback-only.
 name: caddy-console-dev
 
 services:
-  # Stands in for Cloudflare Access, and is the only entrypoint you browse to.
   caddy-front:
     image: caddy:2.11.9-alpine
     restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+      - /data:size=16m,mode=0755
+      - /config:size=16m,mode=0755
     ports:
       - "127.0.0.1:8888:80"
     volumes:
       - ./dev/Caddyfile.front:/etc/caddy/Caddyfile:ro
+    networks:
+      - console-ui
     depends_on:
       - caddy-console
 
   caddy-console:
     build: .
+    user: "${CADDY_CONSOLE_UID:-1000}:${CADDY_CONSOLE_GID:-1000}"
     restart: unless-stopped
-    # --reload picks up Python edits; the bind mount below makes CSS/JS/template
-    # edits show up on refresh instead of needing an image rebuild.
-    command: ["uv", "run", "gunicorn", "app:app", "-b", "0.0.0.0:9090", "--access-logfile", "-", "-c", "gunicorn.conf.py", "--reload"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    # --reload picks up Python edits; the read-only bind mount below makes
+    # CSS/JS/template edits show up on refresh without an image rebuild.
+    command:
+      - /app/.venv/bin/gunicorn
+      - app:app
+      - -b
+      - 0.0.0.0:9090
+      - --access-logfile
+      - "-"
+      - -c
+      - gunicorn.conf.py
+      - --reload
     environment:
       AUTH_MODE: cloudflare
+      UNSAFE_ALLOW_UNVERIFIED_CF_HEADER: "true"
       ALLOWED_EMAILS: dev@local
       SECRET_KEY: dev-only-not-a-real-secret-0123456789abcdef
       SESSION_COOKIE_SECURE: "false"
-      # --reload only works without app preloading (see gunicorn.conf.py).
       GUNICORN_PRELOAD: "false"
       CADDYFILE_PATH: /etc/caddy/Caddyfile
       BACKUP_DIR: /backups
       AUDIT_LOG: /backups/audit.log
       CADDY_API_URL: http://caddy-target:2019
       CADDY_LOG_FILE: /var/log/caddy/access.log
+      GEOIP_AUTO_UPDATE: "false"
       SERVER_URL: http://localhost:8888
     volumes:
-      # The console and caddy-target must share the same Caddyfile.
-      - ./dev/run/Caddyfile:/etc/caddy/Caddyfile
+      - ./dev/run:/etc/caddy
       - ./dev/run/backups:/backups
-      - caddy-logs:/var/log/caddy
+      - caddy-logs:/var/log/caddy:ro
       - caddy-geoip:/data/geoip
-      # Live source so you don't rebuild the image on every edit. Remember to
-      # re-run `npm run build` after changing files under static/js/app.
-      - ./src:/app/src
+      - ./src:/app/src:ro
+    networks:
+      - console-ui
+      - caddy-admin
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:9090/health"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:9090/health', timeout=3)
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # The Caddy instance whose config the console edits and reloads.
   caddy-target:
     image: caddy:2.11.9-alpine
     restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     ports:
       - "127.0.0.1:8081:80"
     volumes:
-      - ./dev/run/Caddyfile:/etc/caddy/Caddyfile
+      - ./dev/run:/etc/caddy:ro
       - caddy-logs:/var/log/caddy
       - caddy-target-data:/data
       - caddy-target-config:/config
+    networks:
+      - caddy-admin
+      - caddy-target-public
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+networks:
+  console-ui:
+  caddy-admin:
+    internal: true
+  caddy-target-public:
 
 volumes:
   caddy-logs:

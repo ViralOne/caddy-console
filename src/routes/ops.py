@@ -9,6 +9,7 @@ import requests as http_client
 from flask import Blueprint, jsonify, request
 
 from ..audit import iter_entries, tail_lines
+from .. import logfiles
 from ..auth import login_required
 from ..caddy_api import get_servers
 from ..config import (
@@ -20,7 +21,7 @@ from ..config import (
 )
 from ..eventindex import event_index
 from ..geoip import geoip
-from ..validator import run_caddy
+from ..validator import caddy_check, run_caddy
 
 ops_bp = Blueprint("ops", __name__)
 
@@ -44,7 +45,7 @@ def get_audit():
 # re-validating when it changes.
 
 _status_lock = threading.Lock()
-_status_cache: dict = {"version": None, "file_key": None, "config_valid": None}
+_status_cache: dict = {"version": None, "file_key": None, "config_check": None}
 
 
 def _caddy_version() -> str:
@@ -59,22 +60,32 @@ def _caddy_version() -> str:
     return version
 
 
-def _config_valid_on_disk() -> bool:
+def _config_check_on_disk() -> dict:
+    """Check disk content with the running Caddy build when it is reachable."""
     try:
         st = os.stat(CADDYFILE)
         key = (st.st_mtime_ns, st.st_size)
-    except OSError:
-        return False
+    except (OSError, UnicodeError) as e:
+        return {"accepted": False, "level": "unavailable", "message": str(e)}
     with _status_lock:
         if _status_cache["file_key"] == key:
-            return _status_cache["config_valid"]
-    rc, _, _ = run_caddy(["caddy", "validate", "--config", CADDYFILE, "--adapter", "caddyfile"])
-    valid = rc == 0
-    if rc >= 0:  # don't remember timeouts / missing binary
+            return _status_cache["config_check"]
+    try:
+        with open(CADDYFILE, encoding="utf-8") as f:
+            content = f.read()
+    except (OSError, UnicodeError) as e:
+        return {"accepted": False, "level": "unavailable", "message": str(e)}
+    accepted, message, level = caddy_check(content)
+    result = {"accepted": accepted, "level": level, "message": message}
+    # Do not pin a failed local fallback check to the file forever: a custom
+    # module can look invalid to the bundled binary while the running Caddy is
+    # temporarily unreachable. Successful local checks and running-Caddy
+    # adaptation results are stable for this file version.
+    if level == "adapted" or (level == "validated" and accepted):
         with _status_lock:
             _status_cache["file_key"] = key
-            _status_cache["config_valid"] = valid
-    return valid
+            _status_cache["config_check"] = result
+    return result
 
 
 @ops_bp.route("/api/status", methods=["GET"])
@@ -86,9 +97,14 @@ def caddy_status():
     except OSError:
         last_modified = "unknown"
 
+    config_check = _config_check_on_disk()
     return jsonify({
         "caddy_version": _caddy_version(),
-        "config_valid": _config_valid_on_disk(),
+        # Keep config_valid for existing clients; the level/message make clear
+        # whether this was adaptation by the running build or local validation.
+        "config_valid": config_check["accepted"],
+        "config_check_level": config_check["level"],
+        "config_check_message": config_check["message"],
         "config_path": CADDYFILE,
         "last_modified": last_modified,
     })
@@ -271,7 +287,7 @@ def explore():
             before_offset=_clamp_int(args.get("before_offset"), None, 0, 2 ** 62),
             facet_limit=_clamp_int(args.get("facet_limit"), 50, 1, 200),
         )
-    except OSError as e:
+    except logfiles.READ_ERRORS as e:
         return jsonify({"error": f"Could not read the access log: {e}",
                         "exists": False, "entries": [], "total": 0})
     payload["ranges"] = list(RANGES)
@@ -286,7 +302,7 @@ def sites():
     from_ts, to_ts = _range(request.args)
     try:
         payload = event_index.site_summary(from_ts, to_ts)
-    except OSError as e:
+    except logfiles.READ_ERRORS as e:
         return jsonify({"error": str(e), "sites": [], "exists": False})
     return jsonify(payload)
 
@@ -294,17 +310,23 @@ def sites():
 @ops_bp.route("/api/explore/raw", methods=["GET"])
 @login_required
 def explore_raw():
-    """One original log line, addressed by the byte offset the index recorded."""
+    """One original log line, addressed by the file token and byte offset an entry carries.
+
+    The token is resolved against the log series on disk, never joined onto a
+    path, so it works in any worker and cannot name anything else.
+    """
     offset = request.args.get("offset", type=int)
-    file_id = request.args.get("file", type=int, default=0)
-    if offset is None or offset < 0 or file_id is None or file_id < 0:
-        return jsonify({"error": "offset required"}), 400
+    file_ref = request.args.get("file", "")
+    if offset is None or offset < 0 or offset > 2 ** 62:
+        return jsonify({"error": "offset required and must be within range"}), 400
+    if not logfiles.is_safe_token(file_ref):
+        return jsonify({"error": "file required"}), 400
     try:
-        line = event_index.raw_line(file_id, offset)
-    except OSError as e:
-        return jsonify({"error": str(e)}), 200
+        line = event_index.raw_line(file_ref, offset)
+    except logfiles.READ_ERRORS as e:
+        return jsonify({"error": f"Could not read the access log: {e}"}), 200
     if line is None:
-        return jsonify({"error": "That line is no longer in the range being read from the log."})
+        return jsonify({"error": "That line is no longer in the log files on disk."})
     return jsonify({"line": line})
 
 
@@ -319,7 +341,7 @@ def explore_ip():
     from_ts, to_ts = _range(request.args)
     try:
         seen = event_index.ip_summary(ip, from_ts, to_ts)
-    except OSError as e:
+    except logfiles.READ_ERRORS as e:
         seen = None
         found["seen_error"] = f"Could not read the access log: {e}"
     return jsonify({"ip": ip, **found, "seen": seen,
