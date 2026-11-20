@@ -39,7 +39,7 @@ dialog{margin:auto}
 .acct-btn:hover{background:var(--bg-3)}
 .avatar{display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:linear-gradient(140deg,var(--accent),color-mix(in srgb,var(--accent) 40%,var(--info)));color:var(--accent-ink);font-size:11px;font-weight:700;letter-spacing:.02em}
 .acct-btn .em{font-size:var(--t-sm);color:var(--ink-2)}
-.brand-mark{flex:none}
+.brand-mark{flex:none;border-radius:7px}
 .btn-primary:disabled .dirty-dot{display:none}
 .acct-btn>.icon{color:var(--ink-3)}
 
@@ -408,7 +408,7 @@ details.raw[open]{flex-basis:100%}
 /* === login === */
 .login{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(1200px 500px at 50% -10%,var(--accent-soft),transparent 70%),var(--bg)}
 .login-card{width:min(400px,100%)}
-.login-card svg.mark{width:44px;height:44px}
+.login-card .mark{width:44px;height:44px;border-radius:11px}
 .login-card h1{margin:22px 0 6px;font-size:var(--t-2xl);font-weight:650;letter-spacing:-.022em;line-height:1.15}
 .login-card p{margin:0 0 24px;color:var(--ink-2)}
 .gbtn{width:100%;justify-content:center;height:44px;font-size:var(--t-md)}

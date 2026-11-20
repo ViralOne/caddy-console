@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sign in · Caddy Console</title>
 <script>{{ theme_boot_js }}</script>
-<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/img/icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/static/img/icon-16.png" sizes="16x16" type="image/png">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<link rel="manifest" href="/static/site.webmanifest">
+<meta name="theme-color" content="#1b6ef3">
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -13,7 +17,7 @@
 {% include "_icons.html" %}
 <main class="login" aria-labelledby="login-h">
   <div class="login-card">
-    <svg class="mark" width="44" height="44" aria-hidden="true" focusable="false"><use href="#i-mark"/></svg>
+    <img class="mark" src="/static/img/brand-64.png" width="44" height="44" alt="">
     <h1 id="login-h">Sign in to Caddy Console</h1>
     <p>Manage {% if server_host %}the Caddy server at <span class="mono">{{ server_host }}</span>{% else %}this Caddy server{% endif %}: health, access logs and the Caddyfile.</p>
     {% if auth_mode == "cloudflare" %}

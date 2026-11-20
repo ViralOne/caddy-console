@@ -6,8 +6,11 @@
 <meta name="csrf-token" content="{{ csrf_token }}">
 <title>Caddy Console</title>
 <script>{{ theme_boot_js }}</script>
-<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/img/icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/static/img/icon-16.png" sizes="16x16" type="image/png">
 <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<link rel="manifest" href="/static/site.webmanifest">
+<meta name="theme-color" content="#1b6ef3">
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -17,7 +20,7 @@
 
 <header class="hdr" id="hdr">
   <a class="brand" data-view="dashboard" href="/" aria-label="Caddy Console home">
-    <svg class="brand-mark" width="26" height="26" aria-hidden="true" focusable="false"><use href="#i-mark"/></svg>
+    <img class="brand-mark" src="/static/img/brand-64.png" width="26" height="26" alt="">
     <b>Caddy <span>Console</span></b>
   </a>
   <nav class="tabs" aria-label="Views">
