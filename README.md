@@ -104,6 +104,7 @@ Two things to do next, both in [docs/setup.md](docs/setup.md):
 | | |
 |---|---|
 | [Setup](docs/setup.md) | Deploying it, auth modes, access logging, retention, environment variables, API reference |
+| [Migrating to Cloudflare Tunnel](docs/migration-tunnel.md) | nginx + port forwarding → Caddy + tunnel, old Route53 domain via Cloudflare for SaaS, Google login |
 | [Development](docs/development.md) | Local no-auth stack, seeding log data, tests, front-end build |
 | [Architecture](docs/architecture.md) | Why there is no database, how the log is indexed, why Preact for two views |
 

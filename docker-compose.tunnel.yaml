@@ -1,0 +1,117 @@
+services:
+  caddy:
+    image: caddy:2.11.9-alpine
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    volumes:
+      - /opt/caddy:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - caddy-logs:/var/log/caddy
+    networks:
+      - caddy-edge
+      - caddy-admin
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy-console:
+    image: ${CADDY_CONSOLE_IMAGE:?Set immutable CADDY_CONSOLE_IMAGE}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    environment:
+      - AUTH_MODE=google
+      - SERVER_URL=${SERVER_URL:?Set SERVER_URL, e.g. https://console.new-domain.com}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY (python -c "import secrets; print(secrets.token_hex(32))")}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET}
+      - ALLOWED_EMAILS=${ALLOWED_EMAILS:?Set ALLOWED_EMAILS (comma-separated)}
+      - CADDY_API_URL=http://caddy:2019
+      - ALLOWED_DOMAIN
+      - SESSION_TIMEOUT_HOURS
+      - CADDYFILE_PATH
+      - CADDY_LOG_FILE
+      - CADDY_EXPLORE_MAX_EVENTS
+      - CADDY_CACHE_TTL
+      - CADDY_CMD_TIMEOUT
+      - BACKUP_DIR
+      - BACKUP_KEEP
+      - AUDIT_LOG
+      - AUDIT_LOG_MAX_BYTES
+      - GEOIP_DIR
+      - GEOIP_AUTO_UPDATE
+      - GUNICORN_WORKERS
+      - GUNICORN_THREADS
+      - GUNICORN_TIMEOUT
+      - GUNICORN_PRELOAD
+    volumes:
+      - /opt/caddy:/etc/caddy
+      - caddy-backups:/backups
+      - caddy-logs:/var/log/caddy:ro
+      - caddy-geoip:/data/geoip
+    networks:
+      - caddy-admin
+      - console-ui
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:9090/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.11.1
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN}
+    networks:
+      - caddy-edge
+      - console-ui
+    depends_on:
+      caddy:
+        condition: service_healthy
+      caddy-console:
+        condition: service_healthy
+
+networks:
+  # cloudflared <-> Caddy data plane, plus egress for Caddy and the tunnel.
+  caddy-edge:
+  # Only Caddy and the console can reach the unauthenticated admin API.
+  caddy-admin:
+    internal: true
+  # cloudflared <-> console; egress for Google OAuth and the GeoIP download.
+  console-ui:
+
+volumes:
+  caddy-data:
+  caddy-config:
+  caddy-backups:
+  caddy-logs:
+  caddy-geoip:
