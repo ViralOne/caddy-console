@@ -2,12 +2,14 @@
 import { loadCaddyfile } from './caddyfile.js';
 import {
   fetchJson, getContent, getVersion, isDirty, markSaved, originalContent,
-  setContent, setDot, setOriginal, setStatus, setVersion,
+  revealLine, setContent, setDot, setOriginal, setStatus, setVersion,
 } from './core.js';
+import { affectedSites } from './caddyfile-sites.js';
 import { renderDiffInto } from './diff.js';
+import { iconEl } from './icons.js';
 import { alertDialog, confirmDialog } from './ui/dialog.js';
 import { toast } from './ui/toast.js';
-import { withoutFormat } from './warnings.js';
+import { parseWarning, withoutFormat } from './warnings.js';
 
 const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
@@ -127,7 +129,7 @@ async function _doSave() {
     setOriginal(data.content || content);
     if (data.version) setVersion(data.version);
     setStatus(data.message, 'ok'); setDot('green');
-    markSaved(); hideWarnings();
+    markSaved(); lintCurrent();
     toast('Saved and reloaded. Caddy accepted the new config.', { kind: 'ok' });
   } else if (data.saved) {
     // Written to disk, but Caddy could not reload or did not confirm. Keep the
@@ -153,16 +155,14 @@ async function _doSave() {
 let _saveResolver = null;
 const saveDialog = () => document.getElementById('save-diff-modal');
 
-// `summary`, `live` and `next` are used by Task 15 to name the affected sites.
 function openSaveModal(summary, live, next) {
-  const sum = document.getElementById('save-diff-summary');
-  sum.textContent = '';
-  for (const [cls, text] of [['a', `+${summary.added} added`], ['d', `\u2212${summary.removed} removed`]]) {
-    const s = document.createElement('span');
-    s.className = cls;
-    s.textContent = text;
-    sum.append(s);
-  }
+  const box = document.getElementById('save-diff-summary');
+  box.textContent = '';
+  const add = (cls, text) => { const s = document.createElement('span'); s.className = cls; s.textContent = text; box.append(s); };
+  add('a', `+${summary.added} added`);
+  add('d', `−${summary.removed} removed`);
+  const sites = affectedSites(summary, live, next);
+  if (sites.length) add('muted', `${sites.length} ${sites.length === 1 ? 'site' : 'sites'} affected: ${sites.join(', ')}`);
   saveDialog().showModal();
   saveDialog().querySelector('[data-act="confirm-save"]').focus();
   return new Promise(resolve => { _saveResolver = resolve; });
@@ -183,7 +183,35 @@ saveDialog().addEventListener('close', () => resolveSaveModal(false));
 export function showWarnings(warnings) {
   const box = document.getElementById('warnings');
   box.textContent = '';
-  (warnings || []).forEach(w => { const div = document.createElement('div'); div.textContent = w; box.appendChild(div); });
-  box.classList.toggle('show', !!(warnings && warnings.length));
+  for (const w of warnings || []) {
+    const { line, text } = parseWarning(w);
+    const li = document.createElement('li');
+    li.append(iconEl('warning', { size: 16 }));
+    const span = document.createElement('span');
+    if (line != null) {
+      const link = document.createElement('button');
+      link.type = 'button';
+      link.className = 'linkbtn';
+      link.textContent = `Line ${line}`;
+      link.addEventListener('click', () => revealLine(line));
+      span.append(link, document.createTextNode(' '));
+    }
+    span.append(document.createTextNode(text));
+    li.append(span);
+    box.append(li);
+  }
+  box.hidden = box.children.length === 0;
 }
-export function hideWarnings() { document.getElementById('warnings').classList.remove('show'); }
+
+export function hideWarnings() {
+  const box = document.getElementById('warnings');
+  box.textContent = '';
+  box.hidden = true;
+}
+
+/** Validate the editor content quietly (on load, after a save) to fill the strip. */
+export async function lintCurrent() {
+  let data;
+  try { data = await _validateRequest(getContent()); } catch (e) { return; }
+  if (data.valid) showWarnings(data.warnings); else hideWarnings();
+}

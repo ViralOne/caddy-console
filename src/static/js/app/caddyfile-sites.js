@@ -57,3 +57,11 @@ export function sitesForLines(text, lineNumbers) {
   }
   return out;
 }
+
+/** The sites a diff touches, each named once: new text first, then the old one. */
+export function affectedSites(summary, oldText, newText) {
+  return [...new Set([
+    ...sitesForLines(newText, summary.newLines || []),
+    ...sitesForLines(oldText, summary.oldLines || []),
+  ])];
+}

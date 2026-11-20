@@ -83,6 +83,15 @@ main{min-height:calc(100vh - var(--hdr))}
 #cm-editor .cm-scroller{overflow:auto}
 
 /* === editor === */
+.warns{margin:0;padding:0;list-style:none;max-height:64px;overflow:auto;background:var(--warn-soft);border-bottom:1px solid color-mix(in srgb,var(--warn) 30%,transparent)}
+.warns li{display:flex;gap:10px;align-items:center;padding:5px 20px;font-size:var(--t-sm);color:var(--ink)}
+.warns .icon{color:var(--warn)}
+.warns .linkbtn{font-family:var(--mono);font-size:12.5px}
+.findbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 16px;background:var(--bg-2);border-bottom:1px solid var(--line)}
+.finput{display:flex;align-items:center;gap:6px;height:30px;padding:0 8px;border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--bg);min-width:200px}
+.finput:focus-within{border-color:var(--accent)}
+.finput input{border:0;background:none;outline:none;font-family:var(--mono);font-size:13px;width:150px}
+.fcount{font-size:var(--t-xs);color:var(--ink-3);min-width:52px}
 .sbar{display:flex;align-items:center;gap:18px;padding:8px 16px;min-height:34px;font-size:var(--t-xs);color:var(--ink-3);border-top:1px solid var(--line);background:var(--bg)}
 .sbar .msg{display:flex;align-items:center;gap:6px;color:var(--ink-2)}
 .sbar .r{margin-left:auto;display:flex;gap:18px}
@@ -91,10 +100,44 @@ main{min-height:calc(100vh - var(--hdr))}
 .sbar .msg[data-state="error"] .icon{color:var(--crit)}
 .status-msg.err{color:var(--crit)}
 .status-msg.warn{color:var(--warn)}
-
-.warnings { padding: var(--space-2) var(--space-4); background: var(--warn-soft); border-bottom: 1px solid var(--warn); font-size: var(--t-xs); color: var(--warn); display: none; max-height: 80px; overflow-y: auto; }
-.warnings.show { display: block; }
-.warnings div { padding: 2px 0; }
+.panel{width:408px;border-left:1px solid var(--line);background:var(--bg-2);display:flex;flex-direction:column;min-height:0}
+.panel-hd{display:flex;align-items:center;gap:8px;padding:14px 16px 12px;border-bottom:1px solid var(--line)}
+.panel-hd h2{margin:0;font-size:var(--t-lg);font-weight:650;flex:1}
+.panel-bd{flex:1;overflow:auto;padding:8px 0}
+.bk{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}
+.bk:hover{background:var(--bg-3)}
+.bk button.open{all:unset;cursor:pointer;display:block}
+.bk button.open:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.bk b{font-weight:600;display:block}
+.bk .muted{font-size:var(--t-xs)}
+.snip{display:block;width:calc(100% - 32px);margin:0 16px 8px;padding:10px 12px;text-align:left;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg);cursor:pointer}
+.snip:hover{border-color:var(--accent)}
+.snip b{display:block;font-weight:600;font-size:var(--t-sm)}
+.snip span{font-size:var(--t-xs);color:var(--ink-3)}
+.pv-tabs{display:flex;gap:4px;padding:10px 16px}
+.pv{margin:0 16px;padding:10px 0;border-radius:var(--r-md);background:var(--bg);font:12.5px/1.65 var(--mono);overflow:auto;max-height:46vh}
+.pv div{padding:0 12px;white-space:pre;tab-size:4}
+.panel-ft{padding:12px 16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
+.panel-ft p{margin:0;font-size:var(--t-xs);color:var(--ink-3)}
+.panel-ft .acts{display:flex;gap:8px;flex-wrap:wrap}
+.d-add{background:var(--add-bg)} .d-del{background:var(--del-bg)} .d-hunk{color:var(--ink-3)}
+.d-add .g,.d-del .g{font-weight:700} .d-add .g{color:var(--good)} .d-del .g{color:var(--crit)}
+.diff .lnn{display:inline-block;width:3ch;color:var(--ink-3);text-align:right;margin-right:12px}
+.linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
+.warns .linkbtn{font-family:var(--mono);font-size:12.5px}
+.search-bar:not(.open){display:none}
+.findbar .find-close{margin-left:auto}
+.match-count.none{color:var(--crit)}
+.bk-preview{display:flex;flex-direction:column;flex:1;min-height:0}
+.bk-head{padding:12px 16px 0}
+.bk-head .muted{font-size:var(--t-xs)}
+.panel-note{padding:12px 16px;font-size:var(--t-xs);color:var(--ink-3)}
+.panel-bd .metrics-hint{padding:12px 16px}
+.diff-del{background:var(--del-bg)}
+.diff-ins{background:var(--add-bg)}
+.diff-meta{color:var(--ink-3)}
+/* The preview is the backup's raw text in one node, not one div per line. */
+#preview-content{padding:10px 12px;white-space:pre;tab-size:4}
 
 /* CodeMirror draws selections in a separate layer whose built-in selector is
    more specific than theme rules. Keep it aligned with native selection. */
@@ -155,33 +198,6 @@ main{min-height:calc(100vh - var(--hdr))}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
-/* Panels */
-.panel { position: fixed; right: 0; top: 0; bottom: 0; width: 400px; background: var(--bg-3); border-left: 1px solid var(--line); overflow-y: auto; z-index: 50; transform: translateX(100%); transition: transform 0.2s; display: flex; flex-direction: column; }
-.panel.open { transform: translateX(0); }
-.panel-header { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: var(--space-2); }
-.panel-header h3 { font-size: var(--t-md); color: var(--accent); }
-.panel-close { background: none; border: none; color: var(--ink-2); font-size: var(--t-md); cursor: pointer; margin-left: auto; }
-.panel-body { flex: 1; overflow-y: auto; padding: var(--space-3) var(--space-4); }
-
-/* Snippets & backups cards */
-.snippet-card { background: var(--bg); border-radius: var(--r-md); padding: var(--space-2) var(--space-3); margin-bottom: var(--space-2); border: 1px solid var(--line); cursor: pointer; }
-.snippet-card:hover { border-color: var(--accent); }
-.snippet-card .name { font-size: var(--t-xs); font-weight: 600; color: var(--ink); }
-.snippet-card .desc { font-size: var(--t-xs); color: var(--ink-3); margin-top: 2px; }
-/* Row inside a backup card: name/description on the left, Delete on the right.
-   Was an inline style block in backups.js. */
-.backup-row { display: flex; align-items: center; justify-content: space-between; width: 100%; }
-.backup-row-main { flex: 1; cursor: pointer; }
-
-/* Search */
-.search-bar { padding: var(--space-2) var(--space-4); background: var(--bg); border-bottom: 1px solid var(--line); display: none; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.search-bar.open { display: flex; }
-.search-bar input { padding: var(--space-1) var(--space-2); background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-sm); color: var(--ink); font-size: var(--t-xs); outline: none; }
-.search-bar #search-input, .search-bar #replace-input { flex: 1; min-width: 140px; }
-.search-bar input:focus { border-color: var(--accent); }
-.match-count { font-size: var(--t-xs); color: var(--ink-3); }
-.match-count.none { color: var(--crit); }
-
 /* === dialogs and toasts === */
 dialog{border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--bg-2);color:var(--ink);box-shadow:var(--shadow);padding:0;max-width:min(560px,calc(100vw - 24px))}
 dialog::backdrop{background:rgba(8,8,14,.6);backdrop-filter:blur(2px)}
@@ -217,11 +233,6 @@ dialog.wide{max-width:min(760px,calc(100vw - 24px));width:760px}
 .toast .toast-x{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:var(--r-sm);text-decoration:none}
 .diff-eq{color:var(--ink-3)}
 a.btn,a.btn:hover{text-decoration:none}
-
-/* Diff rows (backup preview and the pre-save modal) */
-.diff-del { color: var(--crit); background: var(--crit-soft); }
-.diff-ins { color: var(--good); background: var(--good-soft); }
-.diff-meta { color: var(--ink-3); font-style: italic; }
 
 /* Find bar match highlighting */
 .cm-find-match { background: var(--warn-soft); outline: 1px solid var(--warn); border-radius: 2px; }

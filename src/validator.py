@@ -99,8 +99,11 @@ def caddy_fmt(content: str) -> str:
     if cached is not None:
         return cached
 
-    rc, stdout, _ = _run_on_temp_config(content, lambda p: ["caddy", "fmt", p])
-    formatted = stdout if rc == 0 and stdout else content
+    rc, stdout, stderr = _run_on_temp_config(content, lambda p: ["caddy", "fmt", p])
+    # Caddy 2.11 exits 1 when the input is not formatted, yet still prints the
+    # formatted text: that is the case this function exists for.
+    unformatted = rc == 1 and "input is not formatted" in stderr
+    formatted = stdout if (rc == 0 or unformatted) and stdout else content
     if rc >= 0:
         _cache_put(key, formatted)
     return formatted

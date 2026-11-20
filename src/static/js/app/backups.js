@@ -1,15 +1,18 @@
 // Backups panel: list, preview, diff, load-to-editor, and rollback+reload.
 import {
-  fetchJson, getContent, getVersion, markSaved, setContent, setDot, setOriginal, setStatus,
+  el, fetchJson, getContent, getVersion, markSaved, setContent, setDot, setOriginal, setStatus,
   setVersion, showError,
 } from './core.js';
 import { renderDiff } from './diff.js';
 import { backupLabel } from './format.js';
 import { closePanel } from './panels.js';
 import { alertDialog, confirmDialog } from './ui/dialog.js';
+import { segmented } from './ui/seg.js';
 import { toast } from './ui/toast.js';
 let previewBackupContent = '';
 let currentPreviewName = '';
+
+let previewSeg = null;
 
 export async function loadBackups() {
   const list = document.getElementById('backups-list');
@@ -18,18 +21,23 @@ export async function loadBackups() {
   try { data = await fetchJson('/api/backups'); }
   catch (e) { showError(list, 'Could not load backups', e); return; }
   list.textContent = '';
-  if (!data.backups.length) { list.textContent = 'No backups yet.'; return; }
-  data.backups.forEach(b => {
-    const card = document.createElement('div'); card.className = 'snippet-card';
-    const row = document.createElement('div'); row.className = 'backup-row';
-    const left = document.createElement('div'); left.className = 'backup-row-main'; left.onclick = () => previewBackup(b);
-    const name = document.createElement('div'); name.className = 'name'; name.textContent = b.replace('Caddyfile.','');
-    const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = 'Click to preview';
-    left.appendChild(name); left.appendChild(desc);
-    const delBtn = document.createElement('button'); delBtn.className = 'btn btn-danger btn-sm'; delBtn.textContent = 'Delete';
-    delBtn.onclick = async (e) => {
+  if (!data.backups.length) {
+    list.append(el('p', 'panel-note', 'No backups yet. One is taken before every save and restore.'));
+    return;
+  }
+  const now = Date.now();
+  data.backups.forEach((b) => {
+    const label = backupLabel(b, now);
+    const row = el('div', 'bk');
+    const open = el('button', 'open');
+    open.type = 'button';
+    open.append(el('b', '', label), el('span', 'muted', b.replace('Caddyfile.', '')));
+    open.addEventListener('click', () => previewBackup(b));
+    const del = el('button', 'btn sm btn-danger', 'Delete');
+    del.type = 'button';
+    del.setAttribute('aria-label', `Delete the backup from ${label}`);
+    del.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const label = backupLabel(b);
       const ok = await confirmDialog({
         title: `Delete the backup from ${label}?`,
         body: 'The file is removed from disk and cannot be restored. Your live Caddyfile is not affected.',
@@ -42,40 +50,60 @@ export async function loadBackups() {
         toast(`Deleted the backup from ${label}`, { kind: 'ok' });
         loadBackups();
       } catch (err) { toast(`Delete failed: ${err.message}`, { kind: 'error' }); }
-    };
-    row.appendChild(left); row.appendChild(delBtn); card.appendChild(row);
-    list.appendChild(card);
+    });
+    row.append(open, del);
+    list.append(row);
   });
+  const n = data.backups.length;
+  list.append(el('p', 'panel-note', `${n === 1 ? 'One backup' : `The ${n} newest backups`}. One is taken before every save and restore.`));
 }
 
 async function previewBackup(name) {
   let data;
   try { data = await fetchJson(`/api/backups/${encodeURIComponent(name)}`); }
-  catch (e) { setStatus(`Could not load backup: ${e.message}`, 'err'); return; }
+  catch (e) { toast(`Could not load backup: ${e.message}`, { kind: 'error' }); return; }
   previewBackupContent = data.content; currentPreviewName = name;
-  document.getElementById('backups-list').style.display = 'none'; document.getElementById('backup-preview').style.display = 'block';
-  document.getElementById('preview-name').textContent = name.replace('Caddyfile.','');
+  document.getElementById('backups-list').hidden = true;
+  document.getElementById('backup-preview').hidden = false;
+  document.getElementById('bk-back').hidden = false;
+  document.getElementById('bk-h').textContent = 'Backup';
+  document.getElementById('preview-name').textContent = backupLabel(name);
+  document.getElementById('preview-meta').textContent = `${name.replace('Caddyfile.', '')}, ${data.content.split('\n').length} lines`;
   document.getElementById('preview-content').textContent = data.content;
-  renderDiff(getContent(), data.content); showPreviewTab('diff');
+  renderDiff(getContent(), data.content);
+  if (!previewSeg) {
+    previewSeg = segmented({
+      label: 'Preview mode', value: 'diff', onChange: showPreviewTab,
+      options: [{ id: 'preview', label: 'Preview' }, { id: 'diff', label: 'Diff vs editor' }],
+    });
+    document.getElementById('preview-tabs').append(previewSeg.el);
+  }
+  showPreviewTab('diff');
+  document.getElementById('bk-back').focus();
 }
 
 export function showPreviewTab(tab) {
-  document.getElementById('preview-content').style.display = tab==='preview'?'block':'none';
-  document.getElementById('diff-content').style.display = tab==='diff'?'block':'none';
-  document.getElementById('tab-btn-preview').classList.toggle('active', tab==='preview');
-  document.getElementById('tab-btn-diff').classList.toggle('active', tab==='diff');
+  previewSeg?.set(tab);
+  document.getElementById('preview-content').hidden = tab !== 'preview';
+  document.getElementById('diff-content').hidden = tab !== 'diff';
 }
 
-// Drop the preview text and rendered diff so they aren't kept in the DOM (and
-// memory) after the panel closes. Safe to call when nothing is open.
+// Drop the preview text and rendered diff so they aren't kept in the DOM after
+// the panel closes. Safe to call when nothing is open.
 export function clearPreview() {
   previewBackupContent = ''; currentPreviewName = '';
   document.getElementById('preview-content').textContent = '';
   document.getElementById('diff-content').textContent = '';
-  document.getElementById('backup-preview').style.display = 'none';
-  document.getElementById('backups-list').style.display = 'block';
+  document.getElementById('backup-preview').hidden = true;
+  document.getElementById('backups-list').hidden = false;
+  document.getElementById('bk-back').hidden = true;
+  document.getElementById('bk-h').textContent = 'Backups';
 }
-export function closePreview() { clearPreview(); }
+
+export function closePreview() {
+  clearPreview();
+  document.querySelector('#backups-list .open')?.focus();
+}
 export function restoreFromPreview() {
   setContent(previewBackupContent);
   setStatus('Backup loaded (unsaved)', 'info'); setDot('yellow');

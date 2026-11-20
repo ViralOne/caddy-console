@@ -29,15 +29,15 @@ function _showCount(matches, current) {
   const label = document.getElementById('match-count');
   if (matches.length === 0) {
     label.textContent = _query() ? 'no matches' : '';
-    label.className = _query() ? 'match-count none' : 'match-count';
+    label.classList.toggle('none', !!_query());
     return;
   }
-  label.className = 'match-count';
+  label.classList.toggle('none', false);
   if (current < 0) {
     label.textContent = `${matches.length} match${matches.length !== 1 ? 'es' : ''}`;
   } else {
     const line = editorView.state.doc.lineAt(matches[current].from).number;
-    label.textContent = `${current + 1} / ${matches.length} · line ${line}`;
+    label.textContent = `${current + 1} of ${matches.length} · line ${line}`;
   }
 }
 

@@ -1,21 +1,32 @@
-// Side panels: open/close behaviour + Audit, Status, and Snippets loaders.
+// Side panels (Snippets, Backups): one open at a time, toggled from the header.
 import { clearPreview, loadBackups } from './backups.js';
 import { editorView, fetchJson, setDot, showError } from './core.js';
+import { toast } from './ui/toast.js';
+
+const panel = (name) => document.getElementById(`panel-${name}`);
+const headerButton = (name) => document.getElementById(`panel-btn-${name}`);
+
+export function closeAllPanels() {
+  document.querySelectorAll('.panel').forEach(p => { p.hidden = true; });
+  document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.setAttribute('aria-pressed', 'false'));
+  clearPreview();
+}
+
 export function togglePanel(name) {
-  const panel = document.getElementById(`panel-${name}`); const isOpen = panel.classList.contains('open');
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('open'));
-  document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
-  if (isOpen) { if (name === 'backups') clearPreview(); return; }
-  panel.classList.add('open');
-  const btn = document.getElementById(`panel-btn-${name}`);
-  if (btn) btn.classList.add('panel-active');
+  const wasOpen = !panel(name).hidden;
+  closeAllPanels();
+  if (wasOpen) { headerButton(name)?.focus(); return; }
+  panel(name).hidden = false;
+  headerButton(name)?.setAttribute('aria-pressed', 'true');
+  panel(name).querySelector('[data-close]')?.focus();
   if (name === 'backups') loadBackups();
   if (name === 'snippets') loadSnippets();
 }
+
 export function closePanel(name) {
-  document.getElementById(`panel-${name}`).classList.remove('open');
-  document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
-  if (name === 'backups') clearPreview();
+  const wasOpen = !panel(name).hidden;
+  closeAllPanels();
+  if (wasOpen) headerButton(name)?.focus();
 }
 
 export async function loadSnippets() {
@@ -24,11 +35,25 @@ export async function loadSnippets() {
   try { data = await fetchJson('/api/snippets'); }
   catch (e) { showError(list, 'Could not load snippets', e); return; }
   list.textContent = '';
-  data.snippets.forEach(s => {
-    const card = document.createElement('div'); card.className = 'snippet-card'; card.onclick = () => insertSnippet(s.code);
-    const name = document.createElement('div'); name.className = 'name'; name.textContent = s.name;
-    const desc = document.createElement('div'); desc.className = 'desc'; desc.textContent = s.description;
-    card.appendChild(name); card.appendChild(desc); list.appendChild(card);
+  data.snippets.forEach((s) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'snip';
+    const name = document.createElement('b');
+    name.textContent = s.name;
+    const desc = document.createElement('span');
+    desc.textContent = s.description;
+    card.append(name, desc);
+    card.addEventListener('click', () => insertSnippet(s));
+    list.appendChild(card);
   });
 }
-function insertSnippet(code) { const pos = editorView.state.selection.main.head; editorView.dispatch({ changes: { from: pos, insert: code } }); setDot('yellow'); closePanel('snippets'); }
+
+function insertSnippet(s) {
+  const pos = editorView.state.selection.main.head;
+  const line = editorView.state.doc.lineAt(pos).number;
+  editorView.dispatch({ changes: { from: pos, insert: s.code } });
+  setDot('yellow');
+  closePanel('snippets');
+  toast(`Inserted "${s.name}" at line ${line}`, { kind: 'ok' });
+}
