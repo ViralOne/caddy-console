@@ -7,6 +7,7 @@
 html,body{margin:0}
 body{background:var(--bg);color:var(--ink);font:400 var(--t-md)/1.5 var(--sans);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
 button,input,select{font:inherit;color:inherit}
+::placeholder{color:var(--ink-3);opacity:1}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline;text-underline-offset:3px}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
