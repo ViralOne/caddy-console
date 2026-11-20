@@ -19,10 +19,6 @@ dialog{margin:auto}
 .icon{flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px}
 .icon-sprite{display:none}
 ::selection{background:var(--selection-bg);color:var(--selection-ink)}
-/* Opacity rather than scale: a pulsing size would nudge the button's text. */
-@keyframes icon-pulse{0%,100%{opacity:1}50%{opacity:.35}}
-.icon-pulse{animation:icon-pulse 1.6s ease-in-out infinite}
-@media (prefers-reduced-motion:reduce){.icon-pulse{animation:none}}
 
 /* === header === */
 .hdr{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:20px;height:var(--hdr);padding:0 20px;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
@@ -121,9 +117,6 @@ main{min-height:calc(100vh - var(--hdr))}
 .panel-ft{padding:12px 16px;border-top:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
 .panel-ft p{margin:0;font-size:var(--t-xs);color:var(--ink-3)}
 .panel-ft .acts{display:flex;gap:8px;flex-wrap:wrap}
-.d-add{background:var(--add-bg)} .d-del{background:var(--del-bg)} .d-hunk{color:var(--ink-3)}
-.d-add .g,.d-del .g{font-weight:700} .d-add .g{color:var(--good)} .d-del .g{color:var(--crit)}
-.diff .lnn{display:inline-block;width:3ch;color:var(--ink-3);text-align:right;margin-right:12px}
 .linkbtn{border:0;background:none;padding:0;color:var(--accent);font:inherit;cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:3px}
 .search-bar:not(.open){display:none}
 .findbar .find-close{margin-left:auto}
@@ -193,15 +186,7 @@ dialog.wide{max-width:min(760px,calc(100vw - 24px));width:760px}
 .toast button{border:0;background:none;color:inherit;font-weight:650;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 @keyframes tin{from{opacity:0;transform:translateY(8px)}}
 
-/* Old class names still used by markup that later tasks rewrite. */
-.btn-sm{height:28px;padding:0 10px;font-size:var(--t-xs)}
-.btn-tool{background:transparent;border-color:transparent;color:var(--ink-2)}
-.btn-tool:hover,.btn-tool.panel-active,.btn-quiet[aria-pressed="true"]{background:var(--bg-3);color:var(--ink)}
-/* .btn-save was referenced but never defined; it is the primary action. */
-.btn-save{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-.btn-save:hover{background:var(--accent-hi)}
-.btn-tab{background:transparent;border-color:transparent;color:var(--ink-2)}
-.btn-tab.active{background:var(--bg-4);color:var(--ink)}
+.btn-quiet[aria-pressed="true"]{background:var(--bg-3);color:var(--ink)}
 .btn:disabled{cursor:default;opacity:.6}
 .btn-primary:disabled{opacity:1}
 .dlg-detail{margin:0;padding:10px 12px;border-radius:var(--r-md);background:var(--bg);font:12.5px/1.6 var(--mono);color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto}
@@ -325,7 +310,6 @@ select.sel{height:40px;padding:0 10px;border-radius:var(--r-md);border:1px solid
 .hist-hd .hint{margin-left:auto;font-size:var(--t-xs);color:var(--ink-3)}
 .chart{position:relative;height:120px;cursor:crosshair;border-bottom:1px solid var(--line-2);border-radius:2px}
 .chart svg{width:100%;height:100%;display:block}
-.axis{display:flex;justify-content:space-between;font-size:var(--t-xs);color:var(--ink-3);padding-top:6px}
 .readout{margin-top:6px;min-height:20px;font-size:var(--t-sm);color:var(--ink-2);display:flex;gap:14px;flex-wrap:wrap}
 .readout b{color:var(--ink);font-weight:600}
 .stats{display:flex;gap:28px;flex-wrap:wrap;margin:20px 0 10px;padding:12px 0;border-top:1px solid var(--line);font-size:var(--t-sm);color:var(--ink-3)}
@@ -358,7 +342,6 @@ details.raw summary{cursor:pointer;color:var(--accent);font-size:var(--t-sm);lis
 details.raw summary::-webkit-details-marker{display:none}
 details.raw[open] summary .icon{transform:rotate(90deg)}
 details.raw pre{margin:10px 0 0;padding:12px 14px;border-radius:var(--r-md);background:var(--bg);font:12.5px/1.6 var(--mono);color:var(--ink-2);overflow:auto;max-height:240px}
-.ipanchor{position:relative;display:inline-block}
 .ippop{position:fixed;width:340px;padding:0;font-family:var(--sans);white-space:normal;overflow:auto;z-index:70}
 .ippop .sect{padding:12px 16px}
 .ippop .sect+.sect{border-top:1px solid var(--line)}
