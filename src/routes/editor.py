@@ -412,19 +412,21 @@ def validate():
     data = request.get_json(silent=True) or {}
     content = data.get("content", "")
 
+    # Every check runs on `content`, the text the editor shows, so each
+    # "Line N" (ours and Caddy's) points at the editor's line. Formatting only
+    # changes whitespace, which never changes validity, but it can collapse
+    # blank lines and shift every line after them. `formatted` is still
+    # returned so Check can apply it.
     formatted = caddy_fmt(content)
-    is_valid, message, check_level = caddy_check(formatted)
+    is_valid, message, check_level = caddy_check(content)
 
     if not is_valid:
         return jsonify({"valid": False, "message": message, "warnings": [],
                         "formatted": None, "check_level": check_level})
 
-    # Line numbers: the format warning points into `content` (what the editor
-    # shows); the others into `formatted`, as before. They agree whenever the
-    # file is already formatted, which every save through the console ensures.
     warnings = [w for w in (fmt_warning(content, formatted),) if w]
-    warnings += smart_validate(formatted)
-    warnings += upstream_resolve_warnings(formatted)
+    warnings += smart_validate(content)
+    warnings += upstream_resolve_warnings(content)
 
     return jsonify({"valid": True,
                     "message": "Caddyfile check passed, but review warnings" if warnings else message,

@@ -8,6 +8,7 @@ import { backupLabel } from './format.js';
 import { closePanel } from './panels.js';
 import { alertDialog, confirmDialog } from './ui/dialog.js';
 import { segmented } from './ui/seg.js';
+import { lintCurrent } from './validate.js';
 import { toast } from './ui/toast.js';
 let previewBackupContent = '';
 let currentPreviewName = '';
@@ -109,6 +110,7 @@ export function restoreFromPreview() {
   setStatus('Backup loaded (unsaved)', 'info'); setDot('yellow');
   toast(`Loaded the backup from ${backupLabel(currentPreviewName)} into the editor. Save & Reload to apply it.`, { kind: 'info' });
   closePanel('backups');
+  lintCurrent();
 }
 
 export async function rollbackFromPreview() {
@@ -143,6 +145,7 @@ export async function rollbackFromPreview() {
     markSaved();
     toast(`Rolled back to ${label}. Caddy reloaded.`, { kind: 'ok' });
     closePanel('backups');
+    lintCurrent();
   } else if (data && data.conflict) {
     if (data.version) setVersion(data.version);
     setStatus('Restore blocked: file changed on disk', 'err'); setDot('red');
@@ -153,6 +156,7 @@ export async function rollbackFromPreview() {
     setStatus(data.message, 'warn'); setDot('yellow');
     toast(data.message, { kind: 'warn' });
     closePanel('backups');
+    lintCurrent();
   } else {
     const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
     if (data && data.version) setVersion(data.version);

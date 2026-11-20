@@ -23,6 +23,10 @@ class FmtExitCodeTests(unittest.TestCase):
                     '{"level":"error","msg":"/tmp/C:2: Caddyfile input is not formatted; Tip: use \'--overwrite\'"}'))
         self.assertEqual(validator.caddy_fmt("a {\n    respond x\n}\n"), "a {\n\trespond x\n}\n")
 
+    def test_not_formatted_with_empty_output_falls_back_to_the_input(self):
+        self._fake((1, "", "Caddyfile input is not formatted"))
+        self.assertEqual(validator.caddy_fmt("original"), "original")
+
     def test_other_failures_still_fall_back_to_the_input(self):
         self._fake((1, "partial", "Error: open /tmp/C: permission denied"))
         self.assertEqual(validator.caddy_fmt("original"), "original")
