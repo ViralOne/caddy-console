@@ -85,7 +85,11 @@ prefix, Caddy tries to obtain certificates and redirects to HTTPS, which loops.
 
 ```caddyfile
 {
-	admin 0.0.0.0:2019
+	# Only on the internal caddy-admin network (fixed IP in the compose file).
+	# 0.0.0.0 would also expose this unauthenticated API to cloudflared.
+	admin 172.30.250.2:2019 {
+		origins caddy:2019 172.30.250.2:2019
+	}
 	servers {
 		# Through the tunnel every request comes from the cloudflared container.
 		# This makes Caddy (and the console's dashboard/Explore, including GeoIP)
@@ -174,11 +178,11 @@ The same app is served on both domains from one block.
   re-enable port forwards "temporarily".
 - **Other records on the same IP** (mail, VPN, SSH) still expose it. Review the
   whole Route53 zone.
-- **Caddy's admin API** (`:2019`) has no authentication. The `caddy-admin`
-  network is internal, but Caddy listens on `0.0.0.0`, so `cloudflared` (on
-  `caddy-edge`) could reach it too. The tunnel only routes to `caddy:80`, so it is
-  not reachable from the internet. For strict isolation: give Caddy a fixed IP on
-  `caddy-admin` and set `admin <that-ip>:2019` in the Caddyfile.
+- **Caddy's admin API** (`:2019`) has no authentication. It must be bound to
+  Caddy's fixed IP on the internal `caddy-admin` network (the `admin` line in the
+  Phase 2 Caddyfile), not `0.0.0.0`. With `0.0.0.0`, `cloudflared` on `caddy-edge`
+  could reach it. Check after deploying: from the `cloudflared` side, port 2019
+  must refuse connections while port 80 answers.
 - **A broken Caddyfile does not lock you out of the console**: the console has its
   own tunnel hostname that goes straight to `caddy-console:9090`, not through Caddy.
 - **Later (optional)**: Cloudflare Access in front of the console as a second

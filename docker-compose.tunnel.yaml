@@ -15,10 +15,14 @@ services:
       - caddy-config:/config
       - caddy-logs:/var/log/caddy
     networks:
-      - caddy-edge
-      - caddy-admin
+      caddy-edge: {}
+      # Fixed address so the Caddyfile can bind the admin API to this network
+      # only: `admin 172.30.250.2:2019 { origins caddy:2019 172.30.250.2:2019 }`.
+      # With `admin 0.0.0.0:2019`, cloudflared (on caddy-edge) could reach it.
+      caddy-admin:
+        ipv4_address: 172.30.250.2
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      test: ["CMD", "wget", "-qO-", "http://172.30.250.2:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -103,9 +107,12 @@ services:
 networks:
   # cloudflared <-> Caddy data plane, plus egress for Caddy and the tunnel.
   caddy-edge:
-  # Only Caddy and the console can reach the unauthenticated admin API.
+  # Caddy <-> console only. Admin API isolation needs the Caddyfile `admin` bind above.
   caddy-admin:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.30.250.0/29
   # cloudflared <-> console; egress for Google OAuth and the GeoIP download.
   console-ui:
 
