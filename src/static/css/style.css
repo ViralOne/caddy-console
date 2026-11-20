@@ -172,31 +172,6 @@ main{min-height:calc(100vh - var(--hdr))}
 /* Pushes siblings apart in a flex row (Explore stats bar). */
 .spacer{flex:1}
 
-/* === shell, narrow screens === */
-@media (max-width:1024px){
-  .etools .grp .lbl{display:none}
-  .etools .btn{padding:0 10px}
-}
-@media (max-width:720px){
-  :root{--hdr:52px}
-  body{padding-bottom:62px}
-  .hdr{gap:10px;padding:0 12px;backdrop-filter:none;background:var(--bg)}
-  .brand b{display:none}
-  .tabs{position:fixed;left:0;right:0;bottom:0;height:62px;z-index:40;background:var(--bg-2);border-top:1px solid var(--line);justify-content:space-around;padding-bottom:env(safe-area-inset-bottom)}
-  .tabs a{flex-direction:column;justify-content:center;gap:3px;font-size:var(--t-xs);flex:1}
-  .tabs a .icon{width:20px;height:20px}
-  .tabs a[aria-current="page"]{color:var(--accent)}
-  .tabs a[aria-current="page"]::after{top:0;bottom:auto;left:30%;right:30%}
-  .acct-btn .em,.acct-btn>.icon{display:none}
-  .acct-btn{padding:2px;border:0}
-  .acct-menu{position:fixed;left:8px;right:8px;top:auto;bottom:70px;width:auto;max-height:calc(100vh - 140px);overflow:auto}
-  .etools .grp{border:0;padding:0}
-  .etools .lbl{display:none}
-  .editor{height:calc(100vh - var(--hdr) - 62px)}
-  .sbar .hide-sm{display:none}
-}
-@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-
 /* === dialogs and toasts === */
 dialog{border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--bg-2);color:var(--ink);box-shadow:var(--shadow);padding:0;max-width:min(560px,calc(100vw - 24px))}
 dialog::backdrop{background:rgba(8,8,14,.6);backdrop-filter:blur(2px)}
@@ -448,3 +423,102 @@ details.raw[open]{flex-basis:100%}
 .login-card p .mono{color:var(--ink)}
 .cf .muted{font-size:var(--t-sm)}
 .login .gbtn svg{flex:none}
+
+/* === responsive ===
+ * Last in the file so these overrides win over the component rules above. */
+@media (max-width:1100px){
+  .figs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media (max-width:1024px){
+  /* Only Find/Snippets/Backups collapse to icons here; their title is the tooltip. Check keeps its word until 720. */
+  .etools .grp .lbl{display:none}
+  .etools .btn{padding:0 10px}
+  .explore{grid-template-columns:minmax(0,1fr)}
+  /* Closed, the drawer is also invisible so its controls drop out of the tab order. */
+  .facets{position:fixed;z-index:60;top:0;bottom:0;left:0;width:min(320px,88vw);overflow:auto;transform:translateX(-102%);visibility:hidden;transition:transform .2s ease,visibility .2s;box-shadow:var(--shadow);padding-top:0}
+  .facets.open{transform:none;visibility:visible}
+  .facets-hd{display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:1;background:var(--bg);padding:14px 0;margin-bottom:6px;border-bottom:1px solid var(--line)}
+  .facets-hd h2{margin:0;font-size:var(--t-lg)}
+  .scrim{position:fixed;inset:0;z-index:55;background:rgba(8,8,14,.55)}
+  .filters-btn{display:inline-flex;height:40px}
+  .panel{position:fixed;z-index:58;top:var(--hdr);right:0;bottom:0;width:min(420px,100vw);box-shadow:var(--shadow)}
+  .verdict{grid-template-columns:1fr}
+  .cfg{min-width:0}
+  .changes li{grid-template-columns:110px 1fr auto}
+  .changes .det{grid-column:2/3}
+}
+@media (max-width:720px){
+  :root{--hdr:52px}
+  body{padding-bottom:62px}
+  .hdr{gap:10px;padding:0 12px;backdrop-filter:none;background:var(--bg)}
+  .brand b{display:none}
+  .tabs{position:fixed;left:0;right:0;bottom:0;height:62px;z-index:40;background:var(--bg-2);border-top:1px solid var(--line);justify-content:space-around;padding-bottom:env(safe-area-inset-bottom)}
+  .tabs a{flex-direction:column;justify-content:center;gap:3px;font-size:var(--t-xs);flex:1}
+  .tabs a .icon{width:20px;height:20px}
+  .tabs a[aria-current="page"]{color:var(--accent)}
+  .tabs a[aria-current="page"]::after{top:0;bottom:auto;left:30%;right:30%}
+  .acct-btn .em,.acct-btn>.icon{display:none}
+  .acct-btn{padding:2px;border:0}
+  .acct-menu{position:fixed;left:8px;right:8px;top:auto;bottom:70px;width:auto;max-height:calc(100vh - 140px);overflow:auto}
+  .etools{gap:4px}
+  .etools .grp{border:0;padding:0;margin:0}
+  /* The Check word goes; the button stays (aria-label and title name it). */
+  .etools .lbl{display:none}
+  .etools .btn{padding:0 8px}
+  .page{padding:22px 16px 40px}
+  .verdict{padding-left:14px;padding-right:14px}
+  .verdict h1{font-size:24px}
+  .figs{grid-template-columns:1fr 1fr}
+  .fig{padding-right:10px}
+  .notice{grid-template-columns:auto 1fr}
+  .notice .acts{grid-column:1/-1}
+  /* Sites and stream tables become stacked rows. */
+  .sites,.sites tbody,.stream,.stream tbody{display:block;width:100%}
+  .sites thead,.stream thead{display:none}
+  .sites tr{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 10px;padding:14px 0;border-bottom:1px solid var(--line)}
+  .sites tr:last-child{border-bottom:0}
+  .sites tr.is-crit{background:var(--crit-soft);padding-left:12px;padding-right:12px}
+  .sites tr.is-crit td{background:none}
+  .sites td{display:block;padding:0!important;border:0!important;text-align:left!important;min-width:0}
+  .sites td.c-site{grid-column:1/3;overflow-wrap:anywhere}
+  .sites td.c-health{grid-column:3/5;text-align:right!important}
+  .sites td.c-spark{display:none}
+  .sites td[data-label]::before{content:attr(data-label);display:block;font-size:11px;color:var(--ink-3)}
+  .sites .flag{flex-wrap:wrap;row-gap:2px}
+  .changes li{grid-template-columns:minmax(0,1fr) auto;gap:2px 12px}
+  .changes .who,.changes .det{grid-column:1/2}
+  .changes time{grid-row:1;grid-column:2}
+  .ex-main{padding:14px 12px 40px}
+  .qwrap{flex-wrap:wrap;flex-basis:100%;padding:4px 6px 4px 12px}
+  .qwrap input{flex-basis:calc(100% - 30px);height:32px}
+  .hist-hd .hint{display:none}
+  .stats{gap:16px 22px}
+  .stats .src{margin-left:0}
+  .stream tr.ev{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:2px 10px;padding:9px 4px;border-bottom:1px solid var(--line)}
+  .stream tr.ev.open{background:var(--bg-2)}
+  .stream tr.ev td{display:block;padding:0!important;border:0!important;min-width:0}
+  .stream td.c-host{grid-column:1/-1;order:5;color:var(--ink);white-space:normal;overflow-wrap:anywhere}
+  .stream td.c-uri{grid-column:1/-1;order:6}
+  .stream td.c-dur{text-align:right}
+  .stream tr.detail{display:block}
+  .stream tr.detail td{display:block}
+  .dwrap{padding:4px 12px 16px}
+  .fields{grid-template-columns:1fr}
+  /* Bottom sheet: overrides the inline top/left/bottom/max-height the popover sets for its anchor. */
+  .ippop{left:0!important;right:0;top:auto!important;bottom:0!important;width:auto;max-height:78vh!important;border-radius:var(--r-lg) var(--r-lg) 0 0}
+  .toasts{bottom:76px;left:12px;right:12px;transform:none}
+  .editor{height:calc(100vh - var(--hdr) - 62px)}
+  .findbar>*{order:2}
+  .findbar>.finput:first-child{order:1;flex:1 1 120px;min-width:0}
+  .findbar .find-close,.findbar [data-act="search-prev"],.findbar [data-act="search-next"],.findbar .fcount{order:1}
+  .findbar .find-close{margin-left:0!important}
+  .findbar .finput-replace{order:3;flex:1 1 100%;min-width:0}
+  .findbar .finput-replace~.btn{order:4;flex:1;justify-content:center}
+  .finput input{width:100%;min-width:0}
+  .sbar .hide-sm{display:none}
+  .panel{top:auto;left:0;right:0;bottom:0;width:auto;height:82vh;border-left:0;border-top:1px solid var(--line);border-radius:var(--r-lg) var(--r-lg) 0 0}
+  .dlg-ft .btn{flex:1;justify-content:center}
+  .dlg-ft .note{flex-basis:100%}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
