@@ -1,5 +1,6 @@
 import difflib
 import hashlib
+import functools
 import ipaddress
 import os
 import re
@@ -8,7 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, wait
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 
 import requests as http_client
 
@@ -316,6 +317,8 @@ _DNS_TIMEOUT = 1.0
 _DNS_CACHE_MAX = 256
 _dns_cache: dict[str, tuple[float, bool | None]] = {}
 _dns_lock = threading.Lock()
+_dns_inflight: dict[str, Future] = {}
+_DNS_MAX_HOSTS = 64
 _dns_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="dns-check")
 _SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 _PLACEHOLDER_RE = re.compile(r"\{[^{}\s]*\}")
@@ -370,32 +373,61 @@ def _check_host(host, lookup):
         return True
     except socket.gaierror as e:
         return False if e.errno in _NOT_FOUND else None
-    except (OSError, UnicodeError):
+    except Exception:  # noqa: BLE001 - a DNS hiccup must never break /api/validate
         return None
 
 
-def resolve_hosts(hosts, lookup=socket.getaddrinfo, timeout=_DNS_TIMEOUT) -> dict:
-    """host -> True (resolves), False (no such name) or None (unknown)."""
+def _dns_store(host, ok):
+    """Cache an answer; an unknown (None) never replaces a fresh known one."""
     now = time.monotonic()
-    result, pending = {}, {}
     with _dns_lock:
-        for h in hosts:
+        hit = _dns_cache.get(host)
+        if ok is None and hit and hit[0] > now and hit[1] is not None:
+            return
+        _dns_cache[host] = (now + _DNS_TTL, ok)
+        while len(_dns_cache) > _DNS_CACHE_MAX:
+            del _dns_cache[next(iter(_dns_cache))]
+
+
+def _dns_done(host, fut):
+    with _dns_lock:
+        if _dns_inflight.get(host) is fut:
+            del _dns_inflight[host]
+    if not fut.cancelled():
+        _dns_store(host, fut.result())
+
+
+def resolve_hosts(hosts, lookup=socket.getaddrinfo, timeout=_DNS_TIMEOUT) -> dict:
+    """host -> True (resolves), False (no such name) or None (unknown).
+
+    At most _DNS_MAX_HOSTS hosts are looked up per call; the rest stay unknown.
+    A lookup that outlives the timeout keeps running in the background, is
+    shared by later calls, and fills the cache when it finishes.
+    """
+    hosts = list(dict.fromkeys(hosts))
+    result = {h: None for h in hosts}
+    now = time.monotonic()
+    futs, own = {}, {}
+    with _dns_lock:
+        for h in hosts[:_DNS_MAX_HOSTS]:
             hit = _dns_cache.get(h)
             if hit and hit[0] > now:
                 result[h] = hit[1]
-    for h in hosts:
-        if h not in result and h not in pending:
-            pending[h] = _dns_pool.submit(_check_host, h, lookup)
-    if pending:
-        done, _ = wait(list(pending.values()), timeout=timeout)
-        expires = time.monotonic() + _DNS_TTL
-        with _dns_lock:
-            for h, fut in pending.items():
-                ok = fut.result() if fut in done else None
-                result[h] = ok
-                _dns_cache[h] = (expires, ok)
-            while len(_dns_cache) > _DNS_CACHE_MAX:
-                del _dns_cache[next(iter(_dns_cache))]
+            elif h in _dns_inflight:
+                futs[h] = _dns_inflight[h]
+            else:
+                futs[h] = own[h] = _dns_inflight[h] = _dns_pool.submit(_check_host, h, lookup)
+    for h, fut in own.items():
+        fut.add_done_callback(functools.partial(_dns_done, h))
+    if futs:
+        done, _ = wait(list(futs.values()), timeout=timeout)
+        for h, fut in futs.items():
+            if fut in done and not fut.cancelled():
+                result[h] = fut.result()
+            else:
+                if h in own:
+                    fut.cancel()   # no-op once it is running
+                _dns_store(h, None)
     return result
 
 

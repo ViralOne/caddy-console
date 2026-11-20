@@ -5,6 +5,7 @@ No caddy binary required.
 """
 import os
 import socket
+import threading
 import tempfile
 import time
 import unittest
@@ -293,14 +294,18 @@ class FmtWarningTest(unittest.TestCase):
                          "Line 2: not formatted — Check will fix whitespace on 1 line")
 
 
-
 class ResolveWarningTest(unittest.TestCase):
     def setUp(self):
         validator._dns_cache.clear()
         self.calls = []
+        self.gate = threading.Event()
+        self.addCleanup(self.gate.set)
+        self.addCleanup(validator._dns_cache.clear)
 
-    def tearDown(self):
-        validator._dns_cache.clear()
+    def blocking(self, host, port):
+        self.calls.append(host)
+        self.gate.wait(5)
+        return [("ok",)]
 
     def lookup(self, answers):
         def fake(host, port):
@@ -355,6 +360,51 @@ class ResolveWarningTest(unittest.TestCase):
         self.warn(content)
         self.warn(content)
         self.assertEqual(self.calls, ["web"])
+
+    def test_unexpected_lookup_errors_are_unknown(self):
+        def boom(host, port):
+            raise ValueError("embedded null byte")
+        self.assertEqual(validator.upstream_resolve_warnings("a {\n\treverse_proxy web:1\n}\n", lookup=boom), [])
+
+    def test_unknown_never_overwrites_a_fresh_known_answer(self):
+        validator._dns_store("web", True)
+        validator._dns_store("web", None)
+        self.assertIs(validator._dns_cache["web"][1], True)
+
+    def test_in_flight_lookup_is_shared_not_resubmitted(self):
+        self.assertEqual(validator.resolve_hosts(["slow"], lookup=self.blocking, timeout=0.05), {"slow": None})
+        validator._dns_cache["slow"] = (0.0, None)   # cached unknown has expired
+        self.assertEqual(validator.resolve_hosts(["slow"], lookup=self.blocking, timeout=0.05), {"slow": None})
+        self.assertEqual(self.calls, ["slow"])
+
+    def test_concurrent_calls_submit_one_lookup_per_host(self):
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(
+            validator.resolve_hosts(["a", "b"], lookup=self.blocking, timeout=0.3))) for _ in range(2)]
+        for t in threads:
+            t.start()
+        time.sleep(0.1)
+        self.gate.set()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(self.calls), ["a", "b"])
+        self.assertEqual(out, [{"a": True, "b": True}] * 2)
+
+    def test_late_result_fills_the_cache(self):
+        validator.resolve_hosts(["late"], lookup=self.blocking, timeout=0.05)
+        self.gate.set()
+        deadline = time.monotonic() + 2
+        while validator._dns_cache["late"][1] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertIs(validator._dns_cache["late"][1], True)
+        self.assertNotIn("late", validator._dns_inflight)
+
+    def test_hosts_per_call_are_capped(self):
+        hosts = [f"h{i}" for i in range(70)]
+        result = validator.resolve_hosts(hosts, lookup=self.lookup({}), timeout=2)
+        self.assertEqual(len(self.calls), 64)
+        self.assertEqual(sum(v is True for v in result.values()), 64)
+        self.assertEqual(sum(v is None for v in result.values()), 6)
 
 
 if __name__ == "__main__":

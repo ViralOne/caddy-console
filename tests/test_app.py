@@ -693,7 +693,6 @@ class ValidateWarningsApiTest(AppTestCase):
         self.assertEqual(body["warnings"], [])
 
 
-
 class ValidateResolveApiTest(AppTestCase):
     def test_validate_reports_unresolvable_upstreams(self):
         with mock.patch.object(editor_mod, "upstream_resolve_warnings",
