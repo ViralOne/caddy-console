@@ -51,6 +51,7 @@ node tests/router.test.mjs                   # URL <-> state
 node tests/explore-query.test.mjs            # query parsing
 node tests/jsonview.test.mjs                 # raw-line formatting
 node tests/ip-info.test.mjs                  # IP popover formatting
+node tests/editor-prefs.test.mjs             # editor keymap preference
 ```
 
 No Caddy binary and no network needed: the admin API is faked and `caddy fmt` /

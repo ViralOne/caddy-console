@@ -3,6 +3,8 @@
 // Chrome rather than a data view, so plain DOM — Preact is reserved for the
 // dashboard and Explore, where derived state actually earns it.
 import { iconEl } from './icons.js';
+import { applyEditorKeymap } from './core.js';
+import { KEYMAPS, getKeymap, setKeymap } from './editor-prefs.js';
 
 const SHORTCUTS = [
   ['Save & reload', 'Cmd/Ctrl + S'],
@@ -10,6 +12,13 @@ const SHORTCUTS = [
   ['Next / previous match', 'Enter / Shift + Enter'],
   ['Close panel, find bar or dialog', 'Esc'],
 ];
+
+const VIM_SHORTCUTS = [
+  ['Save & reload (Vim)', ':w'],
+  ['Normal mode (Vim)', 'Esc'],
+];
+
+const shortcutsFor = (id) => (id === 'vim' ? [...SHORTCUTS, ...VIM_SHORTCUTS] : SHORTCUTS);
 
 /** Initials from an email: "dev@local" -> "DE", "a.b@x.com" -> "AB". */
 function initialsOf(email) {
@@ -95,9 +104,46 @@ export function initUserMenu(user) {
 
   const shortcuts = document.createElement('div');
   shortcuts.className = 'menu-section';
-  shortcuts.appendChild(Object.assign(document.createElement('div'),
-    { className: 'menu-section-title', textContent: 'Shortcuts' }));
-  SHORTCUTS.forEach(([l, v]) => shortcuts.appendChild(row(l, v)));
+  const renderShortcuts = (id) => {
+    shortcuts.textContent = '';
+    shortcuts.appendChild(Object.assign(document.createElement('div'),
+      { className: 'menu-section-title', textContent: 'Shortcuts' }));
+    shortcutsFor(id).forEach(([l, v]) => shortcuts.appendChild(row(l, v)));
+  };
+  renderShortcuts(getKeymap());
+
+  // Editor keymap: a radio group, saved per browser and applied to the open
+  // editor in place (unsaved edits are kept).
+  const editorPref = document.createElement('div');
+  editorPref.className = 'menu-section';
+  editorPref.appendChild(Object.assign(document.createElement('div'),
+    { className: 'menu-section-title', id: 'menu-editor-title', textContent: 'Editor' }));
+  const seg = document.createElement('div');
+  seg.className = 'menu-seg';
+  seg.setAttribute('role', 'radiogroup');
+  seg.setAttribute('aria-labelledby', 'menu-editor-title');
+  const segButtons = KEYMAPS.map(({ id, label }) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'menu-seg-btn';
+    b.setAttribute('role', 'radio');
+    b.dataset.keymap = id;
+    b.textContent = label;
+    return b;
+  });
+  const markKeymap = (id) => segButtons.forEach(b => b.setAttribute('aria-checked', String(b.dataset.keymap === id)));
+  markKeymap(getKeymap());
+  seg.addEventListener('click', (e) => {
+    const b = e.target.closest('.menu-seg-btn');
+    if (!b || b.getAttribute('aria-checked') === 'true') return;
+    const id = b.dataset.keymap;
+    setKeymap(id);
+    markKeymap(id);
+    renderShortcuts(id);
+    applyEditorKeymap(id);
+  });
+  seg.append(...segButtons);
+  editorPref.appendChild(seg);
 
   const logout = document.createElement('a');
   logout.className = 'menu-action';
@@ -109,7 +155,7 @@ export function initUserMenu(user) {
   version.className = 'menu-version';
   version.textContent = `Caddy Console ${user.version || ''}`.trim();
 
-  menu.append(head, session, shortcuts, logout, version);
+  menu.append(head, session, editorPref, shortcuts, logout, version);
   host.append(button, menu);
 
   let open = false;

@@ -1,9 +1,10 @@
 import { basicSetup, EditorView } from 'codemirror';
-import { EditorState, StateEffect, StateField, RangeSetBuilder } from '@codemirror/state';
+import { EditorState, StateEffect, StateField, RangeSetBuilder, Compartment, Prec } from '@codemirror/state';
 import { keymap, Decoration } from '@codemirror/view';
 import { StreamLanguage, HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 import { indentWithTab } from '@codemirror/commands';
+import { vim, Vim } from '@replit/codemirror-vim';
 
 window.CM = {
   EditorView, EditorState, keymap, StreamLanguage, basicSetup, indentWithTab,
@@ -12,4 +13,6 @@ window.CM = {
   HighlightStyle, syntaxHighlighting, tags,
   // Used by the find bar to highlight matches and the current row.
   Decoration, StateEffect, StateField, RangeSetBuilder,
+  // Keymap switching (Standard / Vim) without rebuilding the editor.
+  Compartment, Prec, vim, Vim,
 };

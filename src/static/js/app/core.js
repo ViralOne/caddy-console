@@ -5,11 +5,26 @@
 // run before any module body, so it is always populated by the time this runs.
 import { findHighlightExtension } from './search-highlight.js';
 import { doSave } from './validate.js';
+import { getKeymap } from './editor-prefs.js';
 
 const {
   basicSetup, EditorView, EditorState, keymap, StreamLanguage, indentWithTab,
-  HighlightStyle, syntaxHighlighting, tags,
+  HighlightStyle, syntaxHighlighting, tags, Compartment, Prec, vim, Vim,
 } = window.CM;
+
+// The keymap (Standard / Vim) lives in its own compartment so switching swaps
+// just that slot: the document, undo history and cursor all survive.
+const keymapSlot = new Compartment();
+
+// Vim's ex commands map onto the app's own save, since there is nothing to quit.
+// Vim's state is global to the page, so these are registered once.
+for (const [name, prefix] of [['write', 'w'], ['wq', 'wq'], ['xit', 'x']]) {
+  Vim.defineEx(name, prefix, () => { doSave(); });
+}
+
+// Highest precedence so Vim sees keys before basicSetup's default keymap.
+// `status` shows the mode (and pending ex command) in a bar under the editor.
+const keymapExtension = (id) => (id === 'vim' ? Prec.highest(vim({ status: true })) : []);
 
 // The editor used to ship oneDark, a second dark theme with its own surface and
 // syntax hues sitting inside a UI built on tokens.css — two palettes on one
@@ -40,6 +55,14 @@ const editorTheme = EditorView.theme({
     backgroundColor: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--ink-muted)',
   },
   '.cm-panels': { backgroundColor: 'var(--surface-raised)', color: 'var(--ink)' },
+  // Vim mode: block cursor and the mode / ex-command bar.
+  '.cm-fat-cursor': { background: 'var(--accent)', color: 'var(--bg)', outline: 'none' },
+  '&:not(.cm-focused) .cm-fat-cursor': { background: 'none', outline: '1px solid var(--accent)', color: 'transparent' },
+  '.cm-vim-panel': {
+    fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', padding: '2px var(--space-2)',
+    borderTop: '1px solid var(--border)',
+  },
+  '.cm-vim-panel input': { fontFamily: 'inherit', fontSize: 'inherit', color: 'var(--ink)', background: 'transparent', border: 'none', outline: 'none' },
   '.cm-tooltip': {
     backgroundColor: 'var(--surface-raised)', border: '1px solid var(--border-strong)',
     color: 'var(--ink)',
@@ -130,6 +153,7 @@ export function initEditor(content) {
     state: EditorState.create({
       doc: content,
       extensions: [
+        keymapSlot.of(keymapExtension(getKeymap())),
         basicSetup,
         editorTheme,
         syntaxHighlighting(editorHighlight),
@@ -152,6 +176,13 @@ export function initEditor(content) {
     parent: document.getElementById('cm-editor'),
   });
   refreshDocState();
+}
+
+/** Switch the open editor between keymaps ('standard' | 'vim') in place. */
+export function applyEditorKeymap(id) {
+  if (!editorView) return;
+  editorView.dispatch({ effects: keymapSlot.reconfigure(keymapExtension(id)) });
+  editorView.focus();
 }
 
 window.addEventListener('beforeunload', (e) => {
