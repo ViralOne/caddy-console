@@ -693,5 +693,20 @@ class ValidateWarningsApiTest(AppTestCase):
         self.assertEqual(body["warnings"], [])
 
 
+
+class ValidateResolveApiTest(AppTestCase):
+    def test_validate_reports_unresolvable_upstreams(self):
+        with mock.patch.object(editor_mod, "upstream_resolve_warnings",
+                               return_value=["Line 2: upstream nope:80 could not be resolved from the console container"]):
+            body = self.post("/api/validate", {"content": "a.example.com {\n\treverse_proxy nope:80\n}\n"}).get_json()
+        self.assertIn("Line 2: upstream nope:80 could not be resolved from the console container", body["warnings"])
+
+    def test_save_never_resolves(self):
+        with mock.patch.object(editor_mod, "upstream_resolve_warnings", side_effect=AssertionError("save resolved")), \
+             mock.patch.object(editor_mod.http_client, "post", lambda *a, **k: FakeResponse(200)):
+            r = self.post("/api/save", {"content": "a.example.com {\n\treverse_proxy nope:80\n}\n"})
+        self.assertEqual(r.status_code, 200)
+
+
 if __name__ == "__main__":
     unittest.main()

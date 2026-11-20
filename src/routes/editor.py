@@ -26,7 +26,7 @@ from ..config import (
     CADDYFILE,
     SESSION_TIMEOUT_HOURS,
 )
-from ..validator import caddy_check, caddy_fmt, caddy_validate, fmt_warning, smart_validate
+from ..validator import caddy_check, caddy_fmt, caddy_validate, fmt_warning, smart_validate, upstream_resolve_warnings
 
 
 editor_bp = Blueprint("editor", __name__)
@@ -424,6 +424,7 @@ def validate():
     # file is already formatted, which every save through the console ensures.
     warnings = [w for w in (fmt_warning(content, formatted),) if w]
     warnings += smart_validate(formatted)
+    warnings += upstream_resolve_warnings(formatted)
 
     return jsonify({"valid": True,
                     "message": "Caddyfile check passed, but review warnings" if warnings else message,

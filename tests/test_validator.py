@@ -4,7 +4,9 @@ Run with:  python3 -m unittest discover -s tests -v
 No caddy binary required.
 """
 import os
+import socket
 import tempfile
+import time
 import unittest
 
 import tests._env  # noqa: F401  (sets env before src is imported)
@@ -289,6 +291,70 @@ class FmtWarningTest(unittest.TestCase):
     def test_change_past_the_end_is_clamped_to_the_last_line(self):
         self.assertEqual(validator.fmt_warning("a {\n}", "a {\n}\n"),
                          "Line 2: not formatted — Check will fix whitespace on 1 line")
+
+
+
+class ResolveWarningTest(unittest.TestCase):
+    def setUp(self):
+        validator._dns_cache.clear()
+        self.calls = []
+
+    def tearDown(self):
+        validator._dns_cache.clear()
+
+    def lookup(self, answers):
+        def fake(host, port):
+            self.calls.append(host)
+            outcome = answers.get(host, "ok")
+            if outcome == "missing":
+                raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+            if outcome == "again":
+                raise socket.gaierror(socket.EAI_AGAIN, "Temporary failure")
+            if outcome == "slow":
+                time.sleep(0.5)
+            return [("ok",)]
+        return fake
+
+    def warn(self, content, answers=None, timeout=1.0):
+        return validator.upstream_resolve_warnings(content, lookup=self.lookup(answers or {}), timeout=timeout)
+
+    def test_resolvable_upstream_is_quiet(self):
+        self.assertEqual(self.warn("a.example.com {\n\treverse_proxy web:8080\n}\n"), [])
+        self.assertEqual(self.calls, ["web"])
+
+    def test_unresolvable_upstream_is_warned_with_its_line(self):
+        self.assertEqual(
+            self.warn("a.example.com {\n\treverse_proxy radarr:7878\n}\n", {"radarr": "missing"}),
+            ["Line 2: upstream radarr:7878 could not be resolved from the console container"])
+
+    def test_ip_literals_placeholders_and_sockets_are_never_looked_up(self):
+        content = ("a.example.com {\n\treverse_proxy 127.0.0.1:2283 [::1]:80 ::1\n"
+                   "\treverse_proxy {$UPSTREAM} {http.request.host}:80\n"
+                   "\treverse_proxy unix//run/app.sock :8080\n}\n")
+        self.assertEqual(self.warn(content), [])
+        self.assertEqual(self.calls, [])
+
+    def test_matchers_schemes_and_to_lines(self):
+        content = ("a.example.com {\n\treverse_proxy /api/* http://api:80 {\n\t\tto backup:80\n\t}\n"
+                   "\treverse_proxy @ws ws-backend:9000\n}\n")
+        warnings = self.warn(content, {"api": "missing", "backup": "missing", "ws-backend": "missing"})
+        self.assertEqual(warnings, [
+            "Line 2: upstream http://api:80 could not be resolved from the console container",
+            "Line 3: upstream backup:80 could not be resolved from the console container",
+            "Line 5: upstream ws-backend:9000 could not be resolved from the console container",
+        ])
+
+    def test_timeout_and_transient_errors_are_not_failures(self):
+        started = time.monotonic()
+        self.assertEqual(self.warn("a {\n\treverse_proxy slow:1 flaky:2\n}\n",
+                                   {"slow": "slow", "flaky": "again"}, timeout=0.05), [])
+        self.assertLess(time.monotonic() - started, 0.4, "must not wait for the slow lookup")
+
+    def test_results_are_cached(self):
+        content = "a {\n\treverse_proxy web:1\n}\nb {\n\treverse_proxy web:2\n}\n"
+        self.warn(content)
+        self.warn(content)
+        self.assertEqual(self.calls, ["web"])
 
 
 if __name__ == "__main__":

@@ -1,11 +1,14 @@
 import difflib
 import hashlib
+import ipaddress
 import os
 import re
+import socket
 import subprocess
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, wait
 
 import requests as http_client
 
@@ -300,3 +303,111 @@ def fmt_warning(content: str, formatted: str) -> str | None:
         changed += max(i2 - i1, j2 - j1)
     first = min(max(first or 1, 1), max(len(a), 1))
     return f"Line {first}: not formatted — Check will fix whitespace on {changed} line{'' if changed == 1 else 's'}"
+
+
+# --- Upstream DNS check (warning only, never blocks a save) ----------------------
+#
+# "could not be resolved from the console container": the console and Caddy may
+# sit on different networks, so this is evidence, not proof. Unknown answers
+# (timeouts, transient resolver errors) produce no warning at all.
+
+_DNS_TTL = 60.0
+_DNS_TIMEOUT = 1.0
+_DNS_CACHE_MAX = 256
+_dns_cache: dict[str, tuple[float, bool | None]] = {}
+_dns_lock = threading.Lock()
+_dns_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="dns-check")
+_SCHEME_RE = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_PLACEHOLDER_RE = re.compile(r"\{[^{}\s]*\}")
+_NOT_FOUND = {getattr(socket, n) for n in ("EAI_NONAME", "EAI_NODATA") if hasattr(socket, n)}
+
+
+def _upstream_tokens(content: str) -> list[tuple[int, str]]:
+    """(line, token) for each upstream in reverse_proxy lines and their `to` lines."""
+    out = []
+    stack = []   # one entry per open brace: True if it opened a reverse_proxy block
+    for number, raw in enumerate(content.split("\n"), 1):
+        line = re.sub(r"(^|\s)#.*$", "", raw).strip()
+        if not line:
+            continue
+        words = line.split()
+        if words[0] == "reverse_proxy":
+            args = [w for w in words[1:] if w != "{"]
+            if args and args[0][0] in "@/*":
+                args = args[1:]
+            out += [(number, a) for a in args]
+        elif words[0] == "to" and stack and stack[-1]:
+            out += [(number, a) for a in words[1:] if a != "{"]
+        bare = _PLACEHOLDER_RE.sub("", line)
+        for _ in range(bare.count("}")):
+            if stack:
+                stack.pop()
+        for _ in range(bare.count("{")):
+            stack.append(words[0] == "reverse_proxy")
+    return out
+
+
+def _dial_host(token: str) -> str | None:
+    """The DNS name an upstream token dials, or None when there is nothing to resolve."""
+    if "{" in token or token.startswith("unix/"):
+        return None
+    token = _SCHEME_RE.sub("", token).split("/", 1)[0]
+    if not token or token.startswith("["):
+        return None
+    host = token.rsplit(":", 1)[0] if token.count(":") == 1 else token
+    if not host:
+        return None
+    try:
+        ipaddress.ip_address(host)
+        return None
+    except ValueError:
+        return host.lower()
+
+
+def _check_host(host, lookup):
+    try:
+        lookup(host, None)
+        return True
+    except socket.gaierror as e:
+        return False if e.errno in _NOT_FOUND else None
+    except (OSError, UnicodeError):
+        return None
+
+
+def resolve_hosts(hosts, lookup=socket.getaddrinfo, timeout=_DNS_TIMEOUT) -> dict:
+    """host -> True (resolves), False (no such name) or None (unknown)."""
+    now = time.monotonic()
+    result, pending = {}, {}
+    with _dns_lock:
+        for h in hosts:
+            hit = _dns_cache.get(h)
+            if hit and hit[0] > now:
+                result[h] = hit[1]
+    for h in hosts:
+        if h not in result and h not in pending:
+            pending[h] = _dns_pool.submit(_check_host, h, lookup)
+    if pending:
+        done, _ = wait(list(pending.values()), timeout=timeout)
+        expires = time.monotonic() + _DNS_TTL
+        with _dns_lock:
+            for h, fut in pending.items():
+                ok = fut.result() if fut in done else None
+                result[h] = ok
+                _dns_cache[h] = (expires, ok)
+            while len(_dns_cache) > _DNS_CACHE_MAX:
+                del _dns_cache[next(iter(_dns_cache))]
+    return result
+
+
+def upstream_resolve_warnings(content: str, lookup=socket.getaddrinfo, timeout=_DNS_TIMEOUT) -> list[str]:
+    found = [(line, token, host) for line, token in _upstream_tokens(content)
+             if (host := _dial_host(token))]
+    if not found:
+        return []
+    status = resolve_hosts(sorted({h for _, _, h in found}), lookup=lookup, timeout=timeout)
+    warnings, seen = [], set()
+    for line, token, host in found:
+        if status.get(host) is False and (line, token) not in seen:
+            seen.add((line, token))
+            warnings.append(f"Line {line}: upstream {token} could not be resolved from the console container")
+    return warnings
