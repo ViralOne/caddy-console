@@ -4,6 +4,7 @@
 import './csrf.js';  // patches window.fetch before init() issues any request
 import { closePreview, restoreFromPreview, rollbackFromPreview, showPreviewTab, clearPreview } from './backups.js';
 import { init, showView, syncViewFromUrl } from './caddyfile.js';
+import { revealSite } from './core.js';
 import { closePanel, togglePanel } from './panels.js';
 import { interceptLinks, onNavigate } from './router.js';
 import { closeSearch, doSearch, replaceAll, replaceOne, searchNext, searchPrev, toggleSearch } from './search.js';
@@ -70,5 +71,11 @@ onNavigate(view => showView(view, { push: false }));
 
 applyTheme();          // matches what the <head> script already set; arms the change event
 watchSystemTheme();
+// Dashboard "Open <site> block": switch to the Editor and land on that block.
+document.addEventListener('app:open-site', (e) => {
+  showView('editor');
+  revealSite(e.detail.host);
+});
+
 syncViewFromUrl();
 init();

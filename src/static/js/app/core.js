@@ -7,6 +7,8 @@ import { findHighlightExtension } from './search-highlight.js';
 import { doSave } from './validate.js';
 import { getKeymap } from './editor-prefs.js';
 import { currentTheme } from './theme.js';
+import { findSiteBlockLine } from './caddyfile-sites.js';
+import { toast } from './ui/toast.js';
 
 const {
   basicSetup, EditorView, EditorState, keymap, StreamLanguage, indentWithTab,
@@ -195,6 +197,7 @@ export function initEditor(content) {
     parent: document.getElementById('cm-editor'),
   });
   refreshDocState();
+  if (pendingSite) { const host = pendingSite; pendingSite = null; revealSite(host); }
 }
 
 /** Switch the open editor between keymaps ('standard' | 'vim') in place. */
@@ -262,4 +265,24 @@ export function setDot(c) {
   const line = document.getElementById('status-line');
   if (line) line.dataset.state = state;
   document.getElementById('status-icon')?.setAttribute('href', '#i-' + icon);
+}
+
+/** Put the cursor at the start of line n, centred, and focus the editor. */
+export function revealLine(n) {
+  if (!editorView) return false;
+  const doc = editorView.state.doc;
+  if (!Number.isInteger(n) || n < 1 || n > doc.lines) return false;
+  const line = doc.line(n);
+  editorView.dispatch({ selection: { anchor: line.from }, effects: EditorView.scrollIntoView(line.from, { y: 'center' }) });
+  editorView.focus();
+  return true;
+}
+
+let pendingSite = null;
+/** "Open <site> block": waits for the first load if the editor is not there yet. */
+export function revealSite(host) {
+  if (!editorView) { pendingSite = host; return; }
+  const line = findSiteBlockLine(getContent(), host);
+  if (line == null) { toast(`No site block for ${host} in the Caddyfile.`, { kind: 'warn' }); return; }
+  revealLine(line);
 }
