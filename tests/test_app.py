@@ -587,5 +587,11 @@ class SecretKeyAtomicityTest(unittest.TestCase):
         self.assertEqual(os.listdir(tmp), [".secret_key"], "no temp files left behind")
 
 
+class SitesApiTest(AppTestCase):
+    def test_previous_total_is_always_present(self):
+        body = self.client.get("/api/sites?range=1h", headers=AUTH).get_json()
+        self.assertIn("previous_total", body)
+
+
 if __name__ == "__main__":
     unittest.main()
