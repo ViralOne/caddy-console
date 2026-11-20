@@ -34,6 +34,8 @@ const FACET_GROUPS = [
   { key: 'status', title: 'Status code', queryKey: 'status' },
   { key: 'method', title: 'Method' },
   { key: 'path', title: 'Path' },
+  // Only shown when the log has cf_country (an opt-in log_append behind Cloudflare).
+  { key: 'country', title: 'Country (Cloudflare)' },
 ];
 const DEBOUNCE_MS = 250;
 const FOLLOW_MS = 4000;
@@ -65,7 +67,7 @@ function formatBytesShort(n) {
 // Which query key each field maps to. Fields absent from this map are
 // copy-only: offering "Filter by" for a field the backend cannot filter would
 // be a menu item that silently does nothing.
-const FIELD_KEYS = { host: 'host', method: 'method', path: 'path', status: 'status', client: 'client' };
+const FIELD_KEYS = { host: 'host', method: 'method', path: 'path', status: 'status', client: 'client', country: 'country' };
 
 function pathOf(uri) {
   return (uri || '').split('?', 1)[0];
@@ -91,7 +93,19 @@ function fieldsOf(e) {
     { label: 'duration', display: formatMs(e.duration_ms), value: String(e.duration_ms) },
     { label: 'size', display: formatBytesShort(e.size), value: String(e.size) },
     { label: 'client', display: e.client_ip || '(none)', value: e.client_ip || '', ip: e.client_ip || null },
+    // Present only behind Cloudflare with the opt-in log_append.
+    ...(e.cf_country ? [{ label: 'country', display: e.cf_country, value: e.cf_country }] : []),
   ];
+}
+
+/** Cloudflare's Ray ID from a raw log line, or '' (not indexed: it is unique per request). */
+export function rayIdOf(rawLine) {
+  try {
+    const ray = JSON.parse(rawLine)?.cf_ray;
+    return typeof ray === 'string' ? ray : '';
+  } catch (e) {
+    return '';
+  }
 }
 
 function statusTone(status) {
@@ -526,6 +540,21 @@ function App() {
                           ${raw[rawKey(e.file, e.offset)] !== undefined && html`<${JsonView} text=${raw[rawKey(e.file, e.offset)]} />`}
                         </span>
                       </div>
+                      ${(() => {
+                        const line = raw[rawKey(e.file, e.offset)];
+                        const ray = line !== undefined ? rayIdOf(line) : '';
+                        if (!ray) return null;
+                        return html`
+                          <div class="field-row">
+                            <span class="field-label">ray id</span>
+                            <span class="field-value">
+                              <code>${ray}</code>
+                              <button class="btn btn-secondary btn-sm field-copy"
+                                      title="Look this request up in the Cloudflare dashboard"
+                                      onClick=${async () => flash(await copyText(ray) ? 'Ray ID copied' : 'Copy blocked by the browser')}>copy</button>
+                            </span>
+                          </div>`;
+                      })()}
                     </div>`}
                 </div>`;
             })}

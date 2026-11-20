@@ -78,9 +78,16 @@ function healthOf(host, upstreams) {
   return { state: 'unknown', label: 'not checked' };
 }
 
+// Dismissal of the "real IPs are not logged" notice, per IP, in this browser.
+const PROXY_DISMISS_KEY = 'dashboard.proxyIpDismissed';
+function proxyDismissed(ip) {
+  try { return localStorage.getItem(PROXY_DISMISS_KEY) === ip; } catch (e) { return false; }
+}
+
 function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [, setDismissTick] = useState(0);
 
   const load = async () => {
     try {
@@ -172,6 +179,22 @@ function App() {
           <strong>Caddy reports ${failing.length} unhealthy upstream${failing.length > 1 ? 's' : ''}:</strong>
           ${failing.map(u => html`<span class="dash-alert-item">${u.address}${u.domains?.length ? ' (' + u.domains.join(', ') + ')' : ''}</span>`)}
         </div>`}
+
+      ${(() => {
+        const p = data.sites.single_proxy_ip;
+        if (!p || proxyDismissed(p.ip)) return null;
+        const dismiss = () => {
+          try { localStorage.setItem(PROXY_DISMISS_KEY, p.ip); } catch (e) { /* not persisted */ }
+          setDismissTick(t => t + 1);
+        };
+        return html`
+          <div class="dash-alert dash-alert-warn" role="status">
+            <strong>Visitors' real IPs are not being logged.</strong>
+            <span>${p.share}% of the last hour's ${p.requests.toLocaleString()} requests come from${' '}<span class="dash-alert-item">${p.ip}</span>, a Docker-range address. That is usually a tunnel or proxy container (set${' '}<code>trusted_proxies</code>${' '}and${' '}<code>client_ip_headers</code>${' '}in Caddy) or Docker's port-forwarding proxy. Client IPs, IP locations and per-IP filters are unreliable until it is fixed.${' '}<a href="https://github.com/ViralOne/caddy-console/blob/master/docs/setup.md#behind-a-proxy-or-tunnel-real-client-ips" target="_blank" rel="noopener">How to fix</a></span>
+            <button class="btn btn-secondary btn-sm dash-alert-dismiss" onClick=${dismiss}
+                    title="Hide this notice for ${p.ip} in this browser">Dismiss</button>
+          </div>`;
+      })()}
 
       <div class="section-title">
         <span>Sites</span>

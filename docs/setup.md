@@ -338,6 +338,57 @@ For `AUTH_MODE=cloudflare` only:
 For `AUTH_MODE=google`, skip steps 4–6 and configure Google's callback as described
 in the authentication section.
 
+## Behind a proxy or tunnel: real client IPs
+
+When Caddy sits behind Cloudflare Tunnel, another proxy, or Docker's
+port-forwarding proxy, every request can appear to come from one private
+address. Client IPs, IP locations and `client:` filters in Explore are then
+wrong, and the dashboard shows a "Visitors' real IPs are not being logged"
+notice: at least 50 requests in the last hour, 95% or more from one IP in
+Docker's `172.16.0.0/12` range. A home network browsing from one PC
+(`192.168.x` / `10.x`) does not trigger it.
+
+Behind Cloudflare (tunnel or proxied DNS), tell Caddy which header carries the
+visitor's IP:
+
+```caddyfile
+{
+	servers {
+		trusted_proxies static private_ranges
+		client_ip_headers Cf-Connecting-IP
+	}
+}
+```
+
+`private_ranges` fits a tunnel, where `cloudflared` reaches Caddy over a Docker
+network. With proxied DNS and published ports instead, trust Cloudflare's
+published ranges (<https://www.cloudflare.com/ips/>), not private ranges.
+
+If no proxy is involved and the address is a Docker network gateway (such as
+`172.17.0.1`), Docker itself is rewriting the source address. That is normal for
+Docker Desktop, rootless Docker and requests from the host itself; on a Linux
+server with published ports it points at the daemon's `userland-proxy`. Running
+Caddy with `network_mode: host` avoids it.
+
+The notice can be dismissed per IP; that is stored in the browser only.
+
+### Cloudflare request fields (optional)
+
+Cloudflare adds the visitor's country and a Ray ID to each request. The
+recommended `format filter` drops all headers, so add the two you want back as
+separate log fields, in each site block (or in the `(access_log)` snippet):
+
+```caddyfile
+log_append cf_country {header.Cf-IPCountry}
+log_append cf_ray {header.Cf-Ray}
+```
+
+Explore then shows a **Country (Cloudflare)** facet, a `country:` filter (e.g.
+`country:RO`, `-country:US`), the country in each event, and the Ray ID (with
+copy) when you open an event's original line. Paste the Ray ID into the
+Cloudflare dashboard to see what Cloudflare did with that request. Without these
+lines nothing changes: no facet, no extra fields.
+
 ## Environment variables
 
 | Variable | Required | Default | Description |

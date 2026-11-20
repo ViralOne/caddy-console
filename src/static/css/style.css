@@ -422,6 +422,12 @@ a.dash-kpi-value:hover { text-decoration: underline; }
 
 .dash-alert { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--status-critical-bg); border: 1px solid var(--status-critical); border-radius: var(--radius); font-size: var(--text-sm); color: var(--ink); }
 .dash-alert-item { font-family: var(--font-mono); color: var(--status-critical); }
+.dash-alert-warn { background: var(--status-warn-bg); border-color: var(--status-warn); }
+.dash-alert-warn .dash-alert-item { color: var(--status-warn); }
+.dash-alert-warn code { font-family: var(--font-mono); }
+.dash-alert-warn a { color: var(--accent); }
+.dash-alert-dismiss { margin-left: auto; }
+.field-copy { margin-left: var(--space-2); }
 
 .dash-table { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .dash-row { display: grid; grid-template-columns: minmax(150px, 2fr) 110px 90px 62px 70px 80px 110px; gap: var(--space-3); align-items: center; padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); font-size: var(--text-sm); }

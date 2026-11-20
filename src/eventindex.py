@@ -18,9 +18,11 @@ duplication is deliberate and temporary: the explorer replaces logstats entirely
 and refactoring a module that is about to be deleted would be work thrown away.
 """
 import bisect
+import ipaddress
 import json
 import math
 import os
+import re
 import threading
 import time
 from array import array
@@ -43,7 +45,20 @@ BUCKET_LADDER = (1, 5, 10, 15, 30, 60, 300, 900, 1800, 3600, 10800, 21600, 86400
 TARGET_BUCKETS = 120
 
 STATUS_CLASSES = ("2xx", "3xx", "4xx", "5xx", "other")
-FACET_KEYS = ("host", "status_class", "status", "method", "path")
+FACET_KEYS = ("host", "status_class", "status", "method", "path", "country")
+
+# Cloudflare's visitor country, from an opt-in `log_append cf_country
+# {header.Cf-IPCountry}`. ISO 3166 alpha-2, plus XX (unknown) and T1 (Tor).
+# Anything else (an empty header, junk) is stored as no country.
+_COUNTRY_RE = re.compile(r"[A-Z][A-Z0-9]")
+
+# The dashboard's "real IPs are not logged" check: at least this many requests,
+# this share from one IP, and that IP inside Docker's default address pools,
+# where a tunnel/proxy container or Docker's own port-forwarding proxy sits. A
+# home LAN (192.168/10.x) browsing from one PC is deliberately not matched.
+PROXY_IP_MIN_REQUESTS = 50
+PROXY_IP_MIN_SHARE = 95.0
+_DOCKER_NET = ipaddress.ip_network("172.16.0.0/12")
 
 
 def _status_class(status):
@@ -59,7 +74,7 @@ class Filters:
 
     __slots__ = ("hosts", "methods", "codes", "classes", "paths", "clients", "text",
                  "not_hosts", "not_methods", "not_codes", "not_classes", "not_paths",
-                 "not_clients")
+                 "not_clients", "countries", "not_countries")
 
     def __init__(self):
         self.hosts = set(); self.methods = set(); self.codes = set()
@@ -67,11 +82,13 @@ class Filters:
         self.not_hosts = set(); self.not_methods = set()
         self.not_codes = set(); self.not_classes = set(); self.not_paths = []
         self.not_clients = set()
+        self.countries = set(); self.not_countries = set()
 
     def is_empty(self):
         return not any((self.hosts, self.methods, self.codes, self.classes, self.paths,
                         self.clients, self.text, self.not_hosts, self.not_methods,
-                        self.not_codes, self.not_classes, self.not_paths, self.not_clients))
+                        self.not_codes, self.not_classes, self.not_paths, self.not_clients,
+                        self.countries, self.not_countries))
 
     def active_keys(self):
         """Which facet keys this query constrains, so facets can exclude their own."""
@@ -84,6 +101,7 @@ class Filters:
             keys.add("status"); keys.add("status_class")
         if self.paths or self.not_paths: keys.add("path")
         if self.clients or self.not_clients: keys.add("client")
+        if self.countries or self.not_countries: keys.add("country")
         return keys
 
 
@@ -108,7 +126,7 @@ def parse_query(q):
         token = raw[1:] if negated else raw
         key, sep, value = token.partition(":")
         key = key.lower()
-        if not sep or not value or key not in ("host", "status", "method", "path", "client"):
+        if not sep or not value or key not in ("host", "status", "method", "path", "client", "country"):
             # Unknown key or a bare word: search for it rather than drop what
             # the user typed.
             f.text.append(raw)
@@ -119,6 +137,8 @@ def parse_query(q):
             (f.not_methods if negated else f.methods).add(value.upper())
         elif key == "path":
             (f.not_paths if negated else f.paths).append(value)
+        elif key == "country":
+            (f.not_countries if negated else f.countries).add(value.upper())
         elif key == "client":
             # Lowercased so an IPv6 address matches however it was typed.
             (f.not_clients if negated else f.clients).add(value.lower())
@@ -190,8 +210,12 @@ class EventIndex:
         self.method_id = array("i")
         self.uri_id = array("i")
         self.client_id = array("i")
+        # 2 bytes per event. Id 0 is "no country", so without Cloudflare the
+        # column is all zeros and the intern table holds one empty string.
+        self.country_id = array("H")
         self.hosts = _Intern(); self.methods = _Intern()
         self.uris = _Intern(); self.clients = _Intern()
+        self.countries = _Intern(); self.countries.id_of("")
         self._skipped = 0
         self._dropped = 0
         self._built = False
@@ -297,7 +321,8 @@ class EventIndex:
 
     def _columns(self):
         return (self.ts, self.status, self.duration_ms, self.size, self.offset,
-                self.file_id, self.host_id, self.method_id, self.uri_id, self.client_id)
+                self.file_id, self.host_id, self.method_id, self.uri_id, self.client_id,
+                self.country_id)
 
     @staticmethod
     def _read_head(logfile):
@@ -409,6 +434,11 @@ class EventIndex:
         self.uri_id.append(self.uris.id_of(uri if isinstance(uri, str) else ""))
         client = req.get("client_ip") or req.get("remote_ip")
         self.client_id.append(self.clients.id_of(client if isinstance(client, str) else ""))
+        country = e.get("cf_country")
+        self.country_id.append(
+            self.countries.id_of(country)
+            if isinstance(country, str) and len(country) == 2 and _COUNTRY_RE.fullmatch(country)
+            else 0)
 
     def _evict(self):
         """Drop the oldest events once over the cap.
@@ -518,6 +548,10 @@ class EventIndex:
         client_ids = None if skip_key == "client" or not f.clients else self.clients.ids_matching_exact(f.clients)
         not_client_ids = set() if skip_key == "client" else (self.clients.ids_matching_exact(f.not_clients) if f.not_clients else set())
 
+        # Intern ids, not the "" row: a country filter never matches "no country".
+        country_ids = None if skip_key == "country" or not f.countries else self.countries.ids_matching_exact({c.lower() for c in f.countries}) - {0}
+        not_country_ids = set() if skip_key == "country" else (self.countries.ids_matching_exact({c.lower() for c in f.not_countries}) - {0} if f.not_countries else set())
+
         text_uri, text_host = [], []
         for t in f.text:
             low = t.lower()
@@ -535,6 +569,7 @@ class EventIndex:
 
         ts, st, hid, mid, uid = self.ts, self.status, self.host_id, self.method_id, self.uri_id
         cid = self.client_id
+        coid = self.country_id
         out = []
         for i in range(lo, hi):
             h = hid[i]
@@ -548,6 +583,8 @@ class EventIndex:
             if not_path_ids and u in not_path_ids: continue
             if client_ids is not None and cid[i] not in client_ids: continue
             if not_client_ids and cid[i] in not_client_ids: continue
+            if country_ids is not None and coid[i] not in country_ids: continue
+            if not_country_ids and coid[i] in not_country_ids: continue
             s = st[i]
             if want_status and not (s in codes or (classes and _status_class(s) in classes)):
                 continue
@@ -583,6 +620,8 @@ class EventIndex:
                 vals = self.methods.values; col = self.method_id
             elif key == "path":
                 vals = self.uris.values; col = self.uri_id
+            elif key == "country":
+                vals = self.countries.values; col = self.country_id
             else:
                 vals = col = None
             if col is not None:
@@ -590,6 +629,10 @@ class EventIndex:
                     v = vals[col[i]]
                     if key == "path":
                         v = v.split("?", 1)[0]
+                    elif key == "country" and not v:
+                        # Events without a country are not a facet row; with no
+                        # Cloudflare at all the facet stays empty and is hidden.
+                        continue
                     bucket[v] = bucket.get(v, 0) + 1
             elif key == "status":
                 for i in rows:
@@ -665,7 +708,11 @@ class EventIndex:
             step = max(1.0, (span_to - span_from) / max(1, points))
 
             sites = {}
+            per_client = {}
+            cid = self.client_id
             for i in range(lo, hi):
+                c = cid[i]
+                per_client[c] = per_client.get(c, 0) + 1
                 host = self.hosts.values[self.host_id[i]]
                 site = sites.get(host)
                 if site is None:
@@ -703,7 +750,29 @@ class EventIndex:
                 "from": span_from, "to": span_to, "points": points,
                 "indexed": n, "dropped": self._dropped, "skipped": self._skipped,
                 "history": self._history(),
+                "single_proxy_ip": self._single_proxy_ip(per_client, hi - lo),
             }
+
+    def _single_proxy_ip(self, per_client, total):
+        """The proxy IP almost every request seems to come from, or None.
+
+        That pattern means visitors' real IPs are lost: Caddy sees the tunnel or
+        proxy container (trusted_proxies / client_ip_headers not set), or Docker's
+        port-forwarding proxy rewrote the source address.
+        """
+        if total < PROXY_IP_MIN_REQUESTS or not per_client:
+            return None
+        cid, count = max(per_client.items(), key=lambda kv: kv[1])
+        share = count / total * 100
+        if share < PROXY_IP_MIN_SHARE:
+            return None
+        ip = self.clients.values[cid]
+        try:
+            if ipaddress.ip_address(ip) not in _DOCKER_NET:
+                return None
+        except ValueError:
+            return None
+        return {"ip": ip, "share": round(share, 1), "requests": total}
 
     def ip_summary(self, ip, from_ts=None, to_ts=None, top=5):
         """What the log says about one client IP within a range.
@@ -755,7 +824,7 @@ class EventIndex:
             }
 
     def _entry(self, i):
-        return {
+        out = {
             "ts": self.ts[i],
             "host": self.hosts.values[self.host_id[i]],
             "method": self.methods.values[self.method_id[i]],
@@ -769,6 +838,12 @@ class EventIndex:
             # valid in any worker and for any range.
             "file": self._files[self.file_id[i]].token,
         }
+        # Only present when the log has it, so a non-Cloudflare setup sees the
+        # exact same entries as before.
+        country = self.country_id[i]
+        if country:
+            out["cf_country"] = self.countries.values[country]
+        return out
 
     def raw_line(self, file_ref, offset):
         """The original log line, for the raw view in Explore.

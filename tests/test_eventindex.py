@@ -711,3 +711,116 @@ class CorruptArchiveTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def cf_entry(country, **kw):
+    e = entry(**kw)
+    e["cf_country"] = country
+    e["cf_ray"] = "8f1e2d3c4b5a6978-OTP"
+    return e
+
+
+class CloudflareCountryTest(unittest.TestCase):
+    """cf_country comes from an opt-in `log_append` in the Caddyfile."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="eventindex-cf-")
+        self.path = os.path.join(self.dir, "access.log")
+        self.index = EventIndex(self.path)
+
+    def write(self, *entries):
+        with open(self.path, "a") as f:
+            for e in entries:
+                f.write(json.dumps(e) + "\n")
+
+    def test_parse_country_terms(self):
+        f = parse_query("country:ro -country:us")
+        self.assertEqual(f.countries, {"RO"})
+        self.assertEqual(f.not_countries, {"US"})
+        self.assertEqual(f.text, [])
+
+    def test_country_is_indexed_and_returned(self):
+        self.write(cf_entry("RO", ts=T0))
+        e = self.index.query("")["entries"][0]
+        self.assertEqual(e["cf_country"], "RO")
+
+    def test_filter_and_exclude_by_country(self):
+        self.write(cf_entry("RO", ts=T0), cf_entry("US", ts=T0 + 1), cf_entry("RO", ts=T0 + 2))
+        self.assertEqual(self.index.query("country:ro")["total"], 2)
+        self.assertEqual(self.index.query("-country:RO")["total"], 1)
+
+    def test_country_facet_counts(self):
+        self.write(cf_entry("RO", ts=T0), cf_entry("US", ts=T0 + 1), cf_entry("RO", ts=T0 + 2))
+        facet = self.index.query("")["facets"]["country"]
+        self.assertEqual(facet, [{"value": "RO", "count": 2}, {"value": "US", "count": 1}])
+
+    def test_without_cloudflare_nothing_changes(self):
+        # No log_append: entries have no cf_* keys, the facet is empty (the UI
+        # hides it) and entries carry no extra field.
+        self.write(entry(ts=T0), entry(ts=T0 + 1))
+        r = self.index.query("")
+        self.assertEqual(r["facets"]["country"], [])
+        self.assertNotIn("cf_country", r["entries"][0])
+
+    def test_empty_header_value_is_not_a_country(self):
+        # log_append writes "" when the request did not come through Cloudflare.
+        self.write(cf_entry("", ts=T0))
+        r = self.index.query("")
+        self.assertEqual(r["facets"]["country"], [])
+        self.assertNotIn("cf_country", r["entries"][0])
+
+    def test_junk_country_values_are_ignored(self):
+        self.write(cf_entry("<script>", ts=T0), cf_entry("ROMANIA", ts=T0 + 1), cf_entry(7, ts=T0 + 2))
+        r = self.index.query("")
+        self.assertEqual(r["total"], 3)
+        self.assertEqual(r["facets"]["country"], [])
+
+    def test_cloudflare_special_codes_are_kept(self):
+        # XX = unknown, T1 = Tor.
+        self.write(cf_entry("XX", ts=T0), cf_entry("T1", ts=T0 + 1))
+        values = {v["value"] for v in self.index.query("")["facets"]["country"]}
+        self.assertEqual(values, {"XX", "T1"})
+
+
+class ProxyIpWarningTest(unittest.TestCase):
+    """site_summary flags logs where nearly every request comes from one proxy IP."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="eventindex-proxy-")
+        self.path = os.path.join(self.dir, "access.log")
+        self.index = EventIndex(self.path)
+
+    def write_many(self, n, client, start=0):
+        with open(self.path, "a") as f:
+            for i in range(n):
+                f.write(json.dumps(entry(ts=T0 + start + i, client=client)) + "\n")
+
+    def test_docker_range_single_ip_is_flagged(self):
+        self.write_many(60, "172.24.0.3")
+        warn = self.index.site_summary()["single_proxy_ip"]
+        self.assertEqual(warn, {"ip": "172.24.0.3", "share": 100.0, "requests": 60})
+
+    def test_flagged_at_95_percent(self):
+        self.write_many(95, "172.17.0.1")
+        self.write_many(5, "81.2.69.160", start=1000)
+        self.assertIsNotNone(self.index.site_summary()["single_proxy_ip"])
+
+    def test_not_flagged_below_95_percent(self):
+        self.write_many(90, "172.17.0.1")
+        self.write_many(10, "81.2.69.160", start=1000)
+        self.assertIsNone(self.index.site_summary()["single_proxy_ip"])
+
+    def test_home_lan_single_user_is_not_flagged(self):
+        self.write_many(100, "192.168.0.5")
+        self.assertIsNone(self.index.site_summary()["single_proxy_ip"])
+
+    def test_too_few_requests_is_not_flagged(self):
+        self.write_many(49, "172.24.0.3")
+        self.assertIsNone(self.index.site_summary()["single_proxy_ip"])
+
+    def test_public_ip_is_not_flagged(self):
+        self.write_many(100, "81.2.69.160")
+        self.assertIsNone(self.index.site_summary()["single_proxy_ip"])
+
+    def test_empty_log(self):
+        self.assertIsNone(self.index.site_summary()["single_proxy_ip"])

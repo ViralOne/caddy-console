@@ -179,4 +179,10 @@ check('an IPv6 value keeps its colons', () => {
   assert.equal(setTermState('client:2001:db8::1', 'client', '2001:db8::1', 'off'), '');
 });
 
+check('country is a known key, so its terms toggle like the others', () => {
+  assert.equal(termState('country:RO', 'country', 'ro'), 'include');
+  assert.equal(termState('-country:RO', 'country', 'RO'), 'exclude');
+  assert.equal(setTermState('host:a country:RO', 'country', 'RO', 'off'), 'host:a');
+});
+
 console.log(`\n${passed} checks passed\n`);

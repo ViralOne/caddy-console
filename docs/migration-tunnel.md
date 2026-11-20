@@ -112,6 +112,9 @@ prefix, Caddy tries to obtain certificates and redirects to HTTPS, which loops.
 
 http://app.new-domain.com, http://app.old-domain.com {
 	import access_log
+	# Optional: visitor country and Ray ID in the console's Explore view.
+	log_append cf_country {header.Cf-IPCountry}
+	log_append cf_ray {header.Cf-Ray}
 	reverse_proxy 192.168.0.x:port
 }
 ```
