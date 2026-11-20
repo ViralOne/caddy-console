@@ -5213,3 +5213,20 @@ git commit -m "docs(screenshots): regenerate for Direction A"
   8. `configured_sites` counts distinct host matchers, so a block with two hostnames counts as two.
   9. The header uses the mockup's brand mark. `static/img/favicon.svg` and the touch icons are not changed.
   10. At ≤720 px the mockup hides Check; this plan keeps that. Save & Reload still validates first.
+
+## Execution decisions (2026-11-20, delegated by the user)
+
+Resolving the plan's open points; these override anything above that disagrees.
+
+1. `previous_total`: `site_summary` loads the range **plus one equal-length window
+   before it** (`_load(from_ts - span, to_ts)`), so the figure is reliably present.
+   The stats for the requested range itself are unchanged. Test: a 1 h request with
+   data in both hours returns both `total` and `previous_total`.
+2. `unhealthy_since`: the extra `/metrics` call from `/api/upstreams` is accepted.
+3. Unformatted-file warning: quiet validation on load and after save, as planned.
+4. Cloudflare mode: the unauthenticated 403 renders the on-system Cloudflare variant.
+5. Mockup details without a data source stay hidden; facet "N values" shows "N+".
+6. Verdict states admin-API-unreachable, config-check-failed and high-5xx are in.
+7. Unhealthy Sites row: **tinted background only, no side stripe** (impeccable
+   flags side stripes as an anti-pattern).
+8. ≤720 px: **Check stays visible** as an icon button with an accessible label.
