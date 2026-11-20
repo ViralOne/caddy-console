@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 import unittest
@@ -591,6 +592,61 @@ class SitesApiTest(AppTestCase):
     def test_previous_total_is_always_present(self):
         body = self.client.get("/api/sites?range=1h", headers=AUTH).get_json()
         self.assertIn("previous_total", body)
+
+
+class UpstreamsApiTest(AppTestCase):
+    METRICS = "\n".join([
+        'caddy_reverse_proxy_upstreams_healthy{upstream="127.0.0.1:2283"} 0',
+        'caddy_reverse_proxy_upstreams_healthy{upstream="127.0.0.1:8096"} 1',
+    ])
+    SERVERS = {"srv0": {"routes": [
+        {"match": [{"host": ["photos.example.com"]}],
+         "handle": [{"handler": "subroute", "routes": [{"handle": [
+             {"handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:2283"}]}]}]}]},
+        {"match": [{"host": ["watch.example.com"]}],
+         "handle": [{"handler": "subroute", "routes": [{"handle": [
+             {"handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8096"}]}]}]}]},
+        {"match": [{"host": ["hello.example.com"]}], "handle": [{"handler": "static_response"}]},
+    ]}}
+
+    def setUp(self):
+        super().setUp()
+        from src import upstream_health
+        state_dir = tempfile.mkdtemp(prefix="ups-")
+        self.patches += [
+            mock.patch.object(upstream_health, "STATE_PATH", os.path.join(state_dir, "s.json")),
+            mock.patch.object(upstream_health, "LOCK_PATH", os.path.join(state_dir, ".lock")),
+        ]
+        for p in self.patches[-2:]:
+            p.start()
+
+    def fake_get(self, url, timeout=None, **kw):
+        if url.endswith("/reverse_proxy/upstreams"):
+            return FakeResponse(200, payload=[
+                {"address": "127.0.0.1:2283", "num_requests": 0, "fails": 3},
+                {"address": "127.0.0.1:8096", "num_requests": 1, "fails": 0},
+            ])
+        if url.endswith("/metrics"):
+            return FakeResponse(200, text=self.METRICS)
+        raise AssertionError(url)
+
+    def get(self, servers):
+        with mock.patch.object(ops_mod.http_client, "get", self.fake_get), \
+             mock.patch.object(ops_mod, "get_servers", return_value=servers):
+            return self.client.get("/api/upstreams", headers=AUTH).get_json()
+
+    def test_unhealthy_since_and_configured_sites(self):
+        before = time.time()
+        body = self.get(self.SERVERS)
+        rows = {u["address"]: u for u in body["upstreams"]}
+        self.assertGreaterEqual(rows["127.0.0.1:2283"]["unhealthy_since"], before - 1)
+        self.assertIsNone(rows["127.0.0.1:8096"]["unhealthy_since"])
+        self.assertEqual(rows["127.0.0.1:2283"]["domains"], ["photos.example.com"])  # existing field kept
+        self.assertEqual(rows["127.0.0.1:2283"]["fails"], 3)                         # existing field kept
+        self.assertEqual(body["configured_sites"], 3)
+
+    def test_configured_sites_is_null_without_a_config(self):
+        self.assertIsNone(self.get({})["configured_sites"])
 
 
 if __name__ == "__main__":

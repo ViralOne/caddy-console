@@ -9,7 +9,7 @@ import requests as http_client
 from flask import Blueprint, jsonify, request
 
 from ..audit import iter_entries, tail_lines
-from .. import logfiles
+from .. import logfiles, upstream_health
 from ..auth import login_required
 from ..caddy_api import get_servers
 from ..config import (
@@ -178,6 +178,8 @@ def upstreams():
     # the running config to say which sites proxy there and which kinds of
     # health check are configured.
     detail = _get_upstream_detail()
+    # Caddy only says "healthy now"; the shared state file remembers since when.
+    since = upstream_health.record(_upstream_health_flags())
     enriched = []
     for row in rows if isinstance(rows, list) else []:
         info = detail.get(row.get("address"), {})
@@ -188,9 +190,29 @@ def upstreams():
             # which requires fail_duration > 0 (Caddy's default is 0 = off).
             "passive_health": info.get("passive", False),
             "active_health": info.get("active", False),
+            "unhealthy_since": since.get(row.get("address")),
         })
     enriched.sort(key=lambda u: (not u["domains"], u["domains"][:1], u.get("address", "")))
-    return jsonify({"upstreams": enriched})
+    return jsonify({"upstreams": enriched, "configured_sites": _configured_site_count()})
+
+
+def _upstream_health_flags() -> dict:
+    """address -> 1/0 from caddy_reverse_proxy_upstreams_healthy, or {} if unavailable."""
+    try:
+        resp = http_client.get(f"{CADDY_API_URL}/metrics", timeout=5)
+    except Exception:
+        return {}
+    if resp.status_code != 200:
+        return {}
+    return parse_prometheus_metrics(resp.text)["upstreams_healthy"]
+
+
+def _configured_site_count():
+    """Distinct site hosts in the running config ("7 of 7 configured"), or None."""
+    if not get_servers():
+        return None
+    domains, _ = _server_maps()
+    return len({h.lower() for hosts in domains.values() for h in hosts})
 
 
 def _get_upstream_detail():
