@@ -8,6 +8,7 @@ import { closePanel, togglePanel } from './panels.js';
 import { interceptLinks, onNavigate } from './router.js';
 import { closeSearch, doSearch, replaceAll, replaceOne, searchNext, searchPrev, toggleSearch } from './search.js';
 import { doSave, doValidate, resolveSaveModal } from './validate.js';
+import { applyTheme, watchSystemTheme } from './theme.js';
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
@@ -67,5 +68,7 @@ document.getElementById('search-input').addEventListener('keydown', e => {
 interceptLinks(view => showView(view, { push: false }));
 onNavigate(view => showView(view, { push: false }));
 
+applyTheme();          // matches what the <head> script already set; arms the change event
+watchSystemTheme();
 syncViewFromUrl();
 init();

@@ -6,6 +6,7 @@
 import { findHighlightExtension } from './search-highlight.js';
 import { doSave } from './validate.js';
 import { getKeymap } from './editor-prefs.js';
+import { currentTheme } from './theme.js';
 
 const {
   basicSetup, EditorView, EditorState, keymap, StreamLanguage, indentWithTab,
@@ -31,7 +32,7 @@ const keymapExtension = (id) => (id === 'vim' ? Prec.highest(vim({ status: true 
 // screen. Both the chrome and the highlighting now come from those tokens, so the
 // editor is part of the app rather than an embedded widget, and a token change
 // reaches it too. var() resolves because CodeMirror injects these as real CSS.
-const editorTheme = EditorView.theme({
+const EDITOR_THEME_SPEC = {
   '&': { height: '100%', backgroundColor: 'var(--bg)', color: 'var(--ink)' },
   '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--mono)', lineHeight: '1.6' },
   '.cm-content': { fontFamily: 'var(--mono)', fontSize: 'var(--t-sm)', caretColor: 'var(--accent)' },
@@ -67,32 +68,50 @@ const editorTheme = EditorView.theme({
     backgroundColor: 'var(--bg-3)', border: '1px solid var(--line-2)',
     color: 'var(--ink)',
   },
-}, { dark: true });
+};
 
-// Six token types, mapped to tokens rather than to invented colours. Status hues
-// appear here as syntax, which is the one place that is legitimate: they are not
-// encoding state anywhere in this view.
+// The colours are CSS variables, so they follow data-theme by themselves; the
+// `dark` flag only picks CodeMirror's own base styles, so it lives in a
+// compartment and is swapped when the theme changes.
+const themeSlot = new Compartment();
+const themeExtension = (theme) => EditorView.theme(EDITOR_THEME_SPEC, { dark: theme === 'dark' });
+
+export function applyEditorTheme(theme) {
+  if (!editorView) return;
+  editorView.dispatch({ effects: themeSlot.reconfigure(themeExtension(theme)) });
+}
+window.addEventListener('themechange', (e) => applyEditorTheme(e.detail.theme));
+
+// Syntax colours come from the --code-* tokens, which both themes define.
 const editorHighlight = HighlightStyle.define([
-  { tag: tags.comment, color: 'var(--ink-3)', fontStyle: 'italic' },
-  { tag: tags.keyword, color: 'var(--accent)' },
-  { tag: tags.atom, color: 'var(--serious)' },
-  { tag: tags.string, color: 'var(--good)' },
-  { tag: tags.number, color: 'var(--warn)' },
-  { tag: tags.bracket, color: 'var(--ink-2)' },
+  { tag: tags.comment, color: 'var(--code-com)', fontStyle: 'italic' },
+  { tag: tags.keyword, color: 'var(--code-kw)' },
+  { tag: tags.atom, color: 'var(--code-mt)' },
+  { tag: tags.labelName, color: 'var(--code-mt)' },
+  { tag: tags.heading, color: 'var(--code-site)', fontWeight: '600' },
+  { tag: tags.variableName, color: 'var(--code-ph)' },
+  { tag: tags.string, color: 'var(--code-str)' },
+  { tag: tags.number, color: 'var(--code-num)' },
+  { tag: tags.bracket, color: 'var(--ink-3)' },
 ]);
 
 const caddyfileLanguage = StreamLanguage.define({
-  token(stream) {
+  startState: () => ({ depth: 0 }),
+  token(stream, state) {
+    if (stream.sol() && state.depth === 0 && stream.match(/^[^\s{#(][^\s{]*/)) return 'heading';
     if (stream.match(/^#.*/)) return 'comment';
     if (stream.match(/^"[^"]*"/)) return 'string';
-    if (stream.match(/^\{|\}/)) return 'bracket';
-    if (stream.match(/^\b(reverse_proxy|header|encode|file_server|root|try_files|redir|respond|log|basicauth|rate_limit|import|tls|route|handle|handle_path|rewrite|uri)\b/)) return 'keyword';
-    if (stream.match(/^\b(email|auto_https|servers|admin|debug|order|storage|acme_ca|on_demand_tls)\b/)) return 'atom';
+    if (stream.match(/^\{[^{}\s]+\}/)) return 'variableName';
+    if (stream.match(/^\{/)) { state.depth++; return 'bracket'; }
+    if (stream.match(/^\}/)) { state.depth = Math.max(0, state.depth - 1); return 'bracket'; }
+    if (stream.match(/^@[\w-]+/)) return 'labelName';
+    if (stream.match(/^\b(reverse_proxy|header|encode|file_server|root|try_files|redir|respond|log|basicauth|basic_auth|rate_limit|import|tls|route|handle|handle_path|rewrite|uri|request_body)\b/)) return 'keyword';
+    if (stream.match(/^\b(email|auto_https|servers|admin|debug|order|storage|acme_ca|on_demand_tls|metrics)\b/)) return 'atom';
     if (stream.match(/^\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b/)) return 'number';
     if (stream.match(/^\blocalhost:\d+\b/)) return 'number';
     stream.next();
     return null;
-  }
+  },
 });
 
 // Shared editor state. `editorView` and `originalContent` are exported as live
@@ -155,7 +174,7 @@ export function initEditor(content) {
       extensions: [
         keymapSlot.of(keymapExtension(getKeymap())),
         basicSetup,
-        editorTheme,
+        themeSlot.of(themeExtension(currentTheme())),
         syntaxHighlighting(editorHighlight),
         caddyfileLanguage,
         findHighlightExtension,
