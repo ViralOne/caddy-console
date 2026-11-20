@@ -4,7 +4,10 @@ import {
   setVersion, showError,
 } from './core.js';
 import { renderDiff } from './diff.js';
+import { backupLabel } from './format.js';
 import { closePanel } from './panels.js';
+import { alertDialog, confirmDialog } from './ui/dialog.js';
+import { toast } from './ui/toast.js';
 let previewBackupContent = '';
 let currentPreviewName = '';
 
@@ -26,9 +29,19 @@ export async function loadBackups() {
     const delBtn = document.createElement('button'); delBtn.className = 'btn btn-danger btn-sm'; delBtn.textContent = 'Delete';
     delBtn.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(`Delete backup ${b.replace('Caddyfile.','')}?`)) return;
-      try { await fetchJson(`/api/backups/${encodeURIComponent(b)}`, {method:'DELETE'}); loadBackups(); }
-      catch (err) { alert('Delete failed: ' + err.message); }
+      const label = backupLabel(b);
+      const ok = await confirmDialog({
+        title: `Delete the backup from ${label}?`,
+        body: 'The file is removed from disk and cannot be restored. Your live Caddyfile is not affected.',
+        confirmLabel: 'Delete backup',
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await fetchJson(`/api/backups/${encodeURIComponent(b)}`, { method: 'DELETE' });
+        toast(`Deleted the backup from ${label}`, { kind: 'ok' });
+        loadBackups();
+      } catch (err) { toast(`Delete failed: ${err.message}`, { kind: 'error' }); }
     };
     row.appendChild(left); row.appendChild(delBtn); card.appendChild(row);
     list.appendChild(card);
@@ -63,40 +76,59 @@ export function clearPreview() {
   document.getElementById('backups-list').style.display = 'block';
 }
 export function closePreview() { clearPreview(); }
-export function restoreFromPreview() { setContent(previewBackupContent); setStatus('Backup loaded (unsaved)', 'info'); setDot('yellow'); closePanel('backups'); };
+export function restoreFromPreview() {
+  setContent(previewBackupContent);
+  setStatus('Backup loaded (unsaved)', 'info'); setDot('yellow');
+  toast(`Loaded the backup from ${backupLabel(currentPreviewName)} into the editor. Save & Reload to apply it.`, { kind: 'info' });
+  closePanel('backups');
+}
+
 export async function rollbackFromPreview() {
   if (!currentPreviewName) return;
-  const label = currentPreviewName.replace('Caddyfile.', '');
-  if (!confirm(`Restore backup ${label} AND reload Caddy now?\n\nThis replaces the live config immediately.`)) return;
-  setStatus('Restoring + reloading...', 'info'); setDot('yellow');
+  const name = currentPreviewName;
+  const label = backupLabel(name);
+  const go = await confirmDialog({
+    title: `Roll back to the backup from ${label}?`,
+    body: 'This writes the backup to the live Caddyfile and reloads Caddy. The current file is backed up first, and unsaved editor changes are discarded.',
+    confirmLabel: 'Roll back and reload',
+    danger: true,
+  });
+  if (!go) return;
+  setStatus('Restoring and reloading…', 'info'); setDot('yellow');
   let res, data = null;
   try {
-    res = await fetch(`/api/backups/${encodeURIComponent(currentPreviewName)}/restore`, {
+    res = await fetch(`/api/backups/${encodeURIComponent(name)}/restore`, {
       method: 'POST',
-      headers: {'Content-Type': 'application/json'},
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ version: getVersion() }),
     });
     try { data = await res.json(); } catch (e) {}
-  } catch (e) { setStatus(`Restore failed: ${e.message}`, 'err'); setDot('red'); return; }
+  } catch (e) {
+    setStatus(`Restore failed: ${e.message}`, 'err'); setDot('red');
+    toast(`Restore failed: ${e.message}`, { kind: 'error' });
+    return;
+  }
   if (data && data.ok) {
     const restored = data.content || previewBackupContent;
     setContent(restored); setOriginal(restored); if (data.version) setVersion(data.version);
     setStatus(data.message, 'ok'); setDot('green');
     markSaved();
+    toast(`Rolled back to ${label}. Caddy reloaded.`, { kind: 'ok' });
     closePanel('backups');
   } else if (data && data.conflict) {
     if (data.version) setVersion(data.version);
     setStatus('Restore blocked: file changed on disk', 'err'); setDot('red');
-    alert(data.message || 'The live Caddyfile changed. Reload it before restoring a backup.');
+    await alertDialog({ title: 'Restore blocked: the file changed on disk', body: data.message || 'The live Caddyfile changed. Reload it before restoring a backup.' });
   } else if (data && data.saved) {
     const restored = data.content || previewBackupContent;
     setContent(restored); setOriginal(restored); if (data.version) setVersion(data.version);
     setStatus(data.message, 'warn'); setDot('yellow');
+    toast(data.message, { kind: 'warn' });
     closePanel('backups');
   } else {
     const msg = (data && (data.message || data.error)) || `HTTP ${res.status}`;
     if (data && data.version) setVersion(data.version);
     setStatus(msg, 'err'); setDot('red');
-    alert('Restore failed: ' + msg);
+    await alertDialog({ title: 'Restore failed', body: 'The live Caddyfile was not changed.', detail: msg });
   }
 }

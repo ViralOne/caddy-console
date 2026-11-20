@@ -43,38 +43,30 @@ body {
 .view-actions { display: none; align-items: center; gap: var(--space-2); }
 .view-actions.visible { display: flex; }
 
-/* Buttons */
-.btn { padding: var(--space-2) var(--space-3); border: none; border-radius: var(--r-sm); cursor: pointer; font-size: var(--t-xs); font-weight: 500; transition: background 0.15s, color 0.15s, border-color 0.15s; }
-.btn:active { transform: scale(0.96); }
-.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Exactly one filled button per view. Save & Reload was green, which also broke
-   the rule that status colours only ever encode state. */
-.btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
-.btn-primary:hover:not(:disabled) { background: var(--accent-hi); }
-/* Nothing to save reads as a quiet, disabled button — dirty state where your eyes
-   already are, rather than only in a footer dot. */
-.btn-primary:disabled { background: none; color: var(--ink-3); border: 1px solid var(--line); cursor: default; font-weight: 500; }
-
-.btn-outline { background: none; color: var(--accent); border: 1px solid var(--accent); }
-.btn-outline:hover { background: var(--accent-soft); }
+/* === buttons === */
+.btn{display:inline-flex;align-items:center;gap:7px;height:34px;padding:0 14px;border-radius:var(--r-md);border:1px solid var(--line-2);background:var(--bg-3);color:var(--ink);font-size:var(--t-sm);font-weight:550;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--bg-4)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn-primary:hover{background:var(--accent-hi)}
+.btn-primary:disabled{background:transparent;border-color:var(--line);color:var(--ink-3);cursor:default}
+.btn-quiet{background:transparent;border-color:transparent;color:var(--ink-2)}
+.btn-quiet:hover{background:var(--bg-3);color:var(--ink)}
+.btn-danger{background:transparent;border-color:color-mix(in srgb,var(--crit) 45%,transparent);color:var(--crit)}
+.btn-danger:hover{background:var(--crit-soft)}
+.btn-danger-solid{background:var(--crit);border-color:var(--crit);color:#1a0806}
+[data-theme="light"] .btn-danger-solid{color:#fff}
+.btn.sm{height:28px;padding:0 10px;font-size:var(--t-xs)}
+.ibtn{display:inline-grid;place-items:center;width:32px;height:32px;border-radius:var(--r-md);border:1px solid transparent;background:transparent;color:var(--ink-2);cursor:pointer}
+.ibtn:hover{background:var(--bg-3);color:var(--ink)}
+.ibtn.sm{width:26px;height:26px;border-radius:var(--r-sm)}
+.kbd{font:500 11px/1 var(--mono);padding:3px 5px;border-radius:4px;background:var(--bg-3);border:1px solid var(--line-2);color:var(--ink-2)}
+.seg{display:inline-flex;padding:3px;border-radius:var(--r-md);background:var(--bg);border:1px solid var(--line)}
+.seg button{border:0;background:none;padding:4px 12px;border-radius:6px;font-size:var(--t-sm);color:var(--ink-2);cursor:pointer;display:inline-flex;gap:6px;align-items:center}
+.seg button[aria-checked="true"]{background:var(--bg-4);color:var(--ink);font-weight:550}
 
 /* Tools sit in one segmented group, visually separate from document actions. */
 .tool-group { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
-.btn-tool { background: var(--bg-2); color: var(--ink-2); border: none; border-right: 1px solid var(--line); border-radius: 0; padding: var(--space-1) var(--space-3); }
-.btn-tool:last-child { border-right: none; }
-.btn-tool:hover { background: var(--bg-3); color: var(--ink); }
-.btn-tool.panel-active { background: var(--accent-soft); color: var(--accent); }
-.btn-tab { background: var(--bg-2); color: var(--ink-3); border: 1px solid var(--line); }
-.btn-tab:hover { background: var(--bg-3); color: var(--ink); }
-.btn-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
-.btn-secondary { background: var(--bg-2); color: var(--ink-2); border: 1px solid var(--line); }
-.btn-secondary:hover { background: var(--bg-3); color: var(--ink); border-color: var(--line-2); }
-.btn-secondary.panel-active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-.btn-danger { background: var(--crit-soft); color: var(--crit); border: 1px solid var(--crit); }
-.btn-danger:hover { background: var(--crit); color: var(--accent-ink); }
-/* Compact variant, replacing the inline padding/font-size overrides that used to
-   sit on individual buttons in the template and in JS. */
-.btn-sm { padding: var(--space-1) var(--space-2); }
+
 
 /* Tabs */
 .tabs { display: flex; gap: var(--space-1); }
@@ -185,15 +177,42 @@ body {
 .match-count { font-size: var(--t-xs); color: var(--ink-3); }
 .match-count.none { color: var(--crit); }
 
-/* Modal (save diff) */
-.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; align-items: center; justify-content: center; }
-.modal-overlay.open { display: flex; }
-.modal { background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--r-md); width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column; box-shadow: var(--shadow); }
-.modal-header { padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
-.modal-header h3 { font-size: var(--t-md); color: var(--accent); }
-.modal-header .modal-sub { font-size: var(--t-xs); color: var(--ink-3); }
-.modal-body { flex: 1; overflow: auto; padding: var(--space-3) var(--space-4); margin: 0; background: var(--bg); font-family: var(--mono); font-size: var(--t-xs); line-height: var(--leading); white-space: pre-wrap; }
-.modal-footer { padding: var(--space-3) var(--space-4); border-top: 1px solid var(--line); display: flex; gap: var(--space-2); justify-content: flex-end; }
+/* === dialogs and toasts === */
+dialog{border:1px solid var(--line-2);border-radius:var(--r-lg);background:var(--bg-2);color:var(--ink);box-shadow:var(--shadow);padding:0;max-width:min(560px,calc(100vw - 24px))}
+dialog::backdrop{background:rgba(8,8,14,.6);backdrop-filter:blur(2px)}
+dialog.wide{max-width:min(760px,calc(100vw - 24px));width:760px}
+.dlg-hd{padding:20px 22px 6px}
+.dlg-hd h2{margin:0;font-size:var(--t-xl);font-weight:650;letter-spacing:-.015em}
+.dlg-hd p{margin:6px 0 0;color:var(--ink-2)}
+.dlg-bd{padding:12px 22px}
+.dlg-ft{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:14px 22px 20px;flex-wrap:wrap}
+.dlg-ft .note{margin-right:auto;font-size:var(--t-xs);color:var(--ink-3)}
+.dsum{display:flex;gap:14px;font-size:var(--t-sm);margin-bottom:10px}
+.dsum .a{color:var(--good);font-weight:600} .dsum .d{color:var(--crit);font-weight:600}
+.diff{border-radius:var(--r-md);background:var(--bg);font:12.5px/1.7 var(--mono);padding:8px 0;overflow:auto;max-height:50vh}
+.diff div{padding:0 14px;white-space:pre;tab-size:4}
+.toasts{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:80;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
+.toast{pointer-events:auto;display:flex;align-items:center;gap:12px;padding:10px 12px 10px 14px;border-radius:var(--r-md);background:var(--ink);color:var(--bg);box-shadow:var(--shadow);font-size:var(--t-sm);font-weight:500;animation:tin .2s ease-out}
+.toast .icon{color:var(--bg)}
+.toast button{border:0;background:none;color:inherit;font-weight:650;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+@keyframes tin{from{opacity:0;transform:translateY(8px)}}
+
+/* Old class names still used by markup that later tasks rewrite. */
+.btn-sm{height:28px;padding:0 10px;font-size:var(--t-xs)}
+.btn-tool{background:transparent;border-color:transparent;color:var(--ink-2)}
+.btn-tool:hover,.btn-tool.panel-active,.btn-quiet[aria-pressed="true"]{background:var(--bg-3);color:var(--ink)}
+/* .btn-save was referenced but never defined; it is the primary action. */
+.btn-save{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn-save:hover{background:var(--accent-hi)}
+.btn-tab{background:transparent;border-color:transparent;color:var(--ink-2)}
+.btn-tab.active{background:var(--bg-4);color:var(--ink)}
+.btn:disabled{cursor:default;opacity:.6}
+.btn-primary:disabled{opacity:1}
+.dlg-detail{margin:0;padding:10px 12px;border-radius:var(--r-md);background:var(--bg);font:12.5px/1.6 var(--mono);color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto}
+.toast .icon{color:var(--bg)}
+.toast .toast-x{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:var(--r-sm);text-decoration:none}
+.diff-eq{color:var(--ink-3)}
+a.btn,a.btn:hover{text-decoration:none}
 
 /* --- Metrics Tab --- */
 .section-title { font-size: var(--t-xs); font-weight: 600; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: var(--space-2); padding-bottom: var(--space-2); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: var(--space-2); }

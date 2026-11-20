@@ -12,15 +12,13 @@ import { applyTheme, watchSystemTheme } from './theme.js';
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
+  if (document.querySelector('dialog[open]')) return;
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('open'));
   document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
   clearPreview();
   // Only touch the editor if the find bar is actually open; otherwise Escape
   // in another tab would yank focus into the editor.
   if (document.getElementById('search-bar').classList.contains('open')) closeSearch();
-  // Resolve the save modal's promise, don't just hide it, or the save flow
-  // stays stuck on "Building diff preview..." forever.
-  if (document.getElementById('save-diff-modal').classList.contains('open')) resolveSaveModal(false);
 });
 
 // Cmd/Ctrl+F opens the find/replace bar (capture phase to preempt the editor).

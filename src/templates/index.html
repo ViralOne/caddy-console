@@ -135,19 +135,21 @@
 <!-- Status Panel -->
 
 <!-- Save Diff Modal -->
-<div class="modal-overlay" id="save-diff-modal">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>Review changes before saving</h3>
-      <span class="modal-sub">Comparing your editor (new) against the live config on disk (current)</span>
-    </div>
-    <div class="modal-body" id="save-diff-content"></div>
-    <div class="modal-footer">
-      <button class="btn btn-save" data-act="confirm-save">Save &amp; Reload</button>
-      <button class="btn btn-secondary" data-act="cancel-save">Cancel</button>
-    </div>
+<dialog class="wide" id="save-diff-modal" aria-labelledby="save-diff-h">
+  <div class="dlg-hd">
+    <h2 id="save-diff-h">Review changes before saving</h2>
+    <p>Comparing your editor (new) against the live config on disk.</p>
   </div>
-</div>
+  <div class="dlg-bd">
+    <div class="dsum" id="save-diff-summary"></div>
+    <div class="diff" id="save-diff-content"></div>
+  </div>
+  <div class="dlg-ft">
+    <span class="note">Caddy reloads gracefully; open connections are kept.</span>
+    <button class="btn btn-quiet" type="button" data-act="cancel-save">Cancel</button>
+    <button class="btn btn-primary" type="button" data-act="confirm-save"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-save"/></svg>Save &amp; Reload</button>
+  </div>
+</dialog>
 
 <script src="/static/js/editor.bundle.js"></script>
 <!-- App scripts: load order matters (classic scripts share one global scope;

@@ -10,8 +10,11 @@ const html = htm.bind(h);
 export const ICONS = [
   'dashboard', 'editor', 'explore',
   'box', 'box-check', 'box-x',
-  'more', 'chevron-down', 'close', 'copy', 'clock', 'filter', 'live',
-  'check', 'warning', 'external', 'logout', 'globe',
+  'more', 'chevron-down', 'chevron-right', 'chevron-left', 'chevron-up', 'close', 'copy', 'clock', 'filter', 'live',
+  'check', 'warning', 'info', 'external', 'logout', 'globe',
+  'status-ok', 'status-down', 'status-none', 'status-unknown',
+  'save', 'key', 'restore', 'blocks', 'minus-circle',
+  'sun', 'moon', 'monitor', 'shield', 'mark',
 ];
 
 function idFor(name) {

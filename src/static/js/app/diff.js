@@ -19,7 +19,7 @@ export function renderDiffInto(container, oldText, newText) {
   let aLn = 1, bLn = 1, changes = 0;
   for (const op of ops) {
     const d = document.createElement('div');
-    if (op.type === 'equal') { d.style.cssText = 'color:#555'; d.textContent = ` ${String(aLn).padStart(3)} ${op.line}`; aLn++; bLn++; }
+    if (op.type === 'equal') { d.className = 'diff-eq'; d.textContent = ` ${String(aLn).padStart(3)} ${op.line}`; aLn++; bLn++; }
     else if (op.type === 'delete') { d.className = 'diff-del'; d.textContent = `-${String(aLn).padStart(3)} ${op.line}`; aLn++; changes++; }
     else { d.className = 'diff-ins'; d.textContent = `+${String(bLn).padStart(3)} ${op.line}`; bLn++; changes++; }
     frag.appendChild(d);
@@ -31,6 +31,19 @@ export function renderDiffInto(container, oldText, newText) {
     frag.appendChild(d);
   }
   container.appendChild(frag);
+  return summarizeOps(ops);
+}
+
+/** Counts and line numbers of a diff: removed lines in the old text, added in the new. */
+export function summarizeOps(ops) {
+  let a = 1, b = 1;
+  const out = { added: 0, removed: 0, oldLines: [], newLines: [] };
+  for (const op of ops) {
+    if (op.type === 'equal') { a++; b++; }
+    else if (op.type === 'delete') { out.removed++; out.oldLines.push(a); a++; }
+    else { out.added++; out.newLines.push(b); b++; }
+  }
+  return out;
 }
 
 export function diffLines(a, b) {
