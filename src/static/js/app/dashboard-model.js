@@ -195,7 +195,8 @@ export function configCard(status, now = Date.now()) {
   const checks = state === 'ok' ? (level === 'adapted' ? 'Syntax and modules OK' : 'Passed local validation')
     : (status.config_check_message || null);
   const version = String(status.caddy_version || '').split(/\s+/)[0];
-  const mtime = toMs(status.last_modified);
+  // Prefer the epoch: last_modified is the server's local time without an offset.
+  const mtime = toMs(status.last_modified_ts ?? status.last_modified);
   const lc = status.last_change || null;
   // Attribute the change only if the audit entry is this file version's; an
   // edit made behind the console's back must not borrow the last user's name.

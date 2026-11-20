@@ -95,6 +95,7 @@ def caddy_status():
         mtime = os.path.getmtime(CADDYFILE)
         last_modified = datetime.fromtimestamp(mtime).isoformat()
     except OSError:
+        mtime = None
         last_modified = "unknown"
 
     config_check = _config_check_on_disk()
@@ -107,6 +108,9 @@ def caddy_status():
         "config_check_message": config_check["message"],
         "config_path": CADDYFILE,
         "last_modified": last_modified,
+        # Epoch seconds: last_modified is the server's naive local time, which a
+        # browser in another time zone would misread.
+        "last_modified_ts": mtime,
         "last_change": last_change(),
     })
 

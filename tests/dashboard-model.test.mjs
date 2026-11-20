@@ -134,6 +134,12 @@ check('"by" only when the last change matches the file time', () => {
   assert.equal(m.configCard(status({ last_change: { action: 'save', user: 'ops@example.com', ts } }), NOW).changed.by, 'ops@example.com');
   assert.equal(m.configCard(status({ last_change: { action: 'save', user: 'ops@example.com', ts: ts - 3600 } }), NOW).changed.by, null);
 });
+check('the epoch file time wins over the naive local string', () => {
+  const ts = at(2026, 10, 20, 14, 30, 0) / 1000;
+  const c = m.configCard(status({ last_modified: '2026-11-20T12:30:00.000000', last_modified_ts: ts,
+    last_change: { action: 'save', user: 'ops@example.com', ts: ts + 1 } }), NOW);
+  assert.equal(c.changed.rel, '30 min ago'); assert.equal(c.changed.by, 'ops@example.com');
+});
 check('unknown mtime hides the line', () => assert.equal(m.configCard(status({ last_modified: 'unknown' }), NOW).changed, null));
 
 console.log('\n--- health, tags, audit ---');

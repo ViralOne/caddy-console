@@ -400,6 +400,15 @@ class StatusApiTest(AppTestCase):
         self.assertEqual(body["config_check_level"], "adapted")
         self.assertIn("running Caddy", body["config_check_message"])
 
+    def test_status_gives_the_file_time_as_an_epoch(self):
+        # last_modified is the server's naive local time, which a browser in
+        # another time zone misreads; last_modified_ts is unambiguous.
+        with mock.patch.object(ops_mod, "_caddy_version", return_value="v2.test"), \
+             mock.patch.object(ops_mod, "caddy_check", return_value=(True, "ok", "adapted")):
+            body = self.client.get("/api/status", headers=AUTH).get_json()
+        self.assertAlmostEqual(body["last_modified_ts"], os.path.getmtime(env.CADDYFILE), places=3)
+        self.assertIsInstance(body["last_modified"], str)
+
     def test_failed_local_fallback_status_is_not_cached(self):
         ops_mod._status_cache.update(file_key=None, config_check=None, version=None)
         checks = [
