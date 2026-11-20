@@ -1,13 +1,14 @@
 // Dashboard at /: is anything broken, and where do I look next.
 //
-// Opens on a verdict, then the figures (each one a link into Explore with the
-// matching filter), then per-site rows and recent changes. All wording and
+// Opens on a verdict, then the figure tiles (each one a link into Explore with
+// the matching filter, plus the config tile), then per-site rows (problems
+// first) beside recent changes on wide screens. All wording and
 // thresholds live in dashboard-model.js; this file only lays them out.
 import { h, htm, render, useEffect, useState } from '../explore-vendor.js';
 import { Icon } from './icons.js';
 import { toast } from './ui/toast.js';
 import { formatBytes, formatCount, formatMs, formatPercent } from './format.js';
-import { RANGE, auditRow, configCard, exploreHref, healthOf, kpis, siteTags, verdict } from './dashboard-model.js';
+import { RANGE, auditRow, configCard, exploreHref, kpis, siteRows, verdict } from './dashboard-model.js';
 
 const html = htm.bind(h);
 const REFRESH_MS = 15000;
@@ -30,63 +31,87 @@ async function getJson(url) {
 }
 const openSite = (host) => document.dispatchEvent(new CustomEvent('app:open-site', { detail: { host } }));
 
-function Spark({ series, bad }) {
+const STROKE = { crit: 'var(--crit)', warn: 'var(--warn)' };
+
+function Spark({ series, tone = null, w = 110, h = 26, cls = 'spark' }) {
   const points = series || [];
   if (!points.length || !points.some(v => v)) return html`<span class="muted">—</span>`;
   const peak = Math.max(...points);
-  const step = 108 / Math.max(1, points.length - 1);
-  const pts = points.map((v, i) => `${(1 + i * step).toFixed(1)},${(24 - (v / peak) * 22).toFixed(1)}`).join(' ');
+  const step = (w - 2) / Math.max(1, points.length - 1);
+  const pts = points.map((v, i) => `${(1 + i * step).toFixed(1)},${(h - 2 - (v / peak) * (h - 4)).toFixed(1)}`).join(' ');
   return html`
-    <svg class="spark" viewBox="0 0 110 26" aria-hidden="true" focusable="false">
-      <polyline points=${pts} fill="none" stroke=${bad ? 'var(--crit)' : 'var(--ink-3)'}
+    <svg class=${cls} viewBox=${`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <polyline points=${pts} fill="none" stroke=${STROKE[tone] || 'var(--ink-3)'}
                 stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
     </svg>`;
 }
 
+// A thin bar for a share (0..1); the figure next to it carries the number.
+const Bar = ({ share }) => html`<span class="bar" aria-hidden="true"><i style=${{ width: `${Math.max(0, Math.min(1, share)) * 100}%` }}></i></span>`;
+
 const Parts = ({ parts }) => parts.map((p, i) => (p.mono ? html`<span class="mono" key=${i}>${p.mono}</span>` : p.text));
 
-function ConfigCard({ card }) {
-  const icon = card.state === 'ok' ? 'status-ok' : card.state === 'bad' ? 'status-down' : 'status-unknown';
+function DownList({ down }) {
   return html`
-    <aside class=${'cfg cfg-' + card.state} aria-label="Config">
-      <div class="ok"><${Icon} name=${icon} />${card.label}</div>
-      <dl>
-        ${card.checks && html`<dt>Checks</dt><dd class="chk">${card.checks}</dd>`}
-        ${card.version && html`<dt>Caddy</dt><dd>${card.version}</dd>`}
-        ${card.changed && html`<dt>Changed</dt><dd><time title=${card.changed.abs}>${card.changed.rel}</time>${card.changed.by ? ` by ${card.changed.by}` : ''}</dd>`}
-        ${card.path && html`<dt>File</dt><dd class="mono">${card.path}</dd>`}
-      </dl>
-    </aside>`;
+    <ul class="downs" aria-label="Sites that are down">
+      ${down.items.map(d => html`
+        <li key=${d.host}>
+          <span class="d-host mono">${d.host}</span>
+          <span class="d-addr mono">${d.address}</span>
+          <span class="d-since">${d.since}</span>
+          <button class="btn sm" type="button" onClick=${() => openSite(d.host)}>Open block</button>
+        </li>`)}
+      ${down.moreText && html`<li class="d-more">${down.moreText}</li>`}
+    </ul>`;
 }
 
-function Verdict({ v, card }) {
+function Verdict({ v }) {
   const icon = v.severity === 'warn' ? 'warning' : 'status-down';
   return html`
     <section class=${'verdict sev-' + v.severity} role=${v.severity === 'ok' ? 'status' : 'alert'} aria-labelledby="dash-h">
-      <div>
-        ${v.sev && html`<span class="sev"><${Icon} name=${icon} />${v.sev}</span>`}
-        <h1 id="dash-h">${v.severity === 'ok' && html`<${Icon} name="status-ok" size=${26} class="verdict-ok" />`}${v.title}</h1>
-        ${v.body.length > 0 && html`<p><${Parts} parts=${v.body} /></p>`}
-        ${(v.primary || v.secondary) && html`
-          <div class="acts">
-            ${v.primary && html`<a class="btn btn-primary" href=${v.primary.href}
-                 data-view=${v.primary.href.startsWith('/explore') ? 'explore' : 'editor'}>${v.primary.label}</a>`}
-            ${v.secondary && html`<button class="btn" type="button" onClick=${() => openSite(v.secondary.host)}>${v.secondary.label}</button>`}
-          </div>`}
-      </div>
-      ${card && html`<${ConfigCard} card=${card} />`}
+      ${v.sev && html`<span class="sev"><${Icon} name=${icon} />${v.sev}</span>`}
+      <h1 id="dash-h">${v.severity === 'ok' && html`<${Icon} name="status-ok" size=${20} class="verdict-ok" />`}${v.title}</h1>
+      ${v.down && html`<${DownList} down=${v.down} />`}
+      ${v.body.length > 0 && html`<p><${Parts} parts=${v.body} /></p>`}
+      ${(v.primary || v.secondary) && html`
+        <div class="acts">
+          ${v.primary && html`<a class="btn btn-primary" href=${v.primary.href}
+               data-view=${v.primary.href.startsWith('/explore') ? 'explore' : 'editor'}>${v.primary.label}</a>`}
+          ${v.secondary && html`<button class="btn" type="button" onClick=${() => openSite(v.secondary.host)}>${v.secondary.label}</button>`}
+        </div>`}
     </section>`;
 }
 
-function Figures({ items }) {
+const LEVEL_WORD = { crit: 'high', warn: 'elevated' };
+
+function Figure({ f }) {
+  return html`
+    <a class="fig" href=${f.href} data-view="explore" title=${f.title || null}>
+      <span class="lbl">${f.label}</span>
+      <span class=${'fv-n' + (f.level ? ' lv-' + f.level : '')}>${f.level && html`<${Icon} name="warning" size=${18} />`}${f.value}${f.of && html` <span class="fv-of">${f.of}</span>`}${f.level && html` <span class="tag">${LEVEL_WORD[f.level]}</span>`}</span>
+      ${f.spark && f.spark.some(v => v) && html`<${Spark} series=${f.spark} w=${200} h=${28} cls="spark fig-spark" />`}
+      ${f.share && html`<span class="sub share"><${Bar} share=${f.share.pct / 100} />${f.share.text}</span>`}
+      ${!f.share && f.sub && html`<span class=${'sub' + (f.bad ? ' bad' : '')}>${f.bad && !f.level && html`<${Icon} name="warning" size=${14} /> `}${f.sub}</span>`}
+    </a>`;
+}
+
+function ConfigFigure({ card }) {
+  const icon = card.state === 'ok' ? 'status-ok' : card.state === 'bad' ? 'status-down' : 'status-unknown';
+  return html`
+    <a class=${'fig fig-cfg cfg-' + card.state} href="/editor" data-view="editor" title=${card.checks || null}>
+      <span class="lbl">Config</span>
+      <span class="cfg-state"><${Icon} name=${icon} size=${18} />${card.word}</span>
+      ${card.version && html`<span class="sub">Caddy ${card.version}</span>`}
+      ${card.changed && html`<span class="sub">Changed <time title=${card.changed.abs}>${card.changed.rel}</time>${card.changed.by ? ` by ${card.changed.by}` : ''}</span>`}
+      ${card.path && html`<span class="sub mono cfg-path" title=${card.path}>${card.path}</span>`}
+    </a>`;
+}
+
+function Figures({ items, card }) {
   return html`
     <div class="figs" aria-label="Last hour">
-      ${items.map(f => html`
-        <a class="fig" key=${f.key} href=${f.href} data-view="explore">
-          <span class="lbl">${f.label}</span>
-          <span class="fv-n">${f.value}${f.of && html` <span class="fv-of">${f.of}</span>`}</span>
-          ${f.sub && html`<span class=${'sub' + (f.bad ? ' bad' : '')}>${f.bad && html`<${Icon} name="warning" size=${14} /> `}${f.sub}</span>`}
-        </a>`)}
+      ${items.map(f => html`<${Figure} key=${f.key} f=${f} />`)}
+      ${card && html`<${ConfigFigure} card=${card} />`}
     </div>`;
 }
 
@@ -110,15 +135,13 @@ function SitesTable({ sites, upstreams }) {
     <table class="tbl sites">
       <thead><tr><th>Site</th><th>Health</th><th class="num">Requests</th><th class="num">5xx</th><th class="num">p95</th><th class="num">Out</th><th class="num">Last hour</th></tr></thead>
       <tbody>
-        ${sites.map((s) => {
-          const health = healthOf(s.host, upstreams);
-          const tags = siteTags(s);
+        ${siteRows(sites, upstreams).map(({ site: s, health, tags, share, tone }) => {
           const q = 'host:' + s.host;
           return html`
             <tr key=${s.host} class=${health.state === 'down' ? 'is-crit' : ''}>
               <td class="c-site"><a class="host" href=${exploreHref(q)} data-view="explore">${s.host}</a></td>
               <td class="c-health"><span class=${'health h-' + health.state}><${Icon} name=${health.icon} size=${14} />${health.label}</span></td>
-              <td class="num" data-label="Requests"><a href=${exploreHref(q)} data-view="explore">${formatCount(s.requests)}</a></td>
+              <td class="num c-req" data-label="Requests"><a href=${exploreHref(q)} data-view="explore">${formatCount(s.requests)}</a><${Bar} share=${share} /></td>
               <td class="num" data-label="5xx"><a href=${exploreHref(q + ' status:5xx')} data-view="explore" title=${`${formatCount(s.errors)} server errors`}>${tags.includes('high')
                 ? html`<span class="flag bad"><${Icon} name="warning" size=${14} />${formatPercent(s.error_rate, 2)} <span class="tag">high</span></span>`
                 : formatPercent(s.error_rate, 2)}</a></td>
@@ -126,7 +149,7 @@ function SitesTable({ sites, upstreams }) {
                 ? html`<span class="flag slow"><${Icon} name="warning" size=${14} />${formatMs(s.p95_latency_ms)} <span class="tag">slow</span></span>`
                 : formatMs(s.p95_latency_ms)}</a></td>
               <td class="num" data-label="Out"><a href=${exploreHref(q)} data-view="explore">${formatBytes(s.bytes_out)}</a></td>
-              <td class="num c-spark"><${Spark} series=${s.series} bad=${health.state === 'down' || tags.includes('high')} /></td>
+              <td class="num c-spark"><${Spark} series=${s.series} tone=${tone} w=${160} h=${28} /></td>
             </tr>`;
         })}
       </tbody>
@@ -208,17 +231,22 @@ function App() {
   return html`
     <div class="page dash">
       ${data.sites.error && html`<p class="metrics-hint error">${data.sites.error}</p>`}
-      <${Verdict} v=${v} card=${card} />
-      <${Figures} items=${figures} />
+      <${Verdict} v=${v} />
+      <${Figures} items=${figures} card=${card} />
       ${p && !proxyDismissed(p.ip) && html`<${ProxyNotice} p=${p} onDismiss=${dismiss} />`}
 
-      <div class="h-sec"><h2>Sites</h2><p>Last hour, from the access log. Every figure opens in Explore.</p></div>
-      ${sites.length
-        ? html`<${SitesTable} sites=${sites} upstreams=${data.upstreamsError ? null : data.upstreams} />`
-        : html`<p class="metrics-hint">No requests in the last hour${data.sites.skipped ? ` (${formatCount(data.sites.skipped)} log lines could not be indexed; check the log format)` : ''}.</p>`}
-
-      <div class="h-sec"><h2>Recent changes</h2><p>From this console's audit log.</p></div>
-      <${Changes} entries=${(data.audit?.entries || []).slice(0, 8)} now=${data.now} />
+      <div class="dash-cols">
+        <section class="dash-sites" aria-labelledby="dash-sites-h">
+          <div class="h-sec"><h2 id="dash-sites-h">Sites</h2><p>Last hour, from the access log. Every figure opens in Explore.</p></div>
+          ${sites.length
+            ? html`<${SitesTable} sites=${sites} upstreams=${data.upstreamsError ? null : data.upstreams} />`
+            : html`<p class="metrics-hint">No requests in the last hour${data.sites.skipped ? ` (${formatCount(data.sites.skipped)} log lines could not be indexed; check the log format)` : ''}.</p>`}
+        </section>
+        <section class="dash-changes" aria-labelledby="dash-changes-h">
+          <div class="h-sec"><h2 id="dash-changes-h">Recent changes</h2><p>From this console's audit log.</p></div>
+          <${Changes} entries=${(data.audit?.entries || []).slice(0, 8)} now=${data.now} />
+        </section>
+      </div>
 
       <div class="foot"><span class="live-dot" aria-hidden="true"></span>${(data.sites.indexed || 0).toLocaleString('en-US')} events indexed. Refreshes every ${REFRESH_MS / 1000} s.${data.sites.dropped ? ` ${data.sites.dropped.toLocaleString('en-US')} oldest events were dropped at the memory cap.` : ''}</div>
     </div>`;

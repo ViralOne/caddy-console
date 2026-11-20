@@ -169,4 +169,89 @@ check('audit time uses the epoch when present', () => {
   const r = m.auditRow({ action: 'login', time: '2026-11-20T12:50:00.000000', ts: at(2026, 10, 20, 14, 50, 0) / 1000 }, NOW);
   assert.equal(r.rel, '10 min ago'); assert.equal(r.abs, '2026-11-20 14:50:00');
 });
+console.log('\n--- dashboard improvements ---');
+const CHECKED = (address, domains, healthy, since = null) => ({ ...UP(address, domains, healthy, since), active_health: true, passive_health: false });
+check('health is "Not checked" when no upstream of the site has an active or passive check', () => {
+  const unchecked = { ...UP('1:1', ['a'], 1), active_health: false, passive_health: false };
+  const h = m.healthOf('a', [unchecked]);
+  assert.equal(h.label, 'Not checked'); assert.equal(h.state, 'unchecked');
+  assert.equal(m.healthOf('a', [unchecked, CHECKED('1:2', ['a'], 1)]).label, 'Healthy');
+  assert.equal(m.healthOf('a', [{ ...UP('1:1', ['a'], 1), active_health: false, passive_health: true }]).label, 'Healthy');
+  // A failing upstream is still Unhealthy, checks configured or not; no upstream stays No upstream.
+  assert.equal(m.healthOf('a', [{ ...unchecked, healthy: 0 }]).label, 'Unhealthy');
+  assert.equal(m.healthOf('b', [unchecked]).label, 'No upstream');
+});
+check('site rows: down first, then high 5xx, then slow, then the rest by requests', () => {
+  const sites = [
+    site('big.example.com', 500, 0), site('slow.example.com', 50, 0, 2500), site('high.example.com', 40, 10),
+    site('down.example.com', 30, 0), site('mid.example.com', 200, 0), site('highslow.example.com', 20, 5, 3000),
+  ];
+  const rows = m.siteRows(sites, [CHECKED('9:9', ['down.example.com'], 0), CHECKED('9:8', ['big.example.com'], 1)]);
+  assert.deepEqual(rows.map(r => r.site.host),
+    ['down.example.com', 'high.example.com', 'highslow.example.com', 'slow.example.com', 'big.example.com', 'mid.example.com']);
+  assert.deepEqual(rows.map(r => r.tone), ['crit', 'warn', 'warn', null, null, null]);
+  assert.equal(rows[0].health.label, 'Unhealthy');
+  assert.equal(rows.find(r => r.site.host === 'big.example.com').share, 1);
+  assert.equal(rows.find(r => r.site.host === 'mid.example.com').share, 0.4);
+  // Input order is left alone.
+  assert.equal(sites[0].host, 'big.example.com');
+});
+check('several down sites are listed, earliest failure first, capped at 5 with "+N more"', () => {
+  const t = (h, min) => at(2026, 10, 20, h, min) / 1000;
+  const ups = [
+    CHECKED('10.0.0.1:80', ['a.example.com'], 0, t(14, 40)), CHECKED('10.0.0.2:80', ['b.example.com'], 0, t(14, 10)),
+    CHECKED('10.0.0.3:80', ['c.example.com'], 0), CHECKED('10.0.0.4:80', ['d.example.com'], 0, t(14, 20)),
+    CHECKED('10.0.0.5:80', ['e.example.com'], 0, t(14, 50)), CHECKED('10.0.0.6:80', ['f.example.com'], 0, t(14, 55)),
+    CHECKED('10.0.0.7:80', ['g.example.com'], 0, t(14, 58)), CHECKED('10.0.0.8:80', ['h.example.com'], 1),
+  ];
+  const v = m.verdict({ sites: [], upstreams: ups, configuredSites: 8, now: NOW });
+  assert.equal(v.severity, 'critical'); assert.equal(v.title, '7 sites are down');
+  assert.deepEqual(v.down.items.map(d => d.host), ['b.example.com', 'd.example.com', 'a.example.com', 'e.example.com', 'f.example.com']);
+  assert.deepEqual(v.down.items[0], { host: 'b.example.com', address: '10.0.0.2:80', since: 'failed since 14:10' });
+  assert.equal(v.down.more, 2);
+  assert.equal(v.down.moreText, '+2 more');
+  // Without a time it reads "failing" and sorts after the timed ones.
+  const short = m.verdict({ sites: [], upstreams: [ups[2], ups[0]], configuredSites: 2, now: NOW });
+  assert.deepEqual(short.down.items.map(d => [d.host, d.since]), [['a.example.com', 'failed since 14:40'], ['c.example.com', 'failing']]);
+  assert.equal(short.down.more, 0); assert.equal(short.down.moreText, null);
+  // Explore gets every down host at once (Explore ORs repeated host: terms).
+  const q = new URLSearchParams(v.primary.href.split('?')[1]).get('q');
+  assert.equal(q, 'host:b.example.com host:d.example.com host:a.example.com host:e.example.com host:f.example.com host:g.example.com host:c.example.com');
+});
+check('one down site keeps the single-site verdict without a list', () => {
+  const v = m.verdict({ sites: [], upstreams: [CHECKED('10.0.0.1:80', ['a.example.com'], 0)], configuredSites: 1, now: NOW });
+  assert.equal(v.down, null);
+});
+check('sent to visitors: "N% from host" with a share, hidden with one site', () => {
+  const sites = [site('nas.example.com', 10, 0, 100, 3_000_000), site('b.example.com', 10, 0, 100, 7_000_000)];
+  const bytes = m.kpis({ sites }).find(k => k.key === 'bytes');
+  assert.equal(bytes.label, 'Sent to visitors, last hour');
+  assert.deepEqual(bytes.share, { text: '70% from b.example.com', pct: 70 });
+  assert.equal(bytes.title, 'Response bodies Caddy sent for logged requests (sites that import access_log)');
+  assert.equal(m.kpis({ sites: [site('nas.example.com', 279, 3, 141, 3_000_000), site('x', 1, 0, 1, 7_000_000)] })[3].share.text, '70% from x');
+  assert.equal(m.kpis({ sites: [site('a', 1, 0, 1, 500)] })[3].share, null);
+  assert.equal(m.kpis({ sites: [site('a', 1, 0, 1, 0), site('b', 1, 0, 1, 0)] })[3].share, null);
+  const s30 = [site('nas.example.com', 1, 0, 1, 30), site('a', 1, 0, 1, 25), site('b', 1, 0, 1, 25), site('c', 1, 0, 1, 20)];
+  assert.equal(m.kpis({ sites: s30 })[3].share.text, '30% from nas.example.com');
+});
+check('requests sparkline sums every site\'s series point by point', () => {
+  const a = { ...site('a', 6, 0), series: [1, 2, 3] };
+  const b = { ...site('b', 6, 0), series: [4, 0, 2] };
+  const c = { ...site('c', 0, 0), series: [] };
+  assert.deepEqual(m.sumSeries([a, b, c]), [5, 2, 5]);
+  assert.deepEqual(m.sumSeries([a, { ...b, series: [1, 1, 1, 1] }]), [2, 3, 4, 1]);
+  assert.deepEqual(m.sumSeries([]), []);
+  assert.deepEqual(m.sumSeries([{ ...a, series: undefined }]), []);
+  assert.deepEqual(m.kpis({ sites: [a, b] })[0].spark, [5, 2, 5]);
+});
+check('5xx rate level: warn at 1%, crit at 5%', () => {
+  assert.equal(m.kpis({ sites: [site('a', 1000, 9)] })[1].level, null);
+  assert.equal(m.kpis({ sites: [site('a', 1000, 10)] })[1].level, 'warn');
+  assert.equal(m.kpis({ sites: [site('a', 1000, 50)] })[1].level, 'crit');
+});
+check('config card has a short state word for the tile', () => {
+  assert.equal(m.configCard(status(), NOW).word, 'Valid');
+  assert.equal(m.configCard(status({ config_valid: false }), NOW).word, 'Check failed');
+  assert.equal(m.configCard(status({ config_valid: null, config_check_level: 'unavailable' }), NOW).word, 'Not checked');
+});
 console.log(`\n${passed} passed`);

@@ -208,25 +208,40 @@ a.btn,a.btn:hover{text-decoration:none}
 .cm-find-row { background: var(--warn-soft) !important; }
 
 /* === dashboard === */
-.verdict{display:grid;grid-template-columns:1fr auto;gap:24px;align-items:start;padding:20px 22px;margin-bottom:28px;border-radius:var(--r-md);background:var(--crit-soft)}
+.verdict{padding:14px 18px;margin-bottom:20px;border-radius:var(--r-md);background:var(--crit-soft)}
 .sev{display:inline-flex;align-items:center;gap:6px;font-size:var(--t-sm);font-weight:600;color:var(--crit)}
-.verdict h1{margin:6px 0 8px;font-size:var(--t-2xl);line-height:1.15;font-weight:650;letter-spacing:-.022em;max-width:28ch}
-.verdict p{margin:0;color:var(--ink-2);max-width:66ch}
-.verdict .acts{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
-.cfg{min-width:250px;max-width:380px;padding:14px 16px;border-radius:var(--r-lg);background:var(--bg-2)}
-.cfg .ok{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--good)}
-.cfg dl{margin:10px 0 0;display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:var(--t-sm)}
-.cfg dt{color:var(--ink-3)} .cfg dd{margin:0;color:var(--ink-2)}
-/* A failed check can bring Caddy's whole multi-line log output: keep it in the card. */
-.cfg dd.chk{overflow-wrap:anywhere;max-height:7.5em;overflow:auto}
-.figs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--line);margin-top:4px}
-.fig{display:block;padding:18px 20px 4px 0;color:var(--ink)}
-.fig:hover{text-decoration:none}
+.verdict h1{margin:4px 0 6px;font-size:var(--t-xl);line-height:1.2;font-weight:650;letter-spacing:-.018em;overflow-wrap:anywhere}
+.verdict p{margin:0;color:var(--ink-2);max-width:72ch}
+.verdict .acts{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+/* Several down sites: one line each, earliest failure first. */
+.downs{list-style:none;margin:8px 0 10px;padding:0;max-width:820px}
+.downs li{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) auto;gap:4px 14px;align-items:center;padding:5px 0;border-top:1px solid color-mix(in srgb,var(--crit) 18%,transparent)}
+.downs li:first-child{border-top:0}
+.downs .d-host{font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.downs .d-addr{color:var(--ink-2);overflow-wrap:anywhere}
+.downs .d-since{color:var(--ink-2);font-size:var(--t-sm)}
+.downs li.d-more{display:block;color:var(--ink-2);font-size:var(--t-sm)}
+/* Figure tiles: one row of five on a subtle surface, hairline borders. */
+.figs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px}
+.fig{display:flex;flex-direction:column;gap:3px;min-width:0;padding:14px 16px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--bg-2);color:var(--ink)}
+.fig:hover{text-decoration:none;border-color:var(--line-2)}
 .fig:hover .fv-n{color:var(--accent)}
 .fig .lbl{font-size:var(--t-sm);color:var(--ink-3)}
-.fv-n{display:block;font-size:var(--t-xl);font-weight:600;letter-spacing:-.015em;margin-top:2px}
-.fig .sub{font-size:var(--t-xs);color:var(--ink-3)}
+.fv-n{display:flex;align-items:center;flex-wrap:wrap;gap:0 6px;font-size:var(--t-xl);font-weight:600;letter-spacing:-.015em;line-height:1.25}
+.fv-n.lv-warn{color:var(--warn)} .fv-n.lv-crit{color:var(--crit)}
+.fv-n .tag{font-size:11px;font-weight:600;line-height:16px;padding:0 5px;border-radius:4px;border:1px solid currentColor;letter-spacing:0}
+.fig .sub{font-size:var(--t-xs);color:var(--ink-3);min-width:0}
 .fig .sub.bad{color:var(--serious)}
+.fig-spark{width:100%;height:28px;margin:2px 0 0}
+.fig .share{display:flex;flex-direction:column;gap:5px;margin-top:4px;overflow-wrap:anywhere}
+.cfg-state{display:flex;align-items:center;gap:7px;font-size:var(--t-lg);font-weight:600;color:var(--good)}
+.cfg-bad .cfg-state{color:var(--crit)}
+.cfg-unknown .cfg-state{color:var(--ink-3)}
+.cfg-path{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* A thin share bar: the number beside it carries the value. */
+.bar{display:block;height:3px;border-radius:2px;background:var(--bg-4);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ink-3);border-radius:inherit}
+.sites td.c-req .bar{width:64px;margin:5px 0 0 auto}
 .notice{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start;margin-top:32px;padding:16px 18px;border-radius:var(--r-lg);background:var(--warn-soft)}
 .notice>.icon{color:var(--warn);width:20px;height:20px;margin-top:1px}
 .notice h2{margin:0 0 2px;font-size:var(--t-md);font-weight:600}
@@ -246,7 +261,9 @@ table{border-collapse:collapse;width:100%}
 .h-up{color:var(--good)} .h-down{color:var(--crit);font-weight:600} .h-none{color:var(--ink-3)} .h-unknown{color:var(--ink-3)}
 .flag{display:inline-flex;align-items:center;gap:4px;font-weight:600}
 .flag.bad{color:var(--crit)} .flag.slow{color:var(--serious)}
-.spark{width:110px;height:26px;display:block;margin-left:auto}
+.spark{width:160px;height:28px;display:block;margin-left:auto}
+.h-unchecked{color:var(--ink-3)}
+.dash-cols{display:grid;grid-template-columns:minmax(0,1fr);gap:0 40px}
 .changes{list-style:none;margin:0;padding:0}
 .changes li{display:grid;grid-template-columns:120px 200px 1fr auto;gap:16px;align-items:baseline;padding:11px 0;border-bottom:1px solid var(--line)}
 .changes li:last-child{border-bottom:0}
@@ -258,13 +275,11 @@ table{border-collapse:collapse;width:100%}
 .live-dot{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 0 3px var(--good-soft)}
 /* Additions to the mockup: other severities and states, tags, hints. */
 .verdict.sev-ok{background:var(--bg-2)}
-.verdict.sev-ok h1{font-size:var(--t-xl);margin:0}
-.verdict h1 .verdict-ok{color:var(--good);margin-right:10px;vertical-align:-4px}
+.verdict.sev-ok h1{font-size:var(--t-lg);margin:0}
+.verdict h1 .verdict-ok{color:var(--good);margin-right:8px;vertical-align:-3px}
 .verdict.sev-warn{background:var(--warn-soft)}
 .verdict.sev-warn .sev{color:var(--warn)}
 .verdict.sev-serious .sev{color:var(--serious)}
-.cfg-bad .ok{color:var(--crit)}
-.cfg-unknown .ok{color:var(--ink-3)}
 .fv-of{font-size:var(--t-md);font-weight:400;color:var(--ink-3)}
 .flag .tag{font-size:11px;font-weight:600;line-height:16px;padding:0 5px;border-radius:4px;border:1px solid currentColor}
 .metrics-hint{color:var(--ink-3);font-size:var(--t-sm);padding:12px 0}
@@ -421,8 +436,17 @@ details.raw[open]{flex-basis:100%}
 
 /* === responsive ===
  * Last in the file so these overrides win over the component rules above. */
+/* Wide screens: Sites (about 2/3) beside Recent changes (about 1/3). */
+@media (min-width:1280px){
+  .page.dash{max-width:1480px}
+  .dash-cols{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}
+  .dash-changes .changes li{grid-template-columns:minmax(0,1fr) auto;gap:2px 12px}
+  .dash-changes .changes .who,.dash-changes .changes .det{grid-column:1/2}
+  .dash-changes .changes time{grid-row:1;grid-column:2}
+}
 @media (max-width:1100px){
-  .figs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .figs{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .fig-cfg{grid-column:span 2}
   .fields{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 @media (max-width:1024px){
@@ -438,8 +462,6 @@ details.raw[open]{flex-basis:100%}
   .scrim{position:fixed;inset:0;z-index:55;background:rgba(8,8,14,.55)}
   .filters-btn{display:inline-flex;height:40px}
   .panel{position:fixed;z-index:58;top:var(--hdr);right:0;bottom:0;width:min(420px,100vw);box-shadow:var(--shadow)}
-  .verdict{grid-template-columns:1fr}
-  .cfg{min-width:0;max-width:none}
   .changes li{grid-template-columns:110px 1fr auto}
   .changes .det{grid-column:2/3}
 }
@@ -463,9 +485,15 @@ details.raw[open]{flex-basis:100%}
   .etools .btn{padding:0 8px}
   .page{padding:22px 16px 40px}
   .verdict{padding-left:14px;padding-right:14px}
-  .verdict h1{font-size:24px}
-  .figs{grid-template-columns:1fr 1fr}
-  .fig{padding-right:10px}
+  .verdict h1{font-size:var(--t-lg)}
+  .downs li{grid-template-columns:minmax(0,1fr) auto;padding:7px 0}
+  .downs .d-host{grid-column:1/2}
+  .downs .d-addr,.downs .d-since{grid-column:1/2}
+  .downs .btn{grid-column:2/3;grid-row:1/4}
+  .figs{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .fig{padding:12px}
+  .fig-cfg{grid-column:1/-1}
+  .sites td.c-req .bar{margin-left:0}
   .notice{grid-template-columns:auto 1fr}
   .notice .acts{grid-column:1/-1}
   /* Sites and stream tables become stacked rows. */
