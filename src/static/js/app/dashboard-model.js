@@ -56,12 +56,29 @@ function servingTitle(total) {
   return total === 1 ? 'The site is serving' : `All ${total} sites are serving`;
 }
 
-export function verdict({ sites = [], upstreams = [], upstreamsError = null, configuredSites = null, status = null, now = Date.now() }) {
-  if (upstreamsError && /not reachable/i.test(upstreamsError)) {
+export function verdict({
+  sites = [], upstreams = [], upstreamsError = null, trafficError = null, loadError = null,
+  configuredSites = null, status = null, now = Date.now(),
+}) {
+  // The last refresh failed: whatever the previous data said is no longer known.
+  if (loadError) {
     return {
-      severity: 'critical', sev: "Critical, Caddy's admin API is unreachable",
+      severity: 'serious', sev: 'Dashboard data is out of date',
+      title: 'The dashboard could not refresh',
+      body: [text('The last request to the console failed: '), mono(String(loadError)),
+        text('. The figures below are from the last successful refresh.')],
+      primary: null, secondary: null,
+    };
+  }
+
+  // Any error from /api/upstreams (unreachable, timed out, non-200) means Caddy's
+  // admin API is not answering; an empty upstream list must not read as "all fine".
+  if (upstreamsError) {
+    return {
+      severity: 'critical', sev: "Critical, Caddy's admin API is not answering",
       title: 'Caddy is not answering the console',
-      body: [text('The admin API did not respond, so health, the live config and Save & Reload are unavailable. Check that the Caddy container is running.')],
+      body: [text("Asking Caddy's admin API for upstream health failed: "), mono(String(upstreamsError)),
+        text('. Health, the live config and Save & Reload may be unavailable. Check that the Caddy container is running.')],
       primary: { label: 'Open Explore', href: exploreHref('') }, secondary: null,
     };
   }
@@ -107,7 +124,30 @@ export function verdict({ sites = [], upstreams = [], upstreamsError = null, con
     };
   }
 
-  return { severity: 'ok', sev: null, title: servingTitle(configuredSites ?? sites.length), body: [], primary: null, secondary: null };
+  // Health comes from Caddy's metrics. With upstreams but no health for any of
+  // them, "serving" would be a guess.
+  const unknown = upstreams.filter(u => u.healthy !== 0 && u.healthy !== 1);
+  if (upstreams.length && (trafficError || unknown.length === upstreams.length)) {
+    const body = trafficError
+      ? [text("Caddy's metrics did not answer ("), mono(String(trafficError)), text('), so the console cannot tell whether upstreams are healthy.')]
+      : [text('Caddy reported no health for any upstream, so the console cannot tell whether they are up.')];
+    body.push(text(' Upstream health is read from Caddy\'s metrics: enable them with '), mono('servers { metrics }'),
+      text(' in the global options, and add '), mono('health_uri'), text(' to a reverse_proxy for active checks.'));
+    return {
+      severity: 'warn', sev: 'Warning, no health data', title: 'Upstream health unavailable', body,
+      primary: { label: 'Open Explore', href: exploreHref('') }, secondary: null,
+    };
+  }
+
+  const total = configuredSites ?? sites.length;
+  if (unknown.length) {
+    return {
+      severity: 'ok', sev: null, title: total ? `No problems found on ${total} ${plural(total, 'site')}` : servingTitle(total),
+      body: [text(`Caddy reported no health for ${unknown.length} ${plural(unknown.length, 'upstream')}.`)],
+      primary: null, secondary: null,
+    };
+  }
+  return { severity: 'ok', sev: null, title: servingTitle(total), body: [], primary: null, secondary: null };
 }
 
 export function kpis({ sites = [], previousTotal = null, configuredSites = null, dropped = 0 }) {

@@ -46,6 +46,37 @@ check('an admin API outage outranks everything', () => {
   const v = m.verdict({ sites: SITES, upstreams: [], upstreamsError: 'Caddy admin API not reachable', now: NOW });
   assert.equal(v.severity, 'critical'); assert.equal(v.title, 'Caddy is not answering the console');
 });
+check('a hung admin API (read timeout) is critical and shows the error', () => {
+  const err = "HTTPConnectionPool(host='caddy', port=2019): Read timed out. (read timeout=5)";
+  const v = m.verdict({ sites: SITES, upstreams: [], upstreamsError: err, configuredSites: 7, now: NOW });
+  assert.equal(v.severity, 'critical'); assert.equal(v.title, 'Caddy is not answering the console');
+  assert.ok(plain(v.body).includes(err));
+});
+check('a non-200 from the admin API is critical and shows the error', () => {
+  const v = m.verdict({ sites: SITES, upstreams: [], upstreamsError: 'Caddy returned 500', configuredSites: 7, now: NOW });
+  assert.equal(v.severity, 'critical'); assert.ok(plain(v.body).includes('Caddy returned 500'));
+});
+check('metrics unavailable with upstreams present: health unavailable, never "serving"', () => {
+  const ups = HEALTHY.map(u => ({ ...u, healthy: undefined }));
+  const calm = SITES.map(s => (s.host.startsWith('torrent') ? site(s.host, 65, 0) : s));
+  const v = m.verdict({ sites: calm, upstreams: ups, trafficError: 'Metrics endpoint not found (404)', configuredSites: 7, now: NOW });
+  assert.equal(v.severity, 'warn'); assert.equal(v.title, 'Upstream health unavailable');
+  assert.ok(plain(v.body).includes('Metrics endpoint not found (404)'));
+  assert.ok(!/serving/.test(v.title));
+  // No metrics error, but Caddy reported no health for any upstream: same verdict.
+  assert.equal(m.verdict({ sites: calm, upstreams: ups, configuredSites: 7, now: NOW }).title, 'Upstream health unavailable');
+});
+check('ok stays ok when health is known', () => {
+  const calm = SITES.map(s => (s.host.startsWith('torrent') ? site(s.host, 65, 0) : s));
+  const v = m.verdict({ sites: calm, upstreams: HEALTHY, trafficError: null, configuredSites: 7, now: NOW });
+  assert.equal(v.severity, 'ok'); assert.equal(v.title, 'All 7 sites are serving');
+});
+check('a failed refresh replaces the verdict, whatever the last data said', () => {
+  const calm = SITES.map(s => (s.host.startsWith('torrent') ? site(s.host, 65, 0) : s));
+  const v = m.verdict({ sites: calm, upstreams: HEALTHY, configuredSites: 7, loadError: 'Failed to fetch', now: NOW });
+  assert.equal(v.severity, 'serious'); assert.equal(v.title, 'The dashboard could not refresh');
+  assert.ok(plain(v.body).includes('Failed to fetch'));
+});
 check('a failing config check is serious', () => {
   const v = m.verdict({ sites: [], upstreams: [], status: { config_valid: false, config_check_level: 'adapted', config_check_message: 'boom' }, now: NOW });
   assert.equal(v.severity, 'serious'); assert.equal(plain(v.body), 'boom');

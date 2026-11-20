@@ -19,6 +19,15 @@ function proxyDismissed(ip) {
 function setProxyDismissed(ip) {
   try { if (ip) localStorage.setItem(PROXY_DISMISS_KEY, ip); else localStorage.removeItem(PROXY_DISMISS_KEY); } catch (e) { /* this page only */ }
 }
+// A proxy error page is not JSON; say which request failed and how.
+async function getJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error((body && body.error) || `${url.split('?')[0]} returned HTTP ${r.status}`);
+  }
+  return r.json();
+}
 const openSite = (host) => document.dispatchEvent(new CustomEvent('app:open-site', { detail: { host } }));
 
 function Spark({ series, bad }) {
@@ -143,26 +152,23 @@ function Changes({ entries, now }) {
 
 function App() {
   const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(null);           // the last refresh failed
   const [, setDismissTick] = useState(0);
 
   const load = async () => {
     try {
       const [sites, upstreams, traffic, status, audit] = await Promise.all([
-        fetch(`/api/sites?range=${RANGE}`).then(r => r.json()),
-        fetch('/api/upstreams').then(r => r.json()),
-        fetch('/api/traffic').then(r => r.json()),
-        fetch('/api/status').then(r => r.json()),
-        fetch('/api/audit').then(r => r.json()),
+        getJson(`/api/sites?range=${RANGE}`), getJson('/api/upstreams'), getJson('/api/traffic'),
+        getJson('/api/status'), getJson('/api/audit'),
       ]);
       // Caddy reports upstream health per address; fold it onto the upstream rows.
       const healthy = traffic.upstreams_healthy || {};
       const ups = (upstreams.upstreams || []).map(u => ({ ...u, healthy: healthy[u.address] }));
       setData({
-        sites, upstreams: ups, upstreamsError: upstreams.error || null,
+        sites, upstreams: ups, upstreamsError: upstreams.error || null, trafficError: traffic.error || null,
         configuredSites: upstreams.configured_sites ?? null, status, audit, now: Date.now(),
       });
-      setError(sites.error || null);
+      setError(null);
     } catch (e) {
       setError(e.message);
     }
@@ -183,7 +189,11 @@ function App() {
   if (!data) return html`<div class="page"><p class="metrics-hint">Loading…</p></div>`;
 
   const sites = data.sites.sites || [];
-  const v = verdict({ sites, upstreams: data.upstreams, upstreamsError: data.upstreamsError, configuredSites: data.configuredSites, status: data.status, now: data.now });
+  // A failed refresh keeps the last figures but never the last verdict.
+  const v = verdict({
+    sites, upstreams: data.upstreams, upstreamsError: data.upstreamsError, trafficError: data.trafficError,
+    loadError: error, configuredSites: data.configuredSites, status: data.status, now: data.now,
+  });
   const card = configCard(data.status, data.now);
   const figures = kpis({ sites, previousTotal: data.sites.previous_total ?? null, configuredSites: data.configuredSites, dropped: data.sites.dropped || 0 });
   const p = data.sites.single_proxy_ip;
@@ -197,7 +207,7 @@ function App() {
 
   return html`
     <div class="page dash">
-      ${error && html`<p class="metrics-hint error">${error}</p>`}
+      ${data.sites.error && html`<p class="metrics-hint error">${data.sites.error}</p>`}
       <${Verdict} v=${v} card=${card} />
       <${Figures} items=${figures} />
       ${p && !proxyDismissed(p.ip) && html`<${ProxyNotice} p=${p} onDismiss=${dismiss} />`}
