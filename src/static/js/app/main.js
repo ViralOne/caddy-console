@@ -13,6 +13,8 @@ import { applyTheme, watchSystemTheme } from './theme.js';
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (document.querySelector('dialog[open]')) return;
+  // Esc with the account menu open closes only the menu (usermenu.js handles it).
+  if (e.defaultPrevented || document.querySelector('#acct-menu:not([hidden])')) return;
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('open'));
   document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
   clearPreview();

@@ -136,6 +136,6 @@ export function initUserMenu(user) {
   button.addEventListener('click', (e) => { e.stopPropagation(); setOpen(menu.hidden); });
   document.addEventListener('click', (e) => { if (!menu.hidden && !host.contains(e.target)) setOpen(false); });
   document.addEventListener('keydown', (e) => {
-    if (!menu.hidden && e.key === 'Escape') { e.stopPropagation(); setOpen(false, { focusButton: true }); }
+    if (!menu.hidden && e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setOpen(false, { focusButton: true }); }
   });
 }

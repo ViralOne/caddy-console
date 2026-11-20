@@ -91,7 +91,6 @@ main{min-height:calc(100vh - var(--hdr))}
 .sbar .msg[data-state="error"] .icon{color:var(--crit)}
 .status-msg.err{color:var(--crit)}
 .status-msg.warn{color:var(--warn)}
-.user-info{font-size:var(--t-xs);color:var(--ink-3)}
 
 .warnings { padding: var(--space-2) var(--space-4); background: var(--warn-soft); border-bottom: 1px solid var(--warn); font-size: var(--t-xs); color: var(--warn); display: none; max-height: 80px; overflow-y: auto; }
 .warnings.show { display: block; }
@@ -128,9 +127,12 @@ main{min-height:calc(100vh - var(--hdr))}
 .seg button{border:0;background:none;padding:4px 12px;border-radius:6px;font-size:var(--t-sm);color:var(--ink-2);cursor:pointer;display:inline-flex;gap:6px;align-items:center}
 .seg button[aria-checked="true"]{background:var(--bg-4);color:var(--ink);font-weight:550}
 
+/* Pushes siblings apart in a flex row (Explore stats bar). */
+.spacer{flex:1}
+
 /* === shell, narrow screens === */
 @media (max-width:1024px){
-  .etools .lbl{display:none}
+  .etools .grp .lbl{display:none}
   .etools .btn{padding:0 10px}
 }
 @media (max-width:720px){
@@ -147,6 +149,7 @@ main{min-height:calc(100vh - var(--hdr))}
   .acct-btn{padding:2px;border:0}
   .acct-menu{position:fixed;left:8px;right:8px;top:auto;bottom:70px;width:auto;max-height:calc(100vh - 140px);overflow:auto}
   .etools .grp{border:0;padding:0}
+  .etools .lbl{display:none}
   .editor{height:calc(100vh - var(--hdr) - 62px)}
   .sbar .hide-sm{display:none}
 }
