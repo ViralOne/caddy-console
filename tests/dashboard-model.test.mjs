@@ -218,6 +218,12 @@ check('several down sites are listed, earliest failure first, capped at 5 with "
   const q = new URLSearchParams(v.primary.href.split('?')[1]).get('q');
   assert.equal(q, 'host:b.example.com host:d.example.com host:a.example.com host:e.example.com host:f.example.com host:g.example.com host:c.example.com');
 });
+check('down sites without a failure time keep their input order', () => {
+  const ups = [CHECKED('10.0.0.9:80', ['z.example.com'], 0), CHECKED('10.0.0.8:80', ['m.example.com'], 0), CHECKED('10.0.0.7:80', ['a.example.com'], 0)];
+  const v = m.verdict({ sites: [], upstreams: ups, configuredSites: 3, now: NOW });
+  assert.deepEqual(v.down.items.map(d => d.host), ['z.example.com', 'm.example.com', 'a.example.com']);
+  assert.ok(v.down.items.every(d => d.since === 'failing'));
+});
 check('one down site keeps the single-site verdict without a list', () => {
   const v = m.verdict({ sites: [], upstreams: [CHECKED('10.0.0.1:80', ['a.example.com'], 0)], configuredSites: 1, now: NOW });
   assert.equal(v.down, null);

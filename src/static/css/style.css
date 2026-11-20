@@ -232,12 +232,14 @@ a.btn,a.btn:hover{text-decoration:none}
 .fv-n .tag{font-size:11px;font-weight:600;line-height:16px;padding:0 5px;border-radius:4px;border:1px solid currentColor;letter-spacing:0}
 .fig .sub{font-size:var(--t-xs);color:var(--ink-3);min-width:0}
 .fig .sub.bad{color:var(--serious)}
-.fig-spark{width:100%;height:28px;margin:2px 0 0}
+.fig .fig-spark{width:100%;height:28px;margin:2px 0 0}
 .fig .share{display:flex;flex-direction:column;gap:5px;margin-top:4px;overflow-wrap:anywhere}
 .cfg-state{display:flex;align-items:center;gap:7px;font-size:var(--t-lg);font-weight:600;color:var(--good)}
 .cfg-bad .cfg-state{color:var(--crit)}
 .cfg-unknown .cfg-state{color:var(--ink-3)}
 .cfg-path{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* A failed check's message, visible on touch and keyboard too: two lines, full text in the title. */
+.cfg-msg{color:var(--ink-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden}
 /* A thin share bar: the number beside it carries the value. */
 .bar{display:block;height:3px;border-radius:2px;background:var(--bg-4);overflow:hidden}
 .bar i{display:block;height:100%;background:var(--ink-3);border-radius:inherit}

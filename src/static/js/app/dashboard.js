@@ -33,14 +33,14 @@ const openSite = (host) => document.dispatchEvent(new CustomEvent('app:open-site
 
 const STROKE = { crit: 'var(--crit)', warn: 'var(--warn)' };
 
-function Spark({ series, tone = null, w = 110, h = 26, cls = 'spark' }) {
+function Spark({ series, tone = null, w = 110, ht = 26, cls = 'spark' }) {
   const points = series || [];
   if (!points.length || !points.some(v => v)) return html`<span class="muted">—</span>`;
   const peak = Math.max(...points);
   const step = (w - 2) / Math.max(1, points.length - 1);
-  const pts = points.map((v, i) => `${(1 + i * step).toFixed(1)},${(h - 2 - (v / peak) * (h - 4)).toFixed(1)}`).join(' ');
+  const pts = points.map((v, i) => `${(1 + i * step).toFixed(1)},${(ht - 2 - (v / peak) * (ht - 4)).toFixed(1)}`).join(' ');
   return html`
-    <svg class=${cls} viewBox=${`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
+    <svg class=${cls} viewBox=${`0 0 ${w} ${ht}`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
       <polyline points=${pts} fill="none" stroke=${STROKE[tone] || 'var(--ink-3)'}
                 stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
     </svg>`;
@@ -89,7 +89,7 @@ function Figure({ f }) {
     <a class="fig" href=${f.href} data-view="explore" title=${f.title || null}>
       <span class="lbl">${f.label}</span>
       <span class=${'fv-n' + (f.level ? ' lv-' + f.level : '')}>${f.level && html`<${Icon} name="warning" size=${18} />`}${f.value}${f.of && html` <span class="fv-of">${f.of}</span>`}${f.level && html` <span class="tag">${LEVEL_WORD[f.level]}</span>`}</span>
-      ${f.spark && f.spark.some(v => v) && html`<${Spark} series=${f.spark} w=${200} h=${28} cls="spark fig-spark" />`}
+      ${f.spark && f.spark.some(v => v) && html`<${Spark} series=${f.spark} w=${200} ht=${28} cls="spark fig-spark" />`}
       ${f.share && html`<span class="sub share"><${Bar} share=${f.share.pct / 100} />${f.share.text}</span>`}
       ${!f.share && f.sub && html`<span class=${'sub' + (f.bad ? ' bad' : '')}>${f.bad && !f.level && html`<${Icon} name="warning" size=${14} /> `}${f.sub}</span>`}
     </a>`;
@@ -101,6 +101,7 @@ function ConfigFigure({ card }) {
     <a class=${'fig fig-cfg cfg-' + card.state} href="/editor" data-view="editor" title=${card.checks || null}>
       <span class="lbl">Config</span>
       <span class="cfg-state"><${Icon} name=${icon} size=${18} />${card.word}</span>
+      ${card.state === 'bad' && card.checks && html`<span class="sub mono cfg-msg">${card.checks}</span>`}
       ${card.version && html`<span class="sub">Caddy ${card.version}</span>`}
       ${card.changed && html`<span class="sub">Changed <time title=${card.changed.abs}>${card.changed.rel}</time>${card.changed.by ? ` by ${card.changed.by}` : ''}</span>`}
       ${card.path && html`<span class="sub mono cfg-path" title=${card.path}>${card.path}</span>`}
@@ -149,7 +150,7 @@ function SitesTable({ sites, upstreams }) {
                 ? html`<span class="flag slow"><${Icon} name="warning" size=${14} />${formatMs(s.p95_latency_ms)} <span class="tag">slow</span></span>`
                 : formatMs(s.p95_latency_ms)}</a></td>
               <td class="num" data-label="Out"><a href=${exploreHref(q)} data-view="explore">${formatBytes(s.bytes_out)}</a></td>
-              <td class="num c-spark"><${Spark} series=${s.series} tone=${tone} w=${160} h=${28} /></td>
+              <td class="num c-spark"><${Spark} series=${s.series} tone=${tone} w=${160} ht=${28} /></td>
             </tr>`;
         })}
       </tbody>

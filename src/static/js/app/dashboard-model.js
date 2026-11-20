@@ -134,12 +134,14 @@ export function verdict({
     const others = (configuredSites ?? sites.length) - hosts.length;
     // Several sites down: list each one (earliest failure first) instead of one sentence.
     if (hosts.length > 1) {
-      const earliest = (u) => (u.unhealthy_since == null ? Infinity : toMs(u.unhealthy_since));
+      const earliest = (u) => (u.unhealthy_since == null ? null : toMs(u.unhealthy_since));
+      // Earliest failure first; unknown times after the known ones, in input order.
+      const byTime = (x, y) => (x === y ? 0 : x == null ? 1 : y == null ? -1 : x - y);
       const rows = hosts.map((host) => {
-        const u = down.filter(x => (x.domains || []).includes(host)).sort((a, b) => earliest(a) - earliest(b))[0];
+        const u = down.filter(x => (x.domains || []).includes(host)).sort((a, b) => byTime(earliest(a), earliest(b)))[0];
         return { host, address: u.address, at: earliest(u),
           since: u.unhealthy_since ? `failed since ${clockTime(u.unhealthy_since, now)}` : 'failing' };
-      }).sort((a, b) => a.at - b.at);
+      }).sort((a, b) => byTime(a.at, b.at));
       const more = Math.max(0, rows.length - DOWN_LIST_MAX);
       const worstOther = worstErrorSite(sites.filter(s => !hosts.includes(s.host)));
       const tail = [];
