@@ -66,9 +66,9 @@ export async function doSave() {
 
 async function _doSave() {
   setStatus('Validating before save…', 'info');
-  const content = getContent();
+  const raw = getContent();
   let valData;
-  try { valData = await _validateRequest(content); }
+  try { valData = await _validateRequest(raw); }
   catch (e) { setStatus(e.message, 'err'); setDot('red'); toast(e.message, { kind: 'error' }); return; }
   if (!valData.valid) {
     setStatus(valData.message, 'err'); setDot('red');
@@ -89,6 +89,10 @@ async function _doSave() {
     });
     if (!go) { setStatus('Save cancelled', 'info'); return; }
   }
+
+  // Save formats on the server, so preview and write the formatted text (the
+  // validate reply carries it when it differs). Formatting is idempotent.
+  const content = valData.formatted ?? raw;
 
   // Pre-save live diff: editor (new) against the config currently on disk.
   setStatus('Building diff preview…', 'info');
