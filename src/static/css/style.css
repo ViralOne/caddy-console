@@ -392,7 +392,7 @@ details.raw pre{margin:10px 0 0;padding:12px 14px;border-radius:var(--r-md);back
 .toplist .ip-row{display:flex;justify-content:space-between;gap:8px;width:100%;padding:2px 0;border:0;background:none;color:var(--ink-2);font:inherit;text-align:left;cursor:pointer}
 .toplist .ip-row:hover{color:var(--accent)}
 .toplist>div{min-width:0}
-.toplist .ip-row span:first-child{min-width:0;overflow-wrap:anywhere}
+.toplist .ip-row span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .toplist .ip-row span:last-child{flex:none}
 .live:disabled{opacity:.6;cursor:default}
 /* Open, the log line takes its own row instead of stretching the Ray ID beside it. */
