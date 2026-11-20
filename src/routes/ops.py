@@ -8,7 +8,7 @@ from datetime import datetime
 import requests as http_client
 from flask import Blueprint, jsonify, request
 
-from ..audit import iter_entries, tail_lines
+from ..audit import iter_entries, last_change, tail_lines
 from .. import logfiles, upstream_health
 from ..auth import login_required
 from ..caddy_api import get_servers
@@ -107,6 +107,7 @@ def caddy_status():
         "config_check_message": config_check["message"],
         "config_path": CADDYFILE,
         "last_modified": last_modified,
+        "last_change": last_change(),
     })
 
 

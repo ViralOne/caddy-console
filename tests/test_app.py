@@ -649,5 +649,36 @@ class UpstreamsApiTest(AppTestCase):
         self.assertIsNone(self.get({})["configured_sites"])
 
 
+class LastChangeTest(AppTestCase):
+    def status(self):
+        with mock.patch.object(ops_mod, "_caddy_version", return_value="v2.test"):
+            return self.client.get("/api/status", headers=AUTH).get_json()
+
+    def test_null_without_any_change(self):
+        audit.log_action("login", "admin@example.com")
+        self.assertIsNone(self.status()["last_change"])
+
+    def test_newest_save_or_restore_wins_and_logins_are_ignored(self):
+        audit.log_action("save_reload", "a@example.com", "backup=Caddyfile.20261120-100000")
+        audit.log_action("restore_reload", "b@example.com", "backup=x, from=Caddyfile.20261119-081000")
+        audit.log_action("login", "c@example.com")
+        change = self.status()["last_change"]
+        self.assertEqual(change["action"], "restore")
+        self.assertEqual(change["user"], "b@example.com")
+        self.assertAlmostEqual(change["ts"], time.time(), delta=60)
+
+    def test_rejected_reload_counts_only_when_the_file_was_left_changed(self):
+        audit.log_action("save_reload_failed", "a@example.com", "rolled_back=True, nope")
+        self.assertIsNone(self.status()["last_change"])
+        audit.log_action("save_reload_failed", "a@example.com", "rolled_back=False, nope")
+        self.assertEqual(self.status()["last_change"]["action"], "save")
+
+    def test_found_in_the_rotated_file(self):
+        audit.log_action("save_reload", "a@example.com")
+        os.replace(env.AUDIT_LOG, audit.rotated_path())
+        audit.log_action("login", "b@example.com")
+        self.assertEqual(self.status()["last_change"]["user"], "a@example.com")
+
+
 if __name__ == "__main__":
     unittest.main()
