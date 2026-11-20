@@ -239,6 +239,6 @@ export function auditRow(entry, now = Date.now()) {
   return {
     verb, icon, user: entry.user || '',
     detail: detailOf(action, String(entry.detail || '')),
-    rel: relativeTime(entry.time, now), abs: absoluteTime(entry.time),
+    rel: relativeTime(entry.ts ?? entry.time, now), abs: absoluteTime(entry.ts ?? entry.time),
   };
 }

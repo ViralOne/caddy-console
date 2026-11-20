@@ -162,4 +162,8 @@ check('audit verbs and details', () => {
   assert.equal(m.auditRow({ action: 'frobnicate', time: 'nope' }, NOW).verb, 'Frobnicate');
   assert.equal(m.auditRow({ action: 'frobnicate', time: 'nope' }, NOW).rel, '');
 });
+check('audit time uses the epoch when present', () => {
+  const r = m.auditRow({ action: 'login', time: '2026-11-20T12:50:00.000000', ts: at(2026, 10, 20, 14, 50, 0) / 1000 }, NOW);
+  assert.equal(r.rel, '10 min ago'); assert.equal(r.abs, '2026-11-20 14:50:00');
+});
 console.log(`\n${passed} passed`);

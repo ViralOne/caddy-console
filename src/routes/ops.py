@@ -32,9 +32,17 @@ def get_audit():
     entries = []
     for line in reversed(tail_lines(AUDIT_LOG, 50)):
         try:
-            entries.append(json.loads(line))
+            entry = json.loads(line)
         except json.JSONDecodeError:
-            pass
+            continue
+        # "time" is the server's naive local time; "ts" (epoch seconds) is
+        # what a browser in another time zone can read correctly.
+        if isinstance(entry, dict):
+            try:
+                entry["ts"] = datetime.fromisoformat(entry["time"]).timestamp()
+            except (KeyError, TypeError, ValueError):
+                pass
+        entries.append(entry)
     return jsonify({"entries": entries})
 
 

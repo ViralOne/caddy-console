@@ -382,6 +382,17 @@ class ExploreRawApiTest(AppTestCase):
         ).status_code, 400)
 
 
+class AuditApiTest(AppTestCase):
+    def test_entries_carry_an_epoch_beside_the_local_time(self):
+        audit.log_action("login", "dev@example.com")
+        entries = self.client.get("/api/audit", headers=AUTH).get_json()["entries"]
+        self.assertTrue(entries)
+        e = entries[0]
+        self.assertIsInstance(e["time"], str)
+        from datetime import datetime
+        self.assertAlmostEqual(e["ts"], datetime.fromisoformat(e["time"]).timestamp(), places=3)
+
+
 class StatusApiTest(AppTestCase):
     def test_status_uses_running_caddy_check_semantics(self):
         ops_mod._status_cache.update(file_key=None, config_check=None, version=None)
