@@ -96,11 +96,13 @@ export function toggleSearch() {
   } else {
     closeSearch();
   }
+  document.querySelector('[data-act="find"]')?.setAttribute('aria-pressed', String(bar.classList.contains('open')));
 }
 
 export function closeSearch() {
   document.getElementById('search-bar').classList.remove('open');
   document.getElementById('match-count').textContent = '';
+  document.querySelector('[data-act="find"]')?.setAttribute('aria-pressed', 'false');
   if (!editorView) return;  // editor never initialised (e.g. load failed)
   editorView.dispatch({ effects: setSearchState.of({ matches: [], current: -1 }) });
   editorView.focus();

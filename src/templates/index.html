@@ -15,89 +15,57 @@
 
 {% include "_icons.html" %}
 
-<div class="header">
-  <a class="brand" data-view="dashboard" href="/">
-    <!-- Same geometry as static/img/icon.svg, inlined rather than referenced as
-         an image file so it takes the brand's colour on hover. -->
-    <svg class="brand-mark" viewBox="0 0 32 32" width="20" height="20"
-         aria-hidden="true" focusable="false">
-      <path d="M6 26V16a10 10 0 0 1 20 0v10" fill="none" stroke="currentColor"
-            stroke-width="3" stroke-linecap="round"/>
-      <g fill="currentColor">
-        <rect x="10.5" y="18" width="3" height="8" rx="1.5"/>
-        <rect x="14.5" y="14" width="3" height="12" rx="1.5"/>
-        <rect x="18.5" y="21" width="3" height="5" rx="1.5"/>
-      </g>
-    </svg>
-    <span>Caddy Console</span>
+<header class="hdr" id="hdr">
+  <a class="brand" data-view="dashboard" href="/" aria-label="Caddy Console home">
+    <svg class="brand-mark" width="26" height="26" aria-hidden="true" focusable="false"><use href="#i-mark"/></svg>
+    <b>Caddy <span>Console</span></b>
   </a>
-
-  <nav class="tabs">
-    <a class="tab" data-view="dashboard" href="/">
-      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-dashboard"/></svg>Dashboard</a>
-    <a class="tab" data-view="editor" href="/editor">
-      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-editor"/></svg>Editor</a>
-    <a class="tab" data-view="explore" href="/explore">
-      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg>Explore</a>
+  <nav class="tabs" aria-label="Views">
+    <a class="tab" data-view="dashboard" href="/"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-dashboard"/></svg>Dashboard</a>
+    <a class="tab" data-view="explore" href="/explore"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg>Explore</a>
+    <a class="tab" data-view="editor" href="/editor"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-editor"/></svg>Editor</a>
   </nav>
-
-  <span class="spacer"></span>
-
-  <!-- Editor-only actions. Hidden on the other views, where none of them apply. -->
-  <div class="view-actions" data-for-view="editor">
-    <!-- Tools, grouped and quiet: they open things rather than change the file. -->
-    <div class="tool-group">
-      <button class="btn btn-tool" data-act="find" title="Find and replace (Cmd/Ctrl + F)">Find</button>
-      <button class="btn btn-tool" id="panel-btn-snippets" data-panel="snippets" title="Insert a Caddyfile snippet">Snippets</button>
-      <button class="btn btn-tool" id="panel-btn-backups" data-panel="backups" title="Browse and restore backups">Backups</button>
+  <span class="hdr-spacer"></span>
+  <!-- Editor-only actions, hidden on the other views where none of them apply. -->
+  <div class="etools" data-for-view="editor" hidden>
+    <div class="grp">
+      <button class="btn btn-quiet" type="button" data-act="find" aria-pressed="false" title="Find and replace (Cmd/Ctrl + F)"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg><span class="lbl">Find</span></button>
+      <button class="btn btn-quiet" type="button" id="panel-btn-snippets" data-panel="snippets" aria-pressed="false" title="Insert a Caddyfile snippet"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-blocks"/></svg><span class="lbl">Snippets</span></button>
+      <button class="btn btn-quiet" type="button" id="panel-btn-backups" data-panel="backups" aria-pressed="false" title="Browse and restore backups"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg><span class="lbl">Backups</span></button>
     </div>
-    <!-- One primary action. Check supports it, so it is outlined, not filled. -->
-    <button class="btn btn-outline" data-act="validate" title="Format and check syntax/modules without saving">Check</button>
-    <button class="btn btn-primary" data-act="save" id="btn-save" title="Save and reload Caddy (Cmd/Ctrl + S)">
-      <span id="save-label">Save &amp; Reload</span>
-    </button>
+    <button class="btn" type="button" data-act="validate" aria-label="Check" title="Format and check syntax and modules without saving"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span class="lbl">Check</span></button>
+    <button class="btn btn-primary" type="button" data-act="save" id="btn-save" title="Save and reload Caddy (Cmd/Ctrl + S)"><span class="dirty-dot" aria-hidden="true"></span><span id="save-label">Save &amp; Reload</span></button>
   </div>
-
   <div class="user-menu" id="user-menu"></div>
   <!-- Kept for the save/rollback paths, which read the signed-in email from it. -->
   <span class="user-info" id="user-info" hidden></span>
-</div>
+</header>
 
-<div class="warnings" id="warnings"></div>
-
-<div class="main">
-  <div class="tab-content" id="tab-editor">
-    <div class="search-bar" id="search-bar">
-      <input type="text" id="search-input" placeholder="Find... (Enter next, Shift+Enter previous, Esc to close)">
-      <button class="btn btn-secondary btn-sm" data-act="search-prev" title="Previous match (Shift+Enter)">&uarr;</button>
-      <button class="btn btn-secondary btn-sm" data-act="search-next" title="Next match (Enter)">&darr;</button>
-      <span class="match-count" id="match-count"></span>
-      <input type="text" id="replace-input" placeholder="Replace with...">
-      <button class="btn btn-secondary btn-sm" data-act="replace-one">Replace</button>
-      <button class="btn btn-secondary btn-sm" data-act="replace-all">Replace All</button>
-      <button class="btn btn-secondary btn-sm" data-act="search-close">&times;</button>
+<main id="main">
+  <section class="tab-content" id="tab-dashboard" aria-label="Dashboard"><div id="dashboard-root"></div></section>
+  <section class="tab-content" id="tab-explore" aria-label="Explore"><div id="explore-root"></div></section>
+  <section class="tab-content editor" id="tab-editor" aria-label="Editor">
+    <div class="ed-col">
+      <div class="warnings" id="warnings"></div>
+      <div class="search-bar" id="search-bar">
+        <input type="text" id="search-input" placeholder="Find... (Enter next, Shift+Enter previous, Esc to close)">
+        <button class="btn btn-secondary btn-sm" data-act="search-prev" title="Previous match (Shift+Enter)">&uarr;</button>
+        <button class="btn btn-secondary btn-sm" data-act="search-next" title="Next match (Enter)">&darr;</button>
+        <span class="match-count" id="match-count"></span>
+        <input type="text" id="replace-input" placeholder="Replace with...">
+        <button class="btn btn-secondary btn-sm" data-act="replace-one">Replace</button>
+        <button class="btn btn-secondary btn-sm" data-act="replace-all">Replace All</button>
+        <button class="btn btn-secondary btn-sm" data-act="search-close">&times;</button>
+      </div>
+      <div class="editor-wrap" id="cm-editor"></div>
+      <div class="sbar">
+        <span class="msg" id="status-line" data-state="ok" role="status"><svg class="icon" width="14" height="14" aria-hidden="true" focusable="false"><use id="status-icon" href="#i-status-ok"/></svg><span class="status-msg" id="status-msg">Loading…</span></span>
+        <span class="hide-sm" id="last-saved"></span>
+        <span class="r"><span class="hide-sm" id="doc-stats"></span><span id="cursor-pos">Ln 1, Col 1</span></span>
+      </div>
     </div>
-    <div class="editor-wrap" id="cm-editor" style="flex:1"></div>
-  </div>
-
-  <div class="tab-content" id="tab-dashboard">
-    <div class="dash-scroll" id="dashboard-root"></div>
-  </div>
-
-  <div class="tab-content" id="tab-explore">
-    <div id="explore-root"></div>
-  </div>
-
-</div>
-
-<div class="footer">
-  <span class="status-dot green" id="status-dot"></span>
-  <span class="status-msg" id="status-msg">Loading...</span>
-  <span class="spacer"></span>
-  <span class="footer-meta" id="last-saved"></span>
-  <span class="footer-meta" id="doc-stats"></span>
-  <span class="footer-meta" id="cursor-pos">Ln 1, Col 1</span>
-</div>
+  </section>
+</main>
 
 <!-- Snippets Panel -->
 <div class="panel" id="panel-snippets">

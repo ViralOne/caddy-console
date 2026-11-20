@@ -254,4 +254,12 @@ export function showError(container, prefix, err) {
 }
 
 export function setStatus(msg, cls) { const node = document.getElementById('status-msg'); node.textContent = msg; node.className = 'status-msg ' + (cls||''); }
-export function setDot(c) { document.getElementById('status-dot').className = 'status-dot ' + c; }
+// The status line's state, as a shape and a colour (never colour alone): the
+// message text beside it always says the same thing in words.
+const DOT_STATE = { green: ['ok', 'status-ok'], yellow: ['modified', 'warning'], red: ['error', 'status-down'] };
+export function setDot(c) {
+  const [state, icon] = DOT_STATE[c] || DOT_STATE.green;
+  const line = document.getElementById('status-line');
+  if (line) line.dataset.state = state;
+  document.getElementById('status-icon')?.setAttribute('href', '#i-' + icon);
+}

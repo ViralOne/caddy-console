@@ -1,24 +1,32 @@
-// Account menu: avatar + email in the header, opening a small panel.
+// Account menu: avatar + email in the header, opening a panel with the session,
+// the Theme and Editor-keys pickers, shortcuts and log out.
 //
-// Chrome rather than a data view, so plain DOM — Preact is reserved for the
+// Chrome rather than a data view, so plain DOM; Preact is reserved for the
 // dashboard and Explore, where derived state actually earns it.
-import { iconEl } from './icons.js';
 import { applyEditorKeymap } from './core.js';
 import { KEYMAPS, getKeymap, setKeymap } from './editor-prefs.js';
+import { iconEl } from './icons.js';
+import { THEMES, applyTheme, getThemePref, setThemePref } from './theme.js';
+import { segmented } from './ui/seg.js';
 
 const SHORTCUTS = [
-  ['Save & reload', 'Cmd/Ctrl + S'],
-  ['Find in config', 'Cmd/Ctrl + F'],
-  ['Next / previous match', 'Enter / Shift + Enter'],
-  ['Close panel, find bar or dialog', 'Esc'],
+  ['Save & reload', ['Ctrl/⌘', 'S']],
+  ['Find in config', ['Ctrl/⌘', 'F']],
+  ['Next / previous match', ['Enter', 'Shift+Enter']],
+  ['Close panel, find bar or dialog', ['Esc']],
 ];
-
 const VIM_SHORTCUTS = [
-  ['Save & reload (Vim)', ':w'],
-  ['Normal mode (Vim)', 'Esc'],
+  ['Save & reload (Vim)', [':w']],
+  ['Normal mode (Vim)', ['Esc']],
 ];
-
 const shortcutsFor = (id) => (id === 'vim' ? [...SHORTCUTS, ...VIM_SHORTCUTS] : SHORTCUTS);
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text) e.textContent = text;
+  return e;
+}
 
 /** Initials from an email: "dev@local" -> "DE", "a.b@x.com" -> "AB". */
 function initialsOf(email) {
@@ -28,152 +36,106 @@ function initialsOf(email) {
   return letters.toUpperCase();
 }
 
-function expiryLine(user) {
-  if (user.auth_mode === 'cloudflare') {
-    // Access owns the session here; this app cannot say when it ends.
-    return 'Signed in via Cloudflare Access';
-  }
-  if (!user.session_expires_at) return 'Signed in with Google';
-  const secs = user.session_expires_at * 1000 - Date.now();
-  if (secs <= 0) return 'Session expired — reload to sign in again';
-  const hours = Math.floor(secs / 3600000);
-  const mins = Math.round((secs % 3600000) / 60000);
-  return `Session ends in ${hours ? hours + 'h ' : ''}${mins}m`;
+/** [what, via] for the session row. Cloudflare Access owns its session, so no expiry. */
+function sessionLine(user) {
+  if (user.auth_mode === 'cloudflare') return ['Signed in via Cloudflare Access', 'Cloudflare'];
+  if (!user.session_expires_at) return ['Signed in', 'Google'];
+  const ms = user.session_expires_at * 1000 - Date.now();
+  if (ms <= 0) return ['Session expired. Reload to sign in again.', 'Google'];
+  const hours = Math.floor(ms / 3600000);
+  const mins = Math.round((ms % 3600000) / 60000);
+  return [`Session ends in ${hours ? hours + 'h ' : ''}${mins}m`, 'Google'];
 }
 
-function row(label, value, cls) {
-  const div = document.createElement('div');
-  div.className = 'menu-row' + (cls ? ' ' + cls : '');
-  const l = document.createElement('span');
-  l.className = 'menu-row-label';
-  l.textContent = label;
-  const v = document.createElement('span');
-  v.className = 'menu-row-value';
-  v.textContent = value;
-  div.append(l, v);
-  return div;
+function avatar(email) {
+  const a = el('span', 'avatar', initialsOf(email));
+  a.setAttribute('aria-hidden', 'true');
+  return a;
+}
+
+function renderShortcuts(dl, keymap) {
+  dl.textContent = '';
+  for (const [label, keys] of shortcutsFor(keymap)) {
+    const dd = el('dd');
+    keys.forEach((k) => dd.append(el('span', 'kbd', k)));
+    dl.append(el('dt', '', label), dd);
+  }
 }
 
 export function initUserMenu(user) {
   const host = document.getElementById('user-menu');
   if (!host) return;
   host.textContent = '';
+  const name = user.name && user.name !== user.email ? user.name : '';
 
-  const button = document.createElement('button');
-  button.className = 'menu-trigger';
+  const button = el('button', 'acct-btn');
   button.type = 'button';
-  button.setAttribute('aria-expanded', 'false');
-  button.setAttribute('aria-haspopup', 'true');
+  button.setAttribute('aria-haspopup', 'dialog');
+  button.setAttribute('aria-controls', 'acct-menu');
+  button.append(avatar(user.email), el('span', 'em', user.email),
+    iconEl('chevron-down', { size: 14 }), el('span', 'sr', 'Account menu'));
 
-  const avatar = document.createElement('span');
-  avatar.className = 'avatar';
-  avatar.textContent = initialsOf(user.email);
-  avatar.setAttribute('aria-hidden', 'true');
+  const menu = el('div', 'pop acct-menu');
+  menu.id = 'acct-menu';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-label', 'Account');
 
-  const label = document.createElement('span');
-  label.className = 'menu-trigger-email';
-  label.textContent = user.email;
+  const idSection = el('section', 'acct-id');
+  const who = el('div');
+  who.append(el('b', '', name || user.email));
+  if (name) who.append(el('span', 'muted', user.email));
+  idSection.append(avatar(user.email), who);
 
-  const caret = iconEl('chevron-down', { size: 14, cls: 'menu-caret' });
-
-  button.append(avatar, label, caret);
-
-  const menu = document.createElement('div');
-  menu.className = 'menu';
-  menu.setAttribute('role', 'menu');
-
-  const head = document.createElement('div');
-  head.className = 'menu-head';
-  const headAvatar = document.createElement('span');
-  headAvatar.className = 'avatar avatar-lg';
-  headAvatar.textContent = initialsOf(user.email);
-  const headText = document.createElement('div');
-  const name = document.createElement('div');
-  name.className = 'menu-name';
-  name.textContent = user.name && user.name !== user.email ? user.name : user.email;
-  const sub = document.createElement('div');
-  sub.className = 'menu-sub';
-  sub.textContent = user.name && user.name !== user.email ? user.email : '';
-  headText.append(name, sub);
-  head.append(headAvatar, headText);
-
-  const session = document.createElement('div');
-  session.className = 'menu-session';
-  const refreshExpiry = () => { session.textContent = expiryLine(user); };
-  refreshExpiry();
-
-  const shortcuts = document.createElement('div');
-  shortcuts.className = 'menu-section';
-  const renderShortcuts = (id) => {
-    shortcuts.textContent = '';
-    shortcuts.appendChild(Object.assign(document.createElement('div'),
-      { className: 'menu-section-title', textContent: 'Shortcuts' }));
-    shortcutsFor(id).forEach(([l, v]) => shortcuts.appendChild(row(l, v)));
+  const session = el('section', 'acct-session');
+  const sessionRow = el('div', 'row');
+  const refreshSession = () => {
+    const [text, via] = sessionLine(user);
+    sessionRow.textContent = '';
+    sessionRow.append(el('span', '', text), el('span', 'muted', via));
   };
-  renderShortcuts(getKeymap());
+  session.append(sessionRow);
 
-  // Editor keymap: a radio group, saved per browser and applied to the open
-  // editor in place (unsaved edits are kept).
-  const editorPref = document.createElement('div');
-  editorPref.className = 'menu-section';
-  editorPref.appendChild(Object.assign(document.createElement('div'),
-    { className: 'menu-section-title', id: 'menu-editor-title', textContent: 'Editor' }));
-  const seg = document.createElement('div');
-  seg.className = 'menu-seg';
-  seg.setAttribute('role', 'radiogroup');
-  seg.setAttribute('aria-labelledby', 'menu-editor-title');
-  const segButtons = KEYMAPS.map(({ id, label }) => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'menu-seg-btn';
-    b.setAttribute('role', 'radio');
-    b.dataset.keymap = id;
-    b.textContent = label;
-    return b;
+  const themeSection = el('section');
+  const themeRow = el('div', 'row');
+  const themeSeg = segmented({
+    label: 'Theme', options: THEMES, value: getThemePref(),
+    onChange: (pref) => { setThemePref(pref); applyTheme(pref); },
   });
-  const markKeymap = (id) => segButtons.forEach(b => b.setAttribute('aria-checked', String(b.dataset.keymap === id)));
-  markKeymap(getKeymap());
-  seg.addEventListener('click', (e) => {
-    const b = e.target.closest('.menu-seg-btn');
-    if (!b || b.getAttribute('aria-checked') === 'true') return;
-    const id = b.dataset.keymap;
-    setKeymap(id);
-    markKeymap(id);
-    renderShortcuts(id);
-    applyEditorKeymap(id);
-  });
-  seg.append(...segButtons);
-  editorPref.appendChild(seg);
+  themeRow.append(el('h2', '', 'Theme'), themeSeg.el);
+  themeSection.append(themeRow);
 
-  const logout = document.createElement('a');
-  logout.className = 'menu-action';
+  const keysSection = el('section');
+  const keysRow = el('div', 'row');
+  const dl = el('dl', 'shortcuts');
+  const keySeg = segmented({
+    label: 'Editor keymap', options: KEYMAPS, value: getKeymap(),
+    onChange: (id) => { setKeymap(id); renderShortcuts(dl, id); applyEditorKeymap(id); },
+  });
+  keysRow.append(el('h2', '', 'Editor keys'), keySeg.el);
+  renderShortcuts(dl, getKeymap());
+  keysSection.append(keysRow, el('h2', 'acct-sub', 'Shortcuts'), dl);
+
+  const foot = el('section', 'acct-foot');
+  const logout = el('a', 'menu-item');
   logout.href = '/logout';
-  logout.setAttribute('role', 'menuitem');
   logout.append(iconEl('logout'), document.createTextNode('Log out'));
+  foot.append(logout, el('div', 'version', `Caddy Console ${user.version || ''}`.trim()));
 
-  const version = document.createElement('div');
-  version.className = 'menu-version';
-  version.textContent = `Caddy Console ${user.version || ''}`.trim();
-
-  menu.append(head, session, editorPref, shortcuts, logout, version);
+  menu.append(idSection, session, themeSection, keysSection, foot);
   host.append(button, menu);
 
-  let open = false;
-  const setOpen = (next) => {
-    open = next;
-    host.classList.toggle('open', open);
+  // The remaining session time is recomputed when the menu opens, so it is
+  // never shown stale and no timer runs while it is closed.
+  const setOpen = (open, { focusButton = false } = {}) => {
+    menu.hidden = !open;
     button.setAttribute('aria-expanded', String(open));
-    // The remaining time is only recomputed when the menu opens, so it is never
-    // shown stale, and no timer runs while it is closed.
-    if (open) refreshExpiry();
+    if (open) { refreshSession(); themeSeg.el.querySelector('[aria-checked="true"]')?.focus(); }
+    else if (focusButton) button.focus();
   };
-
-  // Set the closed state explicitly rather than relying on the markup starting
-  // without the class, so the trigger's aria-expanded and the panel can never
-  // disagree about whether the menu is open.
   setOpen(false);
-
-  button.addEventListener('click', (e) => { e.stopPropagation(); setOpen(!open); });
-  document.addEventListener('click', (e) => { if (open && !host.contains(e.target)) setOpen(false); });
-  document.addEventListener('keydown', (e) => { if (open && e.key === 'Escape') { e.stopPropagation(); setOpen(false); } });
+  button.addEventListener('click', (e) => { e.stopPropagation(); setOpen(menu.hidden); });
+  document.addEventListener('click', (e) => { if (!menu.hidden && !host.contains(e.target)) setOpen(false); });
+  document.addEventListener('keydown', (e) => {
+    if (!menu.hidden && e.key === 'Escape') { e.stopPropagation(); setOpen(false, { focusButton: true }); }
+  });
 }
