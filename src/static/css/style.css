@@ -209,7 +209,6 @@ dialog.wide{max-width:min(760px,calc(100vw - 24px));width:760px}
 .btn:disabled{cursor:default;opacity:.6}
 .btn-primary:disabled{opacity:1}
 .dlg-detail{margin:0;padding:10px 12px;border-radius:var(--r-md);background:var(--bg);font:12.5px/1.6 var(--mono);color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto}
-.toast .icon{color:var(--bg)}
 .toast .toast-x{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:var(--r-sm);text-decoration:none}
 .diff-eq{color:var(--ink-3)}
 a.btn,a.btn:hover{text-decoration:none}

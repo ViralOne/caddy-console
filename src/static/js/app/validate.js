@@ -138,12 +138,14 @@ async function _doSave() {
     setStatus(data.message, 'warn'); setDot('yellow');
     toast(data.message, { kind: 'warn' });
   } else {
-    // Caddy rejected it and the server rolled the file back; keep its version
-    // so a retry after fixing the config isn't reported as a conflict.
+    // Not saved: a 400 from the server's own check, Caddy rejecting the reload
+    // (the server rolls the file back and says so in its message), CSRF, 503...
+    // Keep its version so a retry isn't reported as a conflict.
     if (data.version) setVersion(data.version);
     const msg = data.message || data.error || `Save failed: HTTP ${res.status}`;
     setStatus(msg, 'err'); setDot('red');
-    toast('Caddy rejected the config; the file on disk was restored.', { kind: 'error' });
+    // A 401 already has the session-expired dialog from csrf.js.
+    if (res.status !== 401) toast(msg.length > 240 ? msg.slice(0, 240) + '…' : msg, { kind: 'error' });
   }
 }
 
@@ -175,6 +177,8 @@ export function resolveSaveModal(value) {
 
 // Esc on a native dialog fires `cancel`: treat it as Cancel so the flow never hangs.
 saveDialog().addEventListener('cancel', (e) => { e.preventDefault(); resolveSaveModal(false); });
+// Any other way the dialog closes must not leave the save flow waiting.
+saveDialog().addEventListener('close', () => resolveSaveModal(false));
 
 export function showWarnings(warnings) {
   const box = document.getElementById('warnings');

@@ -52,6 +52,8 @@ function show(d, focusEl, wire, cancelValue) {
     };
     wire(finish);
     d.addEventListener('cancel', (e) => { e.preventDefault(); finish(cancelValue); });
+    // Any other close path (form method=dialog, d.close() elsewhere) must not leave the promise pending.
+    d.addEventListener('close', () => finish(cancelValue));
     d.showModal();
     focusEl.focus();
   });
