@@ -51,7 +51,7 @@ function ConfigCard({ card }) {
     <aside class=${'cfg cfg-' + card.state} aria-label="Config">
       <div class="ok"><${Icon} name=${icon} />${card.label}</div>
       <dl>
-        ${card.checks && html`<dt>Checks</dt><dd>${card.checks}</dd>`}
+        ${card.checks && html`<dt>Checks</dt><dd class="chk">${card.checks}</dd>`}
         ${card.version && html`<dt>Caddy</dt><dd>${card.version}</dd>`}
         ${card.changed && html`<dt>Changed</dt><dd><time title=${card.changed.abs}>${card.changed.rel}</time>${card.changed.by ? ` by ${card.changed.by}` : ''}</dd>`}
         ${card.path && html`<dt>File</dt><dd class="mono">${card.path}</dd>`}

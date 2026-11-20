@@ -207,10 +207,12 @@ a.btn,a.btn:hover{text-decoration:none}
 .verdict h1{margin:6px 0 8px;font-size:var(--t-2xl);line-height:1.15;font-weight:650;letter-spacing:-.022em;max-width:28ch}
 .verdict p{margin:0;color:var(--ink-2);max-width:66ch}
 .verdict .acts{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
-.cfg{min-width:250px;padding:14px 16px;border-radius:var(--r-lg);background:var(--bg-2)}
+.cfg{min-width:250px;max-width:380px;padding:14px 16px;border-radius:var(--r-lg);background:var(--bg-2)}
 .cfg .ok{display:flex;align-items:center;gap:8px;font-weight:600;color:var(--good)}
 .cfg dl{margin:10px 0 0;display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:var(--t-sm)}
 .cfg dt{color:var(--ink-3)} .cfg dd{margin:0;color:var(--ink-2)}
+/* A failed check can bring Caddy's whole multi-line log output: keep it in the card. */
+.cfg dd.chk{overflow-wrap:anywhere;max-height:7.5em;overflow:auto}
 .figs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--line);margin-top:4px}
 .fig{display:block;padding:18px 20px 4px 0;color:var(--ink)}
 .fig:hover{text-decoration:none}
@@ -431,7 +433,7 @@ details.raw[open]{flex-basis:100%}
   .filters-btn{display:inline-flex;height:40px}
   .panel{position:fixed;z-index:58;top:var(--hdr);right:0;bottom:0;width:min(420px,100vw);box-shadow:var(--shadow)}
   .verdict{grid-template-columns:1fr}
-  .cfg{min-width:0}
+  .cfg{min-width:0;max-width:none}
   .changes li{grid-template-columns:110px 1fr auto}
   .changes .det{grid-column:2/3}
 }
