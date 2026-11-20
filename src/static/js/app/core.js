@@ -33,15 +33,15 @@ const keymapExtension = (id) => (id === 'vim' ? Prec.highest(vim({ status: true 
 // reaches it too. var() resolves because CodeMirror injects these as real CSS.
 const editorTheme = EditorView.theme({
   '&': { height: '100%', backgroundColor: 'var(--bg)', color: 'var(--ink)' },
-  '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--font-mono)', lineHeight: '1.6' },
-  '.cm-content': { fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', caretColor: 'var(--accent)' },
+  '.cm-scroller': { overflow: 'auto', fontFamily: 'var(--mono)', lineHeight: '1.6' },
+  '.cm-content': { fontFamily: 'var(--mono)', fontSize: 'var(--t-sm)', caretColor: 'var(--accent)' },
   '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)', borderLeftWidth: '2px' },
   '.cm-gutters': {
-    backgroundColor: 'var(--bg)', color: 'var(--ink-muted)',
-    border: 'none', borderRight: '1px solid var(--border)',
+    backgroundColor: 'var(--bg)', color: 'var(--ink-3)',
+    border: 'none', borderRight: '1px solid var(--line)',
   },
   '.cm-activeLine': { backgroundColor: 'var(--active-line-bg)' },
-  '.cm-activeLineGutter': { backgroundColor: 'var(--surface)', color: 'var(--ink-secondary)' },
+  '.cm-activeLineGutter': { backgroundColor: 'var(--bg-2)', color: 'var(--ink-2)' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': {
     backgroundColor: 'var(--selection-bg)',
   },
@@ -49,22 +49,22 @@ const editorTheme = EditorView.theme({
     backgroundColor: 'var(--selection-bg)', color: 'var(--selection-ink)',
   },
   '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
-    backgroundColor: 'var(--accent-quiet)', outline: '1px solid var(--accent)', color: 'inherit',
+    backgroundColor: 'var(--accent-soft)', outline: '1px solid var(--accent)', color: 'inherit',
   },
   '.cm-foldPlaceholder': {
-    backgroundColor: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--ink-muted)',
+    backgroundColor: 'var(--bg-2)', border: '1px solid var(--line)', color: 'var(--ink-3)',
   },
-  '.cm-panels': { backgroundColor: 'var(--surface-raised)', color: 'var(--ink)' },
+  '.cm-panels': { backgroundColor: 'var(--bg-3)', color: 'var(--ink)' },
   // Vim mode: block cursor and the mode / ex-command bar.
   '.cm-fat-cursor': { background: 'var(--accent)', color: 'var(--bg)', outline: 'none' },
   '&:not(.cm-focused) .cm-fat-cursor': { background: 'none', outline: '1px solid var(--accent)', color: 'transparent' },
   '.cm-vim-panel': {
-    fontFamily: 'var(--font-mono)', fontSize: 'var(--text-sm)', padding: '2px var(--space-2)',
-    borderTop: '1px solid var(--border)',
+    fontFamily: 'var(--mono)', fontSize: 'var(--t-sm)', padding: '2px var(--space-2)',
+    borderTop: '1px solid var(--line)',
   },
   '.cm-vim-panel input': { fontFamily: 'inherit', fontSize: 'inherit', color: 'var(--ink)', background: 'transparent', border: 'none', outline: 'none' },
   '.cm-tooltip': {
-    backgroundColor: 'var(--surface-raised)', border: '1px solid var(--border-strong)',
+    backgroundColor: 'var(--bg-3)', border: '1px solid var(--line-2)',
     color: 'var(--ink)',
   },
 }, { dark: true });
@@ -73,12 +73,12 @@ const editorTheme = EditorView.theme({
 // appear here as syntax, which is the one place that is legitimate: they are not
 // encoding state anywhere in this view.
 const editorHighlight = HighlightStyle.define([
-  { tag: tags.comment, color: 'var(--ink-muted)', fontStyle: 'italic' },
+  { tag: tags.comment, color: 'var(--ink-3)', fontStyle: 'italic' },
   { tag: tags.keyword, color: 'var(--accent)' },
-  { tag: tags.atom, color: 'var(--status-serious)' },
-  { tag: tags.string, color: 'var(--status-good)' },
-  { tag: tags.number, color: 'var(--status-warn)' },
-  { tag: tags.bracket, color: 'var(--ink-secondary)' },
+  { tag: tags.atom, color: 'var(--serious)' },
+  { tag: tags.string, color: 'var(--good)' },
+  { tag: tags.number, color: 'var(--warn)' },
+  { tag: tags.bracket, color: 'var(--ink-2)' },
 ]);
 
 const caddyfileLanguage = StreamLanguage.define({

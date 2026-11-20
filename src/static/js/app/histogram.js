@@ -10,11 +10,11 @@ const html = htm.bind(h);
 // Bottom to top: healthy at the base, failures on top, so a growing error band
 // is visible against the flat edge of the chart rather than lost in the middle.
 export const CLASSES = [
-  { key: '2xx', label: '2xx', token: 'var(--status-good)' },
-  { key: '3xx', label: '3xx', token: 'var(--accent)' },
-  { key: '4xx', label: '4xx', token: 'var(--status-warn)' },
-  { key: '5xx', label: '5xx', token: 'var(--status-critical)' },
-  { key: 'other', label: 'other', token: 'var(--status-none)' },
+  { key: '2xx', label: '2xx', token: 'var(--good)' },
+  { key: '3xx', label: '3xx', token: 'var(--info)' },
+  { key: '4xx', label: '4xx', token: 'var(--warn)' },
+  { key: '5xx', label: '5xx', token: 'var(--crit)' },
+  { key: 'other', label: 'other', token: 'var(--other)' },
 ];
 
 const HEIGHT = 96;
