@@ -698,10 +698,18 @@ class EventIndex:
         otherwise mean a dozen scans of the whole index.
         """
         with self._lock:
-            exists = self._load(from_ts, to_ts)
+            # Load the equal-length window before the range too, for "+12% vs
+            # previous hour". Null only when the range has no lower bound.
+            prev_from = None
+            if from_ts is not None:
+                span = (to_ts if to_ts is not None else time.time()) - from_ts
+                prev_from = from_ts - max(0.0, span)
+            exists = self._load(prev_from if prev_from is not None else from_ts, to_ts)
             n = len(self.ts)
             lo = bisect.bisect_left(self.ts, from_ts) if from_ts is not None else 0
             hi = bisect.bisect_right(self.ts, to_ts) if to_ts is not None else n
+            previous_total = (lo - bisect.bisect_left(self.ts, prev_from)
+                              if prev_from is not None else None)
 
             span_from = from_ts if from_ts is not None else (self.ts[lo] if lo < hi else 0)
             span_to = to_ts if to_ts is not None else (self.ts[hi - 1] if lo < hi else 1)
@@ -746,7 +754,7 @@ class EventIndex:
                 })
             out.sort(key=lambda s: -s["requests"])
             return {
-                "exists": exists, "sites": out,
+                "exists": exists, "sites": out, "previous_total": previous_total,
                 "from": span_from, "to": span_to, "points": points,
                 "indexed": n, "dropped": self._dropped, "skipped": self._skipped,
                 "history": self._history(),

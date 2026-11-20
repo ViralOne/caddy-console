@@ -709,6 +709,36 @@ class CorruptArchiveTest(unittest.TestCase):
         self.assertEqual(len(idx.ts), 410)
 
 
+class PreviousWindowTest(unittest.TestCase):
+    """site_summary's previous_total counts the equal window before the range."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="eventindex-prev-")
+        self.path = os.path.join(self.dir, "access.log")
+        self.index = EventIndex(self.path)
+        with open(self.path, "a") as f:
+            for i in range(120):   # one event a minute for two hours
+                f.write(json.dumps(entry(ts=T0 + i * 60)) + "\n")
+
+    def test_both_windows_have_data(self):
+        r = self.index.site_summary(T0 + 3600, T0 + 7200)
+        self.assertEqual(sum(s["requests"] for s in r["sites"]), 60)
+        self.assertEqual(r["previous_total"], 60)
+
+    def test_empty_previous_window_is_zero(self):
+        r = self.index.site_summary(T0 - 100, T0 + 3500)
+        self.assertEqual(r["previous_total"], 0)
+
+    def test_is_null_without_a_range(self):
+        self.assertIsNone(self.index.site_summary()["previous_total"])
+
+    def test_current_range_stats_are_unchanged(self):
+        r = self.index.site_summary(T0 + 3600, T0 + 7200)
+        self.assertEqual(r["from"], T0 + 3600)
+        self.assertEqual(r["to"], T0 + 7200)
+        self.assertEqual(r["sites"][0]["requests"], 60)
+
+
 if __name__ == "__main__":
     unittest.main()
 

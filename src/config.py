@@ -16,6 +16,9 @@ ALLOWED_EMAILS = [
 ]
 SESSION_TIMEOUT_HOURS = int(os.environ.get("SESSION_TIMEOUT_HOURS", "8"))
 SERVER_URL = os.environ.get("SERVER_URL", "http://localhost:9090")
+# Whether SERVER_URL was set explicitly (the default above is only a dev
+# fallback). The sign-in page names that host, else the request's own.
+SERVER_URL_CONFIGURED = bool(os.environ.get("SERVER_URL", "").strip())
 AUTH_MODE = os.environ.get("AUTH_MODE", "google").lower()
 CADDY_API_URL = os.environ.get("CADDY_API_URL", "http://caddy:2019")
 CADDY_LOG_FILE = os.environ.get("CADDY_LOG_FILE", "/var/log/caddy/access.log")

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import threading
@@ -8,8 +9,8 @@ from datetime import datetime
 import requests as http_client
 from flask import Blueprint, jsonify, request
 
-from ..audit import iter_entries, tail_lines
-from .. import logfiles
+from ..audit import iter_entries, last_change, tail_lines
+from .. import logfiles, upstream_health
 from ..auth import login_required
 from ..caddy_api import get_servers
 from ..config import (
@@ -24,6 +25,7 @@ from ..geoip import geoip
 from ..validator import caddy_check, run_caddy
 
 ops_bp = Blueprint("ops", __name__)
+logger = logging.getLogger(__name__)
 
 
 @ops_bp.route("/api/audit", methods=["GET"])
@@ -32,9 +34,17 @@ def get_audit():
     entries = []
     for line in reversed(tail_lines(AUDIT_LOG, 50)):
         try:
-            entries.append(json.loads(line))
+            entry = json.loads(line)
         except json.JSONDecodeError:
-            pass
+            continue
+        # "time" is the server's naive local time; "ts" (epoch seconds) is
+        # what a browser in another time zone can read correctly.
+        if isinstance(entry, dict):
+            try:
+                entry["ts"] = datetime.fromisoformat(entry["time"]).timestamp()
+            except (KeyError, TypeError, ValueError):
+                pass
+        entries.append(entry)
     return jsonify({"entries": entries})
 
 
@@ -95,6 +105,7 @@ def caddy_status():
         mtime = os.path.getmtime(CADDYFILE)
         last_modified = datetime.fromtimestamp(mtime).isoformat()
     except OSError:
+        mtime = None
         last_modified = "unknown"
 
     config_check = _config_check_on_disk()
@@ -107,6 +118,10 @@ def caddy_status():
         "config_check_message": config_check["message"],
         "config_path": CADDYFILE,
         "last_modified": last_modified,
+        # Epoch seconds: last_modified is the server's naive local time, which a
+        # browser in another time zone would misread.
+        "last_modified_ts": mtime,
+        "last_change": last_change(),
     })
 
 
@@ -178,6 +193,14 @@ def upstreams():
     # the running config to say which sites proxy there and which kinds of
     # health check are configured.
     detail = _get_upstream_detail()
+    # Caddy only says "healthy now"; the shared state file remembers since when.
+    # The state file is a nicety: if it cannot be used, list the upstreams
+    # without "since" rather than failing the whole endpoint.
+    try:
+        since = upstream_health.record(_upstream_health_flags())
+    except Exception as e:
+        logger.warning("Upstream health state unavailable: %s", e)
+        since = {}
     enriched = []
     for row in rows if isinstance(rows, list) else []:
         info = detail.get(row.get("address"), {})
@@ -188,9 +211,29 @@ def upstreams():
             # which requires fail_duration > 0 (Caddy's default is 0 = off).
             "passive_health": info.get("passive", False),
             "active_health": info.get("active", False),
+            "unhealthy_since": since.get(row.get("address")),
         })
     enriched.sort(key=lambda u: (not u["domains"], u["domains"][:1], u.get("address", "")))
-    return jsonify({"upstreams": enriched})
+    return jsonify({"upstreams": enriched, "configured_sites": _configured_site_count()})
+
+
+def _upstream_health_flags() -> dict:
+    """address -> 1/0 from caddy_reverse_proxy_upstreams_healthy, or {} if unavailable."""
+    try:
+        resp = http_client.get(f"{CADDY_API_URL}/metrics", timeout=5)
+    except Exception:
+        return {}
+    if resp.status_code != 200:
+        return {}
+    return parse_prometheus_metrics(resp.text)["upstreams_healthy"]
+
+
+def _configured_site_count():
+    """Distinct site hosts in the running config ("7 of 7 configured"), or None."""
+    if not get_servers():
+        return None
+    domains, _ = _server_maps()
+    return len({h.lower() for hosts in domains.values() for h in hosts})
 
 
 def _get_upstream_detail():

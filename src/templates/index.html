@@ -5,8 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="csrf-token" content="{{ csrf_token }}">
 <title>Caddy Console</title>
-<link rel="icon" href="/static/img/favicon.svg" type="image/svg+xml">
+<script>{{ theme_boot_js }}</script>
+<link rel="icon" href="/static/img/icon-32.png" sizes="32x32" type="image/png">
+<link rel="icon" href="/static/img/icon-16.png" sizes="16x16" type="image/png">
 <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<link rel="manifest" href="/static/site.webmanifest">
+<meta name="theme-color" content="#1b6ef3">
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
@@ -14,139 +18,105 @@
 
 {% include "_icons.html" %}
 
-<div class="header">
-  <a class="brand" data-view="dashboard" href="/">
-    <!-- Same geometry as static/img/icon.svg, inlined rather than referenced as
-         an image file so it takes the brand's colour on hover. -->
-    <svg class="brand-mark" viewBox="0 0 32 32" width="20" height="20"
-         aria-hidden="true" focusable="false">
-      <path d="M6 26V16a10 10 0 0 1 20 0v10" fill="none" stroke="currentColor"
-            stroke-width="3" stroke-linecap="round"/>
-      <g fill="currentColor">
-        <rect x="10.5" y="18" width="3" height="8" rx="1.5"/>
-        <rect x="14.5" y="14" width="3" height="12" rx="1.5"/>
-        <rect x="18.5" y="21" width="3" height="5" rx="1.5"/>
-      </g>
-    </svg>
-    <span>Caddy Console</span>
+<header class="hdr" id="hdr">
+  <a class="brand" data-view="dashboard" href="/" aria-label="Caddy Console home">
+    <img class="brand-mark" src="/static/img/brand-64.png" width="26" height="26" alt="">
+    <b>Caddy <span>Console</span></b>
   </a>
-
-  <nav class="tabs">
-    <a class="tab" data-view="dashboard" href="/">
-      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-dashboard"/></svg>Dashboard</a>
-    <a class="tab" data-view="editor" href="/editor">
-      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-editor"/></svg>Editor</a>
-    <a class="tab" data-view="explore" href="/explore">
-      <svg class="icon" width="15" height="15" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg>Explore</a>
+  <nav class="tabs" aria-label="Views">
+    <a class="tab" data-view="dashboard" href="/"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-dashboard"/></svg>Dashboard</a>
+    <a class="tab" data-view="explore" href="/explore"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg>Explore</a>
+    <a class="tab" data-view="editor" href="/editor"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-editor"/></svg>Editor</a>
   </nav>
-
-  <span class="spacer"></span>
-
-  <!-- Editor-only actions. Hidden on the other views, where none of them apply. -->
-  <div class="view-actions" data-for-view="editor">
-    <!-- Tools, grouped and quiet: they open things rather than change the file. -->
-    <div class="tool-group">
-      <button class="btn btn-tool" data-act="find" title="Find and replace (Cmd/Ctrl + F)">Find</button>
-      <button class="btn btn-tool" id="panel-btn-snippets" data-panel="snippets" title="Insert a Caddyfile snippet">Snippets</button>
-      <button class="btn btn-tool" id="panel-btn-backups" data-panel="backups" title="Browse and restore backups">Backups</button>
+  <span class="hdr-spacer"></span>
+  <!-- Editor-only actions, hidden on the other views where none of them apply. -->
+  <div class="etools" data-for-view="editor" hidden>
+    <div class="grp">
+      <button class="btn btn-quiet" type="button" data-act="find" aria-pressed="false" title="Find and replace (Cmd/Ctrl + F)"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg><span class="lbl">Find</span></button>
+      <button class="btn btn-quiet" type="button" id="panel-btn-snippets" data-panel="snippets" aria-pressed="false" title="Insert a Caddyfile snippet"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-blocks"/></svg><span class="lbl">Snippets</span></button>
+      <button class="btn btn-quiet" type="button" id="panel-btn-backups" data-panel="backups" aria-pressed="false" title="Browse and restore backups"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-clock"/></svg><span class="lbl">Backups</span></button>
     </div>
-    <!-- One primary action. Check supports it, so it is outlined, not filled. -->
-    <button class="btn btn-outline" data-act="validate" title="Format and check syntax/modules without saving">Check</button>
-    <button class="btn btn-primary" data-act="save" id="btn-save" title="Save and reload Caddy (Cmd/Ctrl + S)">
-      <span id="save-label">Save &amp; Reload</span>
-    </button>
+    <button class="btn" type="button" data-act="validate" aria-label="Check" title="Format and check syntax and modules without saving"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><span class="lbl">Check</span></button>
+    <button class="btn btn-primary" type="button" data-act="save" id="btn-save" title="Save and reload Caddy (Cmd/Ctrl + S)"><span class="dirty-dot" aria-hidden="true"></span><span id="save-label">Save &amp; Reload</span></button>
   </div>
-
   <div class="user-menu" id="user-menu"></div>
   <!-- Kept for the save/rollback paths, which read the signed-in email from it. -->
   <span class="user-info" id="user-info" hidden></span>
-</div>
+</header>
 
-<div class="warnings" id="warnings"></div>
-
-<div class="main">
-  <div class="tab-content" id="tab-editor">
-    <div class="search-bar" id="search-bar">
-      <input type="text" id="search-input" placeholder="Find... (Enter next, Shift+Enter previous, Esc to close)">
-      <button class="btn btn-secondary btn-sm" data-act="search-prev" title="Previous match (Shift+Enter)">&uarr;</button>
-      <button class="btn btn-secondary btn-sm" data-act="search-next" title="Next match (Enter)">&darr;</button>
-      <span class="match-count" id="match-count"></span>
-      <input type="text" id="replace-input" placeholder="Replace with...">
-      <button class="btn btn-secondary btn-sm" data-act="replace-one">Replace</button>
-      <button class="btn btn-secondary btn-sm" data-act="replace-all">Replace All</button>
-      <button class="btn btn-secondary btn-sm" data-act="search-close">&times;</button>
-    </div>
-    <div class="editor-wrap" id="cm-editor" style="flex:1"></div>
-  </div>
-
-  <div class="tab-content" id="tab-dashboard">
-    <div class="dash-scroll" id="dashboard-root"></div>
-  </div>
-
-  <div class="tab-content" id="tab-explore">
-    <div id="explore-root"></div>
-  </div>
-
-</div>
-
-<div class="footer">
-  <span class="status-dot green" id="status-dot"></span>
-  <span class="status-msg" id="status-msg">Loading...</span>
-  <span class="spacer"></span>
-  <span class="footer-meta" id="last-saved"></span>
-  <span class="footer-meta" id="doc-stats"></span>
-  <span class="footer-meta" id="cursor-pos">Ln 1, Col 1</span>
-</div>
-
-<!-- Snippets Panel -->
-<div class="panel" id="panel-snippets">
-  <div class="panel-header"><h3>Snippets &amp; Templates</h3><button class="panel-close" data-close="snippets">&times;</button></div>
-  <div class="panel-body" id="snippets-list"></div>
-</div>
-
-<!-- Backups Panel -->
-<div class="panel" id="panel-backups">
-  <div class="panel-header"><h3>Backups</h3><button class="panel-close" data-close="backups">&times;</button></div>
-  <div class="panel-body">
-    <div id="backups-list"></div>
-    <div id="backup-preview" style="display:none">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <button class="btn btn-secondary" data-act="close-preview" style="padding:4px 10px">&larr; Back</button>
-        <span id="preview-name"></span>
+<main id="main">
+  <section class="tab-content" id="tab-dashboard" aria-label="Dashboard"><div id="dashboard-root"></div></section>
+  <section class="tab-content" id="tab-explore" aria-label="Explore"><div id="explore-root"></div></section>
+  <section class="tab-content editor" id="tab-editor" aria-label="Editor">
+    <div class="ed-col">
+      <ul class="warns" id="warnings" aria-label="Validation warnings" hidden></ul>
+      <div class="search-bar findbar" id="search-bar" role="search" aria-label="Find and replace">
+        <label class="finput"><svg class="icon" width="14" height="14" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg><span class="sr">Find</span><input type="text" id="search-input" spellcheck="false" placeholder="Find"></label>
+        <button class="ibtn sm" type="button" data-act="search-prev" aria-label="Previous match" title="Previous match (Shift+Enter)"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-chevron-up"/></svg></button>
+        <button class="ibtn sm" type="button" data-act="search-next" aria-label="Next match" title="Next match (Enter)"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-chevron-down"/></svg></button>
+        <span class="fcount match-count" id="match-count" aria-live="polite"></span>
+        <label class="finput finput-replace"><span class="sr">Replace with</span><input type="text" id="replace-input" spellcheck="false" placeholder="Replace"></label>
+        <button class="btn sm" type="button" data-act="replace-one">Replace</button>
+        <button class="btn sm" type="button" data-act="replace-all">Replace all</button>
+        <button class="ibtn sm find-close" type="button" data-act="search-close" aria-label="Close find" title="Close (Esc)"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-close"/></svg></button>
       </div>
-      <div style="display:flex;gap:4px;margin-bottom:10px">
-        <button class="btn btn-tab" id="tab-btn-preview" data-ptab="preview">Preview</button>
-        <button class="btn btn-tab active" id="tab-btn-diff" data-ptab="diff">Diff</button>
-      </div>
-      <div id="preview-content"></div>
-      <div id="diff-content"></div>
-      <div style="margin-top:10px;display:flex;gap:8px">
-        <button class="btn btn-save" data-act="rollback-preview">Rollback (restore + reload)</button>
-        <button class="btn btn-secondary" data-act="restore-preview">Load to Editor</button>
-        <button class="btn btn-secondary" data-act="close-preview">Cancel</button>
+      <div class="editor-wrap" id="cm-editor"></div>
+      <div class="sbar">
+        <span class="msg" id="status-line" data-state="ok" role="status"><svg class="icon" width="14" height="14" aria-hidden="true" focusable="false"><use id="status-icon" href="#i-status-ok"/></svg><span class="status-msg" id="status-msg">Loading…</span></span>
+        <span class="hide-sm" id="last-saved"></span>
+        <span class="r"><span class="hide-sm" id="doc-stats"></span><span id="cursor-pos">Ln 1, Col 1</span></span>
       </div>
     </div>
-  </div>
-</div>
 
-<!-- Audit Panel -->
+    <aside class="panel" id="panel-snippets" hidden aria-labelledby="sn-h">
+      <div class="panel-hd">
+        <h2 id="sn-h">Snippets and templates</h2>
+        <button class="ibtn" type="button" data-close="snippets" aria-label="Close snippets"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="panel-bd" id="snippets-list"></div>
+    </aside>
 
-<!-- Status Panel -->
+    <aside class="panel" id="panel-backups" hidden aria-labelledby="bk-h">
+      <div class="panel-hd">
+        <button class="ibtn" type="button" id="bk-back" data-act="close-preview" aria-label="Back to backups" hidden><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-chevron-left"/></svg></button>
+        <h2 id="bk-h">Backups</h2>
+        <button class="ibtn" type="button" data-close="backups" aria-label="Close backups"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="panel-bd" id="backups-list"></div>
+      <div class="bk-preview" id="backup-preview" hidden>
+        <div class="bk-head"><b id="preview-name"></b><div class="muted" id="preview-meta"></div></div>
+        <div class="pv-tabs" id="preview-tabs"></div>
+        <div class="pv" id="preview-content" hidden></div>
+        <div class="pv diff" id="diff-content"></div>
+        <div class="panel-ft">
+          <p>Rolling back writes this backup to the live Caddyfile and reloads Caddy. Your current file is backed up first.</p>
+          <div class="acts">
+            <button class="btn btn-primary" type="button" data-act="rollback-preview"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-restore"/></svg>Roll back and reload</button>
+            <button class="btn" type="button" data-act="restore-preview">Load into editor</button>
+            <button class="btn btn-quiet" type="button" data-act="close-preview">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </section>
+</main>
 
 <!-- Save Diff Modal -->
-<div class="modal-overlay" id="save-diff-modal">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>Review changes before saving</h3>
-      <span class="modal-sub">Comparing your editor (new) against the live config on disk (current)</span>
-    </div>
-    <div class="modal-body" id="save-diff-content"></div>
-    <div class="modal-footer">
-      <button class="btn btn-save" data-act="confirm-save">Save &amp; Reload</button>
-      <button class="btn btn-secondary" data-act="cancel-save">Cancel</button>
-    </div>
+<dialog class="wide" id="save-diff-modal" aria-labelledby="save-diff-h">
+  <div class="dlg-hd">
+    <h2 id="save-diff-h">Review changes before saving</h2>
+    <p>Comparing your editor (new) against the live config on disk.</p>
   </div>
-</div>
+  <div class="dlg-bd">
+    <div class="dsum" id="save-diff-summary"></div>
+    <div class="diff" id="save-diff-content"></div>
+  </div>
+  <div class="dlg-ft">
+    <span class="note">Caddy reloads gracefully; open connections are kept.</span>
+    <button class="btn btn-quiet" type="button" data-act="cancel-save">Cancel</button>
+    <button class="btn btn-primary" type="button" data-act="confirm-save"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-save"/></svg>Save &amp; Reload</button>
+  </div>
+</dialog>
 
 <script src="/static/js/editor.bundle.js"></script>
 <!-- App scripts: load order matters (classic scripts share one global scope;

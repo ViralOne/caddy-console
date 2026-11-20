@@ -4,6 +4,7 @@ import secrets
 from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, request
+from markupsafe import Markup
 
 from .auth import auth_bp, cf_jwt_enabled, csrf_valid, oauth
 from .config import (
@@ -19,6 +20,7 @@ from .routes.editor import (
     ensure_caddyfile_lock_available,
 )
 from .routes.ops import ops_bp
+from .theme_boot import THEME_BOOT_HASH, THEME_BOOT_JS
 
 # Known placeholder secrets that must never be used to sign real sessions.
 _INSECURE_SECRETS = {"", "dev-secret-change-me", "change-me-to-a-random-string"}
@@ -140,6 +142,12 @@ def create_app():
     app.register_blueprint(editor_bp)
     app.register_blueprint(ops_bp)
 
+    @app.context_processor
+    def theme_boot():
+        # Markup, so autoescaping cannot touch it: the bytes on the page must be
+        # exactly the bytes that were hashed into the CSP.
+        return {"theme_boot_js": Markup(THEME_BOOT_JS)}
+
     @app.before_request
     def csrf_protect():
         if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.path.startswith("/api/"):
@@ -156,7 +164,7 @@ def create_app():
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self'; "
+            f"script-src 'self' '{THEME_BOOT_HASH}'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; "
             "connect-src 'self'; "

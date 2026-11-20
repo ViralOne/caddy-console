@@ -6,7 +6,7 @@
 import { h, htm, useEffect, useState } from '../explore-vendor.js';
 import { setTermState } from './explore-query.js';
 import { Icon } from './icons.js';
-import { asnLine, flagOf, kindLabel, kindNote, placeLine, placement, sourceLine } from './ip-info.js';
+import { asnLine, kindLabel, kindNote, placeLine, placement, sourceLine } from './ip-info.js';
 
 const html = htm.bind(h);
 
@@ -16,7 +16,9 @@ function stamp(ts) {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-export function IpPopover({ ip, anchor, from, to, query, onQuery, onCopy }) {
+const chipClass = (v) => ({ '2xx': 's2', '3xx': 's3', '4xx': 's4', '5xx': 's5' }[v] || 'so');
+
+export function IpPopover({ ip, anchor, from, to, query, onQuery, onCopy, onClose }) {
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
 
@@ -53,83 +55,59 @@ export function IpPopover({ ip, anchor, from, to, query, onQuery, onCopy }) {
   const style = pos ? Object.fromEntries(Object.entries(pos).map(([k, v]) => [k, v + 'px'])) : null;
 
   return html`
-    <div class="ip-pop" role="dialog" aria-label=${'About ' + ip} style=${style}>
-      <div class="ip-pop-head">
-        <div class="ip-pop-kind">${info ? kindLabel(info.kind) : 'IP address'}</div>
-        <div class="ip-pop-ip">
-          <span>${ip}</span>
-          <button class="ip-pop-icon" title="Copy IP" aria-label="Copy IP"
-                  onClick=${() => onCopy(ip)}><${Icon} name="copy" size=${14} /></button>
-        </div>
+    <div class="pop ippop ip-pop" role="dialog" aria-label=${'About ' + ip} style=${style}>
+      <div class="sect">
+        <div class="k">${info ? kindLabel(info.kind) : 'IP address'}</div>
+        <div class="ip"><span>${ip}</span>
+          <button class="ibtn sm" type="button" title="Copy IP" aria-label="Copy IP" onClick=${() => onCopy(ip)}><${Icon} name="copy" size=${14} /></button></div>
       </div>
-
-      ${error && html`<div class="ip-pop-section ip-pop-error">${error}</div>`}
-      ${!info && !error && html`<div class="ip-pop-section ip-pop-muted">Looking up…</div>`}
-
-      ${info && html`
-        ${info.kind !== 'public' && html`
-          <div class="ip-pop-section ip-pop-muted">${kindNote(info.kind)}</div>`}
-        ${info.kind === 'public' && html`
-          <div class="ip-pop-section">
-            <div class="ip-pop-label">Location</div>
-            <div class="ip-pop-value">
-              ${place ? html`<span class="ip-pop-flag" aria-hidden="true">${flagOf(info.location.country_code)}</span>${place}`
-                      : html`<span class="ip-pop-muted">${info.source?.available ? 'Not in the database' : 'Unknown'}</span>`}
-            </div>
-            <div class="ip-pop-label">Network</div>
-            <div class="ip-pop-value">
-              ${network || html`<span class="ip-pop-muted">${info.source?.available ? 'Not in the database' : 'Unknown'}</span>`}
-            </div>
-          </div>`}
-
-        ${seen && html`
-          <div class="ip-pop-section">
-            <div class="ip-pop-label">In this range</div>
-            ${seen.requests === 0
-              ? html`<div class="ip-pop-muted">No requests from this IP in the range on screen.</div>`
-              : html`
-                <div class="ip-pop-value">
-                  <b>${seen.requests.toLocaleString()}</b> request${seen.requests === 1 ? '' : 's'}
-                  ${seen.errors > 0 && html` · <span class="tone-critical">${seen.errors.toLocaleString()} 5xx</span>`}
-                </div>
-                <div class="ip-pop-muted ip-pop-small">${stamp(seen.first_ts)} → ${stamp(seen.last_ts)}</div>
-                <div class="ip-pop-chips">
-                  ${seen.status_classes.map(c => html`
-                    <button class=${'ip-pop-chip tone-' + (c.value === '5xx' ? 'critical' : c.value === '4xx' ? 'warn' : c.value === '2xx' ? 'good' : 'accent')}
-                            title=${`Show ${c.value} from ${ip}`}
-                            onClick=${() => only({ key: 'status', value: c.value })}>
-                      ${c.value} <span>${c.count.toLocaleString()}</span>
-                    </button>`)}
-                </div>`}
-          </div>
-          ${[['host', 'Hosts', seen.hosts, seen.host_count], ['path', 'Paths', seen.paths, seen.path_count]]
-            .filter(([, , rows]) => rows.length)
-            .map(([key, title, rows, count]) => html`
-              <div class="ip-pop-section ip-pop-list" key=${key}>
-                <div class="ip-pop-label">${title}${count > rows.length ? ` · top ${rows.length} of ${count}` : ''}</div>
-                ${rows.map(r => html`
-                  <button class="ip-pop-row" key=${r.value} title=${`Show ${key}:${r.value} from ${ip}`}
-                          onClick=${() => only({ key, value: r.value })}>
-                    <span class="ip-pop-row-value">${r.value}</span>
-                    <span class="ip-pop-row-count">${r.count.toLocaleString()}</span>
-                  </button>`)}
-              </div>`)}`}
-      `}
-
-      <div class="ip-pop-actions">
-        <button class="btn btn-primary btn-sm" onClick=${() => only(null)}>
-          <${Icon} name="filter" size=${14} />Only this IP
-        </button>
-        <button class="btn btn-secondary btn-sm"
-                onClick=${() => onQuery(setTermState(query, 'client', ip, 'exclude'))}>
-          <${Icon} name="box-x" size=${14} />Exclude
-        </button>
+      ${error && html`<div class="sect ip-pop-error" role="alert">${error}</div>`}
+      ${!info && !error && html`<div class="sect muted">Looking up…</div>`}
+      ${info && info.kind !== 'public' && html`<div class="sect muted">${kindNote(info.kind)}</div>`}
+      ${info && info.kind === 'public' && html`
+        <div class="sect">
+          <dl class="kv">
+            <dt>Location</dt>
+            <dd>${place ? html`<span class="cc">${info.location.country_code}</span> ${place}`
+                        : html`<span class="muted">${info.source?.available ? 'Not in the database' : 'Unknown'}</span>`}</dd>
+            <dt>Network</dt>
+            <dd>${network || html`<span class="muted">${info.source?.available ? 'Not in the database' : 'Unknown'}</span>`}</dd>
+          </dl>
+        </div>`}
+      ${seen && html`
+        <div class="sect">
+          <div class="k">In this range</div>
+          ${seen.requests === 0
+            ? html`<div class="muted">No requests from this IP in the range on screen.</div>`
+            : html`
+              <div><b>${seen.requests.toLocaleString()} ${seen.requests === 1 ? 'request' : 'requests'}</b>${seen.errors > 0 && html`, <span class="s5">${seen.errors.toLocaleString()} ${seen.errors === 1 ? 'is' : 'are'} 5xx</span>`}</div>
+              <div class="muted small">First ${stamp(seen.first_ts)}, last ${stamp(seen.last_ts)}</div>
+              <div class="chips">
+                ${seen.status_classes.map(c => html`
+                  <button class=${'schip ' + chipClass(c.value)} type="button" key=${c.value} title=${`Show ${c.value} from ${ip}`}
+                          onClick=${() => only({ key: 'status', value: c.value })}>${c.value} ${c.count.toLocaleString()}</button>`)}
+              </div>`}
+        </div>
+        ${seen.requests > 0 && (seen.hosts.length > 0 || seen.paths.length > 0) && html`
+          <div class="sect toplist">
+            ${[['host', 'Top hosts', seen.hosts, seen.host_count], ['path', 'Top paths', seen.paths, seen.path_count]]
+              .filter(([, , list]) => list.length)
+              .map(([key, title, list, count]) => html`
+                <div key=${key}>
+                  <span class="k">${title}${count > list.length ? `, ${list.length} of ${count}` : ''}</span>
+                  <ol>${list.map(r => html`
+                    <li key=${r.value}><button class="ip-row" type="button" title=${`Show ${key}:${r.value} from ${ip}`}
+                        onClick=${() => only({ key, value: r.value })}><span>${r.value}</span><span>${r.count.toLocaleString()}</span></button></li>`)}</ol>
+                </div>`)}
+          </div>`}`}
+      <div class="sect acts">
+        <button class="btn btn-primary sm" type="button" onClick=${() => only(null)}><${Icon} name="filter" size=${14} />Only this IP</button>
+        <button class="btn sm" type="button" onClick=${() => onQuery(setTermState(query, 'client', ip, 'exclude'))}><${Icon} name="minus-circle" size=${14} />Exclude</button>
+        <button class="btn sm btn-quiet ip-close" type="button" onClick=${() => onClose && onClose()}>Close</button>
       </div>
       ${info?.source && info.kind === 'public' && html`
-        <div class="ip-pop-foot">
-          ${info.source.available
-            ? html`<a href=${info.source.url} target="_blank" rel="noopener noreferrer">${sourceLine(info.source)}</a>`
-            : sourceLine(info.source)}
-        </div>`}
+        <div class="src">${info.source.available
+          ? html`<a href=${info.source.url} target="_blank" rel="noopener noreferrer">${sourceLine(info.source)}</a>`
+          : sourceLine(info.source)}</div>`}
     </div>`;
 }

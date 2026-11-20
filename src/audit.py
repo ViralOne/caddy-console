@@ -66,3 +66,40 @@ def iter_entries():
                         continue
         except OSError:
             continue
+
+
+# Audit actions after which the Caddyfile on disk is different. A rejected reload
+# normally rolls the file back; only a failed rollback leaves it changed.
+CHANGE_ACTIONS = {
+    "save_reload": "save", "save_no_reload": "save", "save_reload_unknown": "save",
+    "restore_reload": "restore", "restore_no_reload": "restore", "restore_reload_unknown": "restore",
+}
+
+
+def _as_change(entry):
+    action = entry.get("action", "")
+    kind = CHANGE_ACTIONS.get(action)
+    if kind is None and action.endswith("_reload_failed") and "rolled_back=False" in str(entry.get("detail", "")):
+        kind = action.split("_", 1)[0]
+    if kind is None:
+        return None
+    try:
+        ts = datetime.fromisoformat(entry["time"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return None
+    return {"action": kind, "user": entry.get("user", ""), "ts": ts}
+
+
+def last_change(scan: int = 500):
+    """The newest save/restore that changed the file on disk, or None."""
+    for path in (AUDIT_LOG, rotated_path()):
+        for line in reversed(tail_lines(path, scan)):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, dict):
+                change = _as_change(entry)
+                if change:
+                    return change
+    return None

@@ -1,108 +1,198 @@
 // Dashboard at /: is anything broken, and where do I look next.
 //
-// Every figure is a link into /explore with the matching filter prefilled, so
-// this page answers "what" and hands off to Explore for "why". It deliberately
-// does not repeat Explore's histogram or its per-path breakdown.
+// Opens on a verdict, then the figure tiles (each one a link into Explore with
+// the matching filter, plus the config tile), then per-site rows (problems
+// first) beside recent changes on wide screens. All wording and
+// thresholds live in dashboard-model.js; this file only lays them out.
 import { h, htm, render, useEffect, useState } from '../explore-vendor.js';
+import { Icon } from './icons.js';
+import { toast } from './ui/toast.js';
+import { formatBytes, formatCount, formatMs, formatPercent } from './format.js';
+import { RANGE, auditRow, configCard, exploreHref, kpis, siteRows, verdict } from './dashboard-model.js';
 
 const html = htm.bind(h);
-
-const RANGE = '1h';          // the dashboard is a "right now" view
 const REFRESH_MS = 15000;
+const PROXY_DISMISS_KEY = 'dashboard.proxyIpDismissed';
 
-function formatBytes(n) {
-  if (!n) return '0';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(n) / Math.log(1024));
-  return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + ' ' + units[i];
+function proxyDismissed(ip) {
+  try { return localStorage.getItem(PROXY_DISMISS_KEY) === ip; } catch (e) { return false; }
 }
-function formatMs(ms) {
-  if (!ms) return '—';
-  return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : Math.round(ms) + 'ms';
+function setProxyDismissed(ip) {
+  try { if (ip) localStorage.setItem(PROXY_DISMISS_KEY, ip); else localStorage.removeItem(PROXY_DISMISS_KEY); } catch (e) { /* this page only */ }
 }
-function formatCount(n) {
-  if (n >= 10000) return (n / 1000).toFixed(1) + 'k';
-  return n.toLocaleString();
+// A proxy error page is not JSON; say which request failed and how.
+async function getJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    const body = await r.json().catch(() => null);
+    throw new Error((body && body.error) || `${url.split('?')[0]} returned HTTP ${r.status}`);
+  }
+  return r.json();
 }
-function latencyTone(ms) {
-  return ms > 1000 ? 'critical' : ms > 300 ? 'warn' : 'good';
-}
-// `caddy version` prints "v2.11.4 h1:XKxk…=" — the build hash is noise here.
-function shortVersion(v) {
-  return (v || '').split(/\s+/)[0];
-}
+const openSite = (host) => document.dispatchEvent(new CustomEvent('app:open-site', { detail: { host } }));
 
-// Config mtime arrives as an ISO string with microseconds; on a dashboard what
-// matters is how long ago, not the exact instant.
-function timeAgo(iso) {
-  if (!iso) return 'unknown';
-  const then = Date.parse(iso);
-  if (Number.isNaN(then)) return iso;
-  const secs = Math.max(0, (Date.now() - then) / 1000);
-  if (secs < 60) return 'just now';
-  if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
-  if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
-  return Math.floor(secs / 86400) + 'd ago';
-}
+const STROKE = { crit: 'var(--crit)', warn: 'var(--warn)' };
 
-function exploreHref(query) {
-  const p = new URLSearchParams({ range: RANGE });
-  if (query) p.set('q', query);
-  return '/explore?' + p.toString();
-}
-
-// Sparkline: 24 buckets over the range, one path, no axes. A single series in a
-// labelled row needs no legend.
-function Spark({ series }) {
+function Spark({ series, tone = null, w = 110, ht = 26, cls = 'spark' }) {
   const points = series || [];
-  if (!points.length || !points.some(v => v)) return html`<span class="spark-empty">—</span>`;
+  if (!points.length || !points.some(v => v)) return html`<span class="muted">—</span>`;
   const peak = Math.max(...points);
-  const step = 100 / Math.max(1, points.length - 1);
-  const d = points
-    .map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${(20 - (v / peak) * 18).toFixed(1)}`)
-    .join(' ');
+  const step = (w - 2) / Math.max(1, points.length - 1);
+  const pts = points.map((v, i) => `${(1 + i * step).toFixed(1)},${(ht - 2 - (v / peak) * (ht - 4)).toFixed(1)}`).join(' ');
   return html`
-    <svg class="spark" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">
-      <path d=${d} fill="none" stroke="var(--accent)" stroke-width="1.5"
-            vector-effect="non-scaling-stroke" />
+    <svg class=${cls} viewBox=${`0 0 ${w} ${ht}`} preserveAspectRatio="none" aria-hidden="true" focusable="false">
+      <polyline points=${pts} fill="none" stroke=${STROKE[tone] || 'var(--ink-3)'}
+                stroke-width="1.5" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
     </svg>`;
 }
 
-function healthOf(host, upstreams) {
-  // A site's health is its upstreams'. Sites that only respond directly (respond,
-  // file_server) have no upstream, which is not the same as being unhealthy.
-  const mine = (upstreams || []).filter(u => (u.domains || []).includes(host));
-  if (!mine.length) return { state: 'none', label: 'no upstream' };
-  if (mine.some(u => u.healthy === 0)) return { state: 'down', label: 'unhealthy' };
-  if (mine.every(u => u.healthy === 1)) return { state: 'up', label: 'healthy' };
-  return { state: 'unknown', label: 'not checked' };
+// A thin bar for a share (0..1); the figure next to it carries the number.
+const Bar = ({ share }) => html`<span class="bar" aria-hidden="true"><i style=${{ width: `${Math.max(0, Math.min(1, share)) * 100}%` }}></i></span>`;
+
+const Parts = ({ parts }) => parts.map((p, i) => (p.mono ? html`<span class="mono" key=${i}>${p.mono}</span>` : p.text));
+
+function DownList({ down }) {
+  return html`
+    <ul class="downs" aria-label="Sites that are down">
+      ${down.items.map(d => html`
+        <li key=${d.host}>
+          <span class="d-host mono">${d.host}</span>
+          <span class="d-addr mono">${d.address}</span>
+          <span class="d-since">${d.since}</span>
+          <button class="btn sm" type="button" onClick=${() => openSite(d.host)}>Open block</button>
+        </li>`)}
+      ${down.moreText && html`<li class="d-more">${down.moreText}</li>`}
+    </ul>`;
 }
 
-// Dismissal of the "real IPs are not logged" notice, per IP, in this browser.
-const PROXY_DISMISS_KEY = 'dashboard.proxyIpDismissed';
-function proxyDismissed(ip) {
-  try { return localStorage.getItem(PROXY_DISMISS_KEY) === ip; } catch (e) { return false; }
+function Verdict({ v }) {
+  const icon = v.severity === 'warn' ? 'warning' : 'status-down';
+  return html`
+    <section class=${'verdict sev-' + v.severity} role=${v.severity === 'ok' ? 'status' : 'alert'} aria-labelledby="dash-h">
+      ${v.sev && html`<span class="sev"><${Icon} name=${icon} />${v.sev}</span>`}
+      <h1 id="dash-h">${v.severity === 'ok' && html`<${Icon} name="status-ok" size=${20} class="verdict-ok" />`}${v.title}</h1>
+      ${v.down && html`<${DownList} down=${v.down} />`}
+      ${v.body.length > 0 && html`<p><${Parts} parts=${v.body} /></p>`}
+      ${(v.primary || v.secondary) && html`
+        <div class="acts">
+          ${v.primary && html`<a class="btn btn-primary" href=${v.primary.href}
+               data-view=${v.primary.href.startsWith('/explore') ? 'explore' : 'editor'}>${v.primary.label}</a>`}
+          ${v.secondary && html`<button class="btn" type="button" onClick=${() => openSite(v.secondary.host)}>${v.secondary.label}</button>`}
+        </div>`}
+    </section>`;
+}
+
+const LEVEL_WORD = { crit: 'high', warn: 'elevated' };
+
+function Figure({ f }) {
+  return html`
+    <a class="fig" href=${f.href} data-view="explore" title=${f.title || null}>
+      <span class="lbl">${f.label}</span>
+      <span class=${'fv-n' + (f.level ? ' lv-' + f.level : '')}>${f.level && html`<${Icon} name="warning" size=${18} />`}${f.value}${f.of && html` <span class="fv-of">${f.of}</span>`}${f.level && html` <span class="tag">${LEVEL_WORD[f.level]}</span>`}</span>
+      ${f.spark && f.spark.some(v => v) && html`<${Spark} series=${f.spark} w=${200} ht=${28} cls="spark fig-spark" />`}
+      ${f.share && html`<span class="sub share"><${Bar} share=${f.share.pct / 100} />${f.share.text}</span>`}
+      ${!f.share && f.sub && html`<span class=${'sub' + (f.bad ? ' bad' : '')}>${f.bad && !f.level && html`<${Icon} name="warning" size=${14} /> `}${f.sub}</span>`}
+    </a>`;
+}
+
+function ConfigFigure({ card }) {
+  const icon = card.state === 'ok' ? 'status-ok' : card.state === 'bad' ? 'status-down' : 'status-unknown';
+  return html`
+    <a class=${'fig fig-cfg cfg-' + card.state} href="/editor" data-view="editor" title=${card.checks || null}>
+      <span class="lbl">Config</span>
+      <span class="cfg-state"><${Icon} name=${icon} size=${18} />${card.word}</span>
+      ${card.state === 'bad' && card.checks && html`<span class="sub mono cfg-msg">${card.checks}</span>`}
+      ${card.version && html`<span class="sub">Caddy ${card.version}</span>`}
+      ${card.changed && html`<span class="sub">Changed <time title=${card.changed.abs}>${card.changed.rel}</time>${card.changed.by ? ` by ${card.changed.by}` : ''}</span>`}
+      ${card.path && html`<span class="sub mono cfg-path" title=${card.path}>${card.path}</span>`}
+    </a>`;
+}
+
+function Figures({ items, card }) {
+  return html`
+    <div class="figs" aria-label="Last hour">
+      ${items.map(f => html`<${Figure} key=${f.key} f=${f} />`)}
+      ${card && html`<${ConfigFigure} card=${card} />`}
+    </div>`;
+}
+
+function ProxyNotice({ p, onDismiss }) {
+  return html`
+    <div class="notice" role="status">
+      <${Icon} name="warning" size=${20} />
+      <div>
+        <h2>Visitors' real IPs are not being logged</h2>
+        <p>${p.share}% of the last hour's ${formatCount(p.requests)} requests came from <code>${p.ip}</code>, a Docker network address, so Caddy sees your proxy instead of your visitors. Set <code>trusted_proxies</code> and <code>client_ip_headers</code> in the global <code>servers</code> block. Until then, client IPs, IP locations and per-IP filters are unreliable.</p>
+      </div>
+      <div class="acts">
+        <a class="btn sm" href="https://github.com/ViralOne/caddy-console/blob/master/docs/setup.md#behind-a-proxy-or-tunnel-real-client-ips" target="_blank" rel="noopener noreferrer">How to fix</a>
+        <button class="btn sm btn-quiet" type="button" onClick=${onDismiss}>Dismiss</button>
+      </div>
+    </div>`;
+}
+
+function SitesTable({ sites, upstreams }) {
+  return html`
+    <table class="tbl sites">
+      <thead><tr><th>Site</th><th>Health</th><th class="num">Requests</th><th class="num">5xx</th><th class="num">p95</th><th class="num">Out</th><th class="num">Last hour</th></tr></thead>
+      <tbody>
+        ${siteRows(sites, upstreams).map(({ site: s, health, tags, share, tone }) => {
+          const q = 'host:' + s.host;
+          return html`
+            <tr key=${s.host} class=${health.state === 'down' ? 'is-crit' : ''}>
+              <td class="c-site"><a class="host" href=${exploreHref(q)} data-view="explore">${s.host}</a></td>
+              <td class="c-health"><span class=${'health h-' + health.state}><${Icon} name=${health.icon} size=${14} />${health.label}</span></td>
+              <td class="num c-req" data-label="Requests"><a href=${exploreHref(q)} data-view="explore">${formatCount(s.requests)}</a><${Bar} share=${share} /></td>
+              <td class="num" data-label="5xx"><a href=${exploreHref(q + ' status:5xx')} data-view="explore" title=${`${formatCount(s.errors)} server errors`}>${tags.includes('high')
+                ? html`<span class="flag bad"><${Icon} name="warning" size=${14} />${formatPercent(s.error_rate, 2)} <span class="tag">high</span></span>`
+                : formatPercent(s.error_rate, 2)}</a></td>
+              <td class="num" data-label="p95"><a href=${exploreHref(q)} data-view="explore">${tags.includes('slow')
+                ? html`<span class="flag slow"><${Icon} name="warning" size=${14} />${formatMs(s.p95_latency_ms)} <span class="tag">slow</span></span>`
+                : formatMs(s.p95_latency_ms)}</a></td>
+              <td class="num" data-label="Out"><a href=${exploreHref(q)} data-view="explore">${formatBytes(s.bytes_out)}</a></td>
+              <td class="num c-spark"><${Spark} series=${s.series} tone=${tone} w=${160} ht=${28} /></td>
+            </tr>`;
+        })}
+      </tbody>
+    </table>`;
+}
+
+function Changes({ entries, now }) {
+  if (!entries.length) return html`<p class="metrics-hint">No editor activity recorded yet.</p>`;
+  return html`
+    <ul class="changes">
+      ${entries.map((e, i) => {
+        const r = auditRow(e, now);
+        return html`
+          <li key=${i}>
+            <span class="act"><${Icon} name=${r.icon} />${r.verb}</span>
+            <span class="who">${r.user}</span>
+            <span class="det" title=${e.detail || ''}>${r.detail}</span>
+            <time title=${r.abs}>${r.rel}</time>
+          </li>`;
+      })}
+    </ul>`;
 }
 
 function App() {
   const [data, setData] = useState(null);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(null);           // the last refresh failed
   const [, setDismissTick] = useState(0);
 
   const load = async () => {
     try {
       const [sites, upstreams, traffic, status, audit] = await Promise.all([
-        fetch(`/api/sites?range=${RANGE}`).then(r => r.json()),
-        fetch('/api/upstreams').then(r => r.json()),
-        fetch('/api/traffic').then(r => r.json()),
-        fetch('/api/status').then(r => r.json()),
-        fetch('/api/audit').then(r => r.json()),
+        getJson(`/api/sites?range=${RANGE}`), getJson('/api/upstreams'), getJson('/api/traffic'),
+        getJson('/api/status'), getJson('/api/audit'),
       ]);
       // Caddy reports upstream health per address; fold it onto the upstream rows.
       const healthy = traffic.upstreams_healthy || {};
       const ups = (upstreams.upstreams || []).map(u => ({ ...u, healthy: healthy[u.address] }));
-      setData({ sites, upstreams: ups, status, audit });
-      setError(sites.error || upstreams.error || null);
+      setData({
+        sites, upstreams: ups, upstreamsError: upstreams.error || null, trafficError: traffic.error || null,
+        configuredSites: upstreams.configured_sites ?? null, status, audit, now: Date.now(),
+      });
+      setError(null);
     } catch (e) {
       setError(e.message);
     }
@@ -110,149 +200,56 @@ function App() {
 
   useEffect(() => {
     load();
-    // The component is never unmounted — switching view only hides its root — so
-    // the tick has to check for itself, or the dashboard keeps polling /api/sites
-    // from behind the Explore view. That mattered beyond wasted requests: the two
-    // views can request different log windows, and a window change forces the
-    // shared index to rebuild, so background polling made every Explore query
-    // re-parse the window.
+    // Never unmounted (switching view only hides the root), so the tick checks
+    // for itself; background polling would force the shared index to rebuild
+    // whenever Explore asks for a different window.
     const t = setInterval(() => {
       if (document.getElementById('tab-dashboard')?.classList.contains('active')) load();
     }, REFRESH_MS);
     return () => clearInterval(t);
   }, []);
 
-  if (error && !data) return html`<div class="metrics-hint error">Could not load the dashboard: ${error}</div>`;
-  if (!data) return html`<div class="metrics-hint">Loading…</div>`;
+  if (error && !data) return html`<div class="page"><p class="metrics-hint error">Could not load the dashboard: ${error}</p></div>`;
+  if (!data) return html`<div class="page"><p class="metrics-hint">Loading…</p></div>`;
 
   const sites = data.sites.sites || [];
-  const totals = sites.reduce((acc, s) => ({
-    requests: acc.requests + s.requests,
-    errors: acc.errors + s.errors,
-    bytes: acc.bytes + s.bytes_out,
-  }), { requests: 0, errors: 0, bytes: 0 });
-  const errorRate = totals.requests ? (totals.errors / totals.requests * 100) : 0;
-  const failing = data.upstreams.filter(u => u.healthy === 0);
-  const cfg = data.status || {};
+  // A failed refresh keeps the last figures but never the last verdict.
+  const v = verdict({
+    sites, upstreams: data.upstreams, upstreamsError: data.upstreamsError, trafficError: data.trafficError,
+    loadError: error, configuredSites: data.configuredSites, status: data.status, now: data.now,
+  });
+  const card = configCard(data.status, data.now);
+  const figures = kpis({ sites, previousTotal: data.sites.previous_total ?? null, configuredSites: data.configuredSites, dropped: data.sites.dropped || 0 });
+  const p = data.sites.single_proxy_ip;
+  const dismiss = () => {
+    setProxyDismissed(p.ip);
+    setDismissTick(t => t + 1);
+    toast(`Notice hidden for ${p.ip} in this browser.`, {
+      kind: 'info', action: { label: 'Undo', run: () => { setProxyDismissed(null); setDismissTick(t => t + 1); } },
+    });
+  };
 
   return html`
-    <div class="dash">
-      ${error && html`<div class="metrics-hint error">${error}</div>`}
+    <div class="page dash">
+      ${data.sites.error && html`<p class="metrics-hint error">${data.sites.error}</p>`}
+      <${Verdict} v=${v} />
+      <${Figures} items=${figures} card=${card} />
+      ${p && !proxyDismissed(p.ip) && html`<${ProxyNotice} p=${p} onDismiss=${dismiss} />`}
 
-      <div class="dash-summary">
-        <div class="dash-kpi">
-          <div class="dash-kpi-label">Requests · last hour</div>
-          <a class="dash-kpi-value" href=${exploreHref('')} data-view="explore">${formatCount(totals.requests)}</a>
-        </div>
-        <div class="dash-kpi">
-          <div class="dash-kpi-label">5xx rate</div>
-          <a class=${'dash-kpi-value tone-' + (errorRate > 5 ? 'critical' : errorRate > 0 ? 'warn' : 'good')}
-             href=${exploreHref('status:5xx')} data-view="explore">${errorRate.toFixed(errorRate >= 10 ? 0 : 1)}%</a>
-        </div>
-        <div class="dash-kpi">
-          <div class="dash-kpi-label">Sites with traffic</div>
-          <div class="dash-kpi-value">${sites.length}</div>
-        </div>
-        <div class="dash-kpi">
-          <div class="dash-kpi-label">Bandwidth out</div>
-          <div class="dash-kpi-value">${formatBytes(totals.bytes)}</div>
-        </div>
-        <div class="dash-kpi dash-kpi-wide">
-          <div class="dash-kpi-label">Config</div>
-          <div class="dash-kpi-line">
-            <span class=${'tone-' + (cfg.config_valid ? 'good' : 'critical')}
-                  title=${cfg.config_check_message || ''}>
-              ${cfg.config_valid
-                ? (cfg.config_check_level === 'adapted' ? '● syntax + modules OK' : '● locally validated')
-                : '● check failed'}
-            </span>
-            <span class="dash-muted">${shortVersion(cfg.caddy_version)}</span>
-          </div>
-          <div class="dash-kpi-line dash-muted" title=${cfg.last_modified || ''}>changed ${timeAgo(cfg.last_modified)}</div>
-          <div class="dash-kpi-line dash-path" title=${cfg.config_path || ''}>${cfg.config_path || ''}</div>
-        </div>
+      <div class="dash-cols">
+        <section class="dash-sites" aria-labelledby="dash-sites-h">
+          <div class="h-sec"><h2 id="dash-sites-h">Sites</h2><p>Last hour, from the access log. Every figure opens in Explore.</p></div>
+          ${sites.length
+            ? html`<${SitesTable} sites=${sites} upstreams=${data.upstreamsError ? null : data.upstreams} />`
+            : html`<p class="metrics-hint">No requests in the last hour${data.sites.skipped ? ` (${formatCount(data.sites.skipped)} log lines could not be indexed; check the log format)` : ''}.</p>`}
+        </section>
+        <section class="dash-changes" aria-labelledby="dash-changes-h">
+          <div class="h-sec"><h2 id="dash-changes-h">Recent changes</h2><p>From this console's audit log.</p></div>
+          <${Changes} entries=${(data.audit?.entries || []).slice(0, 8)} now=${data.now} />
+        </section>
       </div>
 
-      ${failing.length > 0 && html`
-        <div class="dash-alert"
-             title="From caddy_reverse_proxy_upstreams_healthy; configure health_uri on the reverse_proxy to enable active checks">
-          <strong>Caddy reports ${failing.length} unhealthy upstream${failing.length > 1 ? 's' : ''}:</strong>
-          ${failing.map(u => html`<span class="dash-alert-item">${u.address}${u.domains?.length ? ' (' + u.domains.join(', ') + ')' : ''}</span>`)}
-        </div>`}
-
-      ${(() => {
-        const p = data.sites.single_proxy_ip;
-        if (!p || proxyDismissed(p.ip)) return null;
-        const dismiss = () => {
-          try { localStorage.setItem(PROXY_DISMISS_KEY, p.ip); } catch (e) { /* not persisted */ }
-          setDismissTick(t => t + 1);
-        };
-        return html`
-          <div class="dash-alert dash-alert-warn" role="status">
-            <strong>Visitors' real IPs are not being logged.</strong>
-            <span>${p.share}% of the last hour's ${p.requests.toLocaleString()} requests come from${' '}<span class="dash-alert-item">${p.ip}</span>, a Docker-range address. That is usually a tunnel or proxy container (set${' '}<code>trusted_proxies</code>${' '}and${' '}<code>client_ip_headers</code>${' '}in Caddy) or Docker's port-forwarding proxy. Client IPs, IP locations and per-IP filters are unreliable until it is fixed.${' '}<a href="https://github.com/ViralOne/caddy-console/blob/master/docs/setup.md#behind-a-proxy-or-tunnel-real-client-ips" target="_blank" rel="noopener">How to fix</a></span>
-            <button class="btn btn-secondary btn-sm dash-alert-dismiss" onClick=${dismiss}
-                    title="Hide this notice for ${p.ip} in this browser">Dismiss</button>
-          </div>`;
-      })()}
-
-      <div class="section-title">
-        <span>Sites</span>
-        <span class="section-basis">last hour, from the access log · click any figure to investigate</span>
-      </div>
-
-      ${!sites.length
-        ? html`<div class="metrics-hint">No requests in the last hour${data.sites.skipped ? ` (${data.sites.skipped.toLocaleString()} log lines could not be indexed — check the log format)` : ''}.</div>`
-        : html`
-        <div class="dash-table">
-          <div class="dash-row dash-head">
-            <span>Site</span><span>Health</span><span class="num">Requests</span>
-            <span class="num">5xx</span><span class="num">p95</span>
-            <span class="num">Out</span><span>Last hour</span>
-          </div>
-          ${sites.map(s => {
-            const health = healthOf(s.host, data.upstreams);
-            return html`
-              <div class="dash-row" key=${s.host}>
-                <a class="dash-site" href=${exploreHref('host:' + s.host)} data-view="explore"
-                   title=${'Explore ' + s.host}>${s.host}</a>
-                <span class=${'dash-health ' + health.state}>● ${health.label}</span>
-                <a class="num dash-link" href=${exploreHref('host:' + s.host)} data-view="explore">${formatCount(s.requests)}</a>
-                ${s.errors
-                  ? html`<a class=${'num dash-link tone-' + (s.error_rate > 5 ? 'critical' : 'warn')}
-                            href=${exploreHref(`host:${s.host} status:5xx`)} data-view="explore"
-                            title=${s.errors + ' server errors'}>${s.error_rate}%</a>`
-                  : html`<span class="num dash-muted">0%</span>`}
-                <span class=${'num tone-' + latencyTone(s.p95_latency_ms)}>${formatMs(s.p95_latency_ms)}</span>
-                <span class="num dash-muted">${formatBytes(s.bytes_out)}</span>
-                <${Spark} series=${s.series} />
-              </div>`;
-          })}
-        </div>`}
-
-      <div class="section-title">
-        <span>Recent changes</span>
-        <span class="section-basis">from this console's audit log</span>
-      </div>
-      ${(() => {
-        const entries = (data.audit?.entries || []).slice(0, 8);
-        if (!entries.length) return html`<div class="metrics-hint">No editor activity recorded yet.</div>`;
-        return html`
-          <div class="dash-table">
-            ${entries.map((a, i) => html`
-              <div class="dash-audit" key=${i}>
-                <span class="dash-audit-action">${a.action}</span>
-                <span class="dash-audit-user">${a.user}</span>
-                <span class="dash-audit-detail" title=${a.detail || ''}>${a.detail || ''}</span>
-                <span class="dash-audit-time">${a.time}</span>
-              </div>`)}
-          </div>`;
-      })()}
-
-      <div class="metrics-footer">
-        ${data.sites.indexed?.toLocaleString() || 0} events indexed · refreshes every ${REFRESH_MS / 1000}s
-        ${data.sites.dropped ? ` · ${data.sites.dropped.toLocaleString()} oldest events dropped at the memory cap` : ''}
-      </div>
+      <div class="foot"><span class="live-dot" aria-hidden="true"></span>${(data.sites.indexed || 0).toLocaleString('en-US')} events indexed. Refreshes every ${REFRESH_MS / 1000} s.${data.sites.dropped ? ` ${data.sites.dropped.toLocaleString('en-US')} oldest events were dropped at the memory cap.` : ''}</div>
     </div>`;
 }
 

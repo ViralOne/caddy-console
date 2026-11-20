@@ -17,3 +17,5 @@ dev/run/
 # Local screenshots from browser testing (the documented ones are kept)
 *.png
 !docs/screenshots/*.png
+poc-ui/
+.superpowers/

@@ -7,6 +7,7 @@ import time
 import warnings
 from datetime import datetime
 from functools import wraps
+from urllib.parse import urlsplit
 
 import requests as http_client
 from authlib.integrations.flask_client import OAuth
@@ -26,6 +27,7 @@ from .config import (
     CF_ACCESS_AUD,
     CF_ACCESS_TEAM_DOMAIN,
     SERVER_URL,
+    SERVER_URL_CONFIGURED,
     SESSION_TIMEOUT_HOURS,
     UNSAFE_ALLOW_UNVERIFIED_CF_HEADER,
 )
@@ -168,6 +170,23 @@ def is_allowed(email: str) -> bool:
     return False
 
 
+def server_host() -> str:
+    """The server the sign-in page names: SERVER_URL's host when set, else the request's.
+
+    The request host comes from the client. That is fine here because it is only
+    echoed back, autoescaped, to the same client, and never used to build a URL.
+    """
+    if SERVER_URL_CONFIGURED:
+        host = urlsplit(SERVER_URL).hostname
+        if host:
+            return host
+    return urlsplit("//" + (request.host or "")).hostname or ""
+
+
+def _sign_in_page(status: int = 200):
+    return render_template("welcome.html", auth_mode=AUTH_MODE, server_host=server_host()), status
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -176,7 +195,7 @@ def login_required(f):
             if not email:
                 if request.path.startswith("/api/"):
                     return jsonify({"error": "unauthorized"}), 401
-                return "Access denied. Not authenticated via Cloudflare Access.", 403
+                return _sign_in_page(403)
             if not is_allowed(email):
                 return jsonify({"error": f"access denied for {email}"}), 403
             # Only touch the session when the identity changes; assigning every
@@ -211,7 +230,7 @@ def welcome():
         and request.args.get("retry") != "1"
     ):
         return redirect("/login/silent")
-    return render_template("welcome.html")
+    return _sign_in_page()
 
 
 @auth_bp.route("/login")

@@ -2,24 +2,28 @@
 // bootstrap. The only script index.html loads; everything else arrives through
 // these imports.
 import './csrf.js';  // patches window.fetch before init() issues any request
-import { closePreview, restoreFromPreview, rollbackFromPreview, showPreviewTab, clearPreview } from './backups.js';
+import { closePreview, restoreFromPreview, rollbackFromPreview } from './backups.js';
 import { init, showView, syncViewFromUrl } from './caddyfile.js';
-import { closePanel, togglePanel } from './panels.js';
+import { revealSite } from './core.js';
+import { closeAllPanels, closePanel, togglePanel } from './panels.js';
 import { interceptLinks, onNavigate } from './router.js';
 import { closeSearch, doSearch, replaceAll, replaceOne, searchNext, searchPrev, toggleSearch } from './search.js';
 import { doSave, doValidate, resolveSaveModal } from './validate.js';
+import { applyTheme, watchSystemTheme } from './theme.js';
 
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
-  document.querySelectorAll('.panel').forEach(p => p.classList.remove('open'));
-  document.querySelectorAll('[id^="panel-btn-"]').forEach(b => b.classList.remove('panel-active'));
-  clearPreview();
+  if (document.querySelector('dialog[open]')) return;
+  // Esc with the account menu open closes only the menu (usermenu.js handles it).
+  if (e.defaultPrevented || document.querySelector('#acct-menu:not([hidden])')) return;
+  // Closing the panel that has focus hands it back to the header button; Esc
+  // typed in the editor (Vim) closes panels without moving the cursor away.
+  const open = document.querySelector('.panel:not([hidden])');
+  if (open && open.contains(document.activeElement)) closePanel(open.id.replace('panel-', ''));
+  else closeAllPanels();
   // Only touch the editor if the find bar is actually open; otherwise Escape
   // in another tab would yank focus into the editor.
   if (document.getElementById('search-bar').classList.contains('open')) closeSearch();
-  // Resolve the save modal's promise, don't just hide it, or the save flow
-  // stays stuck on "Building diff preview..." forever.
-  if (document.getElementById('save-diff-modal').classList.contains('open')) resolveSaveModal(false);
 });
 
 // Cmd/Ctrl+F opens the find/replace bar (capture phase to preempt the editor).
@@ -33,11 +37,10 @@ document.addEventListener('keydown', e => {
 
 // --- Event delegation (CSP-safe: no inline handlers) ---
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-act],[data-panel],[data-close],[data-ptab]');
+  const t = e.target.closest('[data-act],[data-panel],[data-close]');
   if (!t) return;
   if (t.dataset.panel) { togglePanel(t.dataset.panel); return; }
   if (t.dataset.close) { closePanel(t.dataset.close); return; }
-  if (t.dataset.ptab) { showPreviewTab(t.dataset.ptab); return; }
   switch (t.dataset.act) {
     case 'validate': return doValidate();
     case 'save': return doSave();
@@ -66,6 +69,14 @@ document.getElementById('search-input').addEventListener('keydown', e => {
 // Links marked data-view route in-app; Back/Forward re-reads the path.
 interceptLinks(view => showView(view, { push: false }));
 onNavigate(view => showView(view, { push: false }));
+
+applyTheme();          // matches what the <head> script already set; arms the change event
+watchSystemTheme();
+// Dashboard "Open <site> block": switch to the Editor and land on that block.
+document.addEventListener('app:open-site', (e) => {
+  showView('editor');
+  revealSite(e.detail.host);
+});
 
 syncViewFromUrl();
 init();

@@ -4,7 +4,10 @@ Run with:  python3 -m unittest discover -s tests -v
 No caddy binary required.
 """
 import os
+import socket
+import threading
 import tempfile
+import time
 import unittest
 
 import tests._env  # noqa: F401  (sets env before src is imported)
@@ -270,6 +273,138 @@ class AdaptValidationTest(unittest.TestCase):
         validator.caddy_validate("same")
         validator.caddy_validate("same")
         self.assertEqual(len(self.posts), 1)
+
+
+class FmtWarningTest(unittest.TestCase):
+    def test_identical_is_none(self):
+        self.assertIsNone(validator.fmt_warning("a {\n}\n", "a {\n}\n"))
+
+    def test_points_at_the_first_changed_line_and_counts_lines(self):
+        before = "a.example.com {\n    respond 200\n}\n\nb.example.com {\n  respond 201\n}\n"
+        after = "a.example.com {\n\trespond 200\n}\n\nb.example.com {\n\trespond 201\n}\n"
+        self.assertEqual(validator.fmt_warning(before, after),
+                         "Line 2: not formatted — Check will fix whitespace on 2 lines")
+
+    def test_singular(self):
+        self.assertEqual(validator.fmt_warning("a {\n  x\n}\n", "a {\n\tx\n}\n"),
+                         "Line 2: not formatted — Check will fix whitespace on 1 line")
+
+    def test_change_past_the_end_is_clamped_to_the_last_line(self):
+        self.assertEqual(validator.fmt_warning("a {\n}", "a {\n}\n"),
+                         "Line 2: not formatted — Check will fix whitespace on 1 line")
+
+
+class ResolveWarningTest(unittest.TestCase):
+    def setUp(self):
+        validator._dns_cache.clear()
+        self.calls = []
+        self.gate = threading.Event()
+        self.addCleanup(self.gate.set)
+        self.addCleanup(validator._dns_cache.clear)
+
+    def blocking(self, host, port):
+        self.calls.append(host)
+        self.gate.wait(5)
+        return [("ok",)]
+
+    def lookup(self, answers):
+        def fake(host, port):
+            self.calls.append(host)
+            outcome = answers.get(host, "ok")
+            if outcome == "missing":
+                raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+            if outcome == "again":
+                raise socket.gaierror(socket.EAI_AGAIN, "Temporary failure")
+            if outcome == "slow":
+                time.sleep(0.5)
+            return [("ok",)]
+        return fake
+
+    def warn(self, content, answers=None, timeout=1.0):
+        return validator.upstream_resolve_warnings(content, lookup=self.lookup(answers or {}), timeout=timeout)
+
+    def test_resolvable_upstream_is_quiet(self):
+        self.assertEqual(self.warn("a.example.com {\n\treverse_proxy web:8080\n}\n"), [])
+        self.assertEqual(self.calls, ["web"])
+
+    def test_unresolvable_upstream_is_warned_with_its_line(self):
+        self.assertEqual(
+            self.warn("a.example.com {\n\treverse_proxy radarr:7878\n}\n", {"radarr": "missing"}),
+            ["Line 2: upstream radarr:7878 could not be resolved from the console container"])
+
+    def test_ip_literals_placeholders_and_sockets_are_never_looked_up(self):
+        content = ("a.example.com {\n\treverse_proxy 127.0.0.1:2283 [::1]:80 ::1\n"
+                   "\treverse_proxy {$UPSTREAM} {http.request.host}:80\n"
+                   "\treverse_proxy unix//run/app.sock :8080\n}\n")
+        self.assertEqual(self.warn(content), [])
+        self.assertEqual(self.calls, [])
+
+    def test_matchers_schemes_and_to_lines(self):
+        content = ("a.example.com {\n\treverse_proxy /api/* http://api:80 {\n\t\tto backup:80\n\t}\n"
+                   "\treverse_proxy @ws ws-backend:9000\n}\n")
+        warnings = self.warn(content, {"api": "missing", "backup": "missing", "ws-backend": "missing"})
+        self.assertEqual(warnings, [
+            "Line 2: upstream http://api:80 could not be resolved from the console container",
+            "Line 3: upstream backup:80 could not be resolved from the console container",
+            "Line 5: upstream ws-backend:9000 could not be resolved from the console container",
+        ])
+
+    def test_timeout_and_transient_errors_are_not_failures(self):
+        started = time.monotonic()
+        self.assertEqual(self.warn("a {\n\treverse_proxy slow:1 flaky:2\n}\n",
+                                   {"slow": "slow", "flaky": "again"}, timeout=0.05), [])
+        self.assertLess(time.monotonic() - started, 0.4, "must not wait for the slow lookup")
+
+    def test_results_are_cached(self):
+        content = "a {\n\treverse_proxy web:1\n}\nb {\n\treverse_proxy web:2\n}\n"
+        self.warn(content)
+        self.warn(content)
+        self.assertEqual(self.calls, ["web"])
+
+    def test_unexpected_lookup_errors_are_unknown(self):
+        def boom(host, port):
+            raise ValueError("embedded null byte")
+        self.assertEqual(validator.upstream_resolve_warnings("a {\n\treverse_proxy web:1\n}\n", lookup=boom), [])
+
+    def test_unknown_never_overwrites_a_fresh_known_answer(self):
+        validator._dns_store("web", True)
+        validator._dns_store("web", None)
+        self.assertIs(validator._dns_cache["web"][1], True)
+
+    def test_in_flight_lookup_is_shared_not_resubmitted(self):
+        self.assertEqual(validator.resolve_hosts(["slow"], lookup=self.blocking, timeout=0.05), {"slow": None})
+        validator._dns_cache["slow"] = (0.0, None)   # cached unknown has expired
+        self.assertEqual(validator.resolve_hosts(["slow"], lookup=self.blocking, timeout=0.05), {"slow": None})
+        self.assertEqual(self.calls, ["slow"])
+
+    def test_concurrent_calls_submit_one_lookup_per_host(self):
+        out = []
+        threads = [threading.Thread(target=lambda: out.append(
+            validator.resolve_hosts(["a", "b"], lookup=self.blocking, timeout=0.3))) for _ in range(2)]
+        for t in threads:
+            t.start()
+        time.sleep(0.1)
+        self.gate.set()
+        for t in threads:
+            t.join()
+        self.assertEqual(sorted(self.calls), ["a", "b"])
+        self.assertEqual(out, [{"a": True, "b": True}] * 2)
+
+    def test_late_result_fills_the_cache(self):
+        validator.resolve_hosts(["late"], lookup=self.blocking, timeout=0.05)
+        self.gate.set()
+        deadline = time.monotonic() + 2
+        while validator._dns_cache["late"][1] is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertIs(validator._dns_cache["late"][1], True)
+        self.assertNotIn("late", validator._dns_inflight)
+
+    def test_hosts_per_call_are_capped(self):
+        hosts = [f"h{i}" for i in range(70)]
+        result = validator.resolve_hosts(hosts, lookup=self.lookup({}), timeout=2)
+        self.assertEqual(len(self.calls), 64)
+        self.assertEqual(sum(v is True for v in result.values()), 64)
+        self.assertEqual(sum(v is None for v in result.values()), 6)
 
 
 if __name__ == "__main__":

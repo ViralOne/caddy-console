@@ -3,10 +3,13 @@
 Run with:  python3 -m unittest discover -s tests -t . -v
 No caddy binary or network required.
 """
+import base64
+import hashlib
 import json
 import os
 import re
 import shutil
+import tempfile
 import threading
 import time
 import unittest
@@ -14,6 +17,7 @@ from unittest import mock
 
 import tests._env as env  # noqa: F401  (sets env before src is imported)
 
+import flask
 import requests
 from authlib.jose import JsonWebKey, JsonWebToken
 
@@ -378,6 +382,17 @@ class ExploreRawApiTest(AppTestCase):
         ).status_code, 400)
 
 
+class AuditApiTest(AppTestCase):
+    def test_entries_carry_an_epoch_beside_the_local_time(self):
+        audit.log_action("login", "dev@example.com")
+        entries = self.client.get("/api/audit", headers=AUTH).get_json()["entries"]
+        self.assertTrue(entries)
+        e = entries[0]
+        self.assertIsInstance(e["time"], str)
+        from datetime import datetime
+        self.assertAlmostEqual(e["ts"], datetime.fromisoformat(e["time"]).timestamp(), places=3)
+
+
 class StatusApiTest(AppTestCase):
     def test_status_uses_running_caddy_check_semantics(self):
         ops_mod._status_cache.update(file_key=None, config_check=None, version=None)
@@ -395,6 +410,15 @@ class StatusApiTest(AppTestCase):
         self.assertTrue(body["config_valid"])
         self.assertEqual(body["config_check_level"], "adapted")
         self.assertIn("running Caddy", body["config_check_message"])
+
+    def test_status_gives_the_file_time_as_an_epoch(self):
+        # last_modified is the server's naive local time, which a browser in
+        # another time zone misreads; last_modified_ts is unambiguous.
+        with mock.patch.object(ops_mod, "_caddy_version", return_value="v2.test"), \
+             mock.patch.object(ops_mod, "caddy_check", return_value=(True, "ok", "adapted")):
+            body = self.client.get("/api/status", headers=AUTH).get_json()
+        self.assertAlmostEqual(body["last_modified_ts"], os.path.getmtime(env.CADDYFILE), places=3)
+        self.assertIsInstance(body["last_modified"], str)
 
     def test_failed_local_fallback_status_is_not_cached(self):
         ops_mod._status_cache.update(file_key=None, config_check=None, version=None)
@@ -585,6 +609,193 @@ class SecretKeyAtomicityTest(unittest.TestCase):
         self.assertEqual(len(keys), 1)
         self.assertEqual(len(keys.pop()), 64)
         self.assertEqual(os.listdir(tmp), [".secret_key"], "no temp files left behind")
+
+
+class SitesApiTest(AppTestCase):
+    def test_previous_total_is_always_present(self):
+        body = self.client.get("/api/sites?range=1h", headers=AUTH).get_json()
+        self.assertIn("previous_total", body)
+
+
+class UpstreamsApiTest(AppTestCase):
+    METRICS = "\n".join([
+        'caddy_reverse_proxy_upstreams_healthy{upstream="127.0.0.1:2283"} 0',
+        'caddy_reverse_proxy_upstreams_healthy{upstream="127.0.0.1:8096"} 1',
+    ])
+    SERVERS = {"srv0": {"routes": [
+        {"match": [{"host": ["photos.example.com"]}],
+         "handle": [{"handler": "subroute", "routes": [{"handle": [
+             {"handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:2283"}]}]}]}]},
+        {"match": [{"host": ["watch.example.com"]}],
+         "handle": [{"handler": "subroute", "routes": [{"handle": [
+             {"handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8096"}]}]}]}]},
+        {"match": [{"host": ["hello.example.com"]}], "handle": [{"handler": "static_response"}]},
+    ]}}
+
+    def setUp(self):
+        super().setUp()
+        from src import upstream_health
+        state_dir = tempfile.mkdtemp(prefix="ups-")
+        self.patches += [
+            mock.patch.object(upstream_health, "STATE_PATH", os.path.join(state_dir, "s.json")),
+            mock.patch.object(upstream_health, "LOCK_PATH", os.path.join(state_dir, ".lock")),
+        ]
+        for p in self.patches[-2:]:
+            p.start()
+
+    def fake_get(self, url, timeout=None, **kw):
+        if url.endswith("/reverse_proxy/upstreams"):
+            return FakeResponse(200, payload=[
+                {"address": "127.0.0.1:2283", "num_requests": 0, "fails": 3},
+                {"address": "127.0.0.1:8096", "num_requests": 1, "fails": 0},
+            ])
+        if url.endswith("/metrics"):
+            return FakeResponse(200, text=self.METRICS)
+        raise AssertionError(url)
+
+    def get(self, servers):
+        with mock.patch.object(ops_mod.http_client, "get", self.fake_get), \
+             mock.patch.object(ops_mod, "get_servers", return_value=servers):
+            return self.client.get("/api/upstreams", headers=AUTH).get_json()
+
+    def test_unhealthy_since_and_configured_sites(self):
+        before = time.time()
+        body = self.get(self.SERVERS)
+        rows = {u["address"]: u for u in body["upstreams"]}
+        self.assertGreaterEqual(rows["127.0.0.1:2283"]["unhealthy_since"], before - 1)
+        self.assertIsNone(rows["127.0.0.1:8096"]["unhealthy_since"])
+        self.assertEqual(rows["127.0.0.1:2283"]["domains"], ["photos.example.com"])  # existing field kept
+        self.assertEqual(rows["127.0.0.1:2283"]["fails"], 3)                         # existing field kept
+        self.assertEqual(body["configured_sites"], 3)
+
+    def test_configured_sites_is_null_without_a_config(self):
+        self.assertIsNone(self.get({})["configured_sites"])
+
+    def test_a_failing_health_state_file_never_fails_the_endpoint(self):
+        with mock.patch.object(ops_mod.upstream_health, "record", side_effect=OSError("flock failed")), \
+             self.assertLogs(ops_mod.logger, "WARNING"):
+            body = self.get(self.SERVERS)
+        rows = {u["address"]: u for u in body["upstreams"]}
+        self.assertEqual(sorted(rows), ["127.0.0.1:2283", "127.0.0.1:8096"])
+        self.assertEqual(rows["127.0.0.1:2283"]["fails"], 3)
+        self.assertEqual(rows["127.0.0.1:2283"]["domains"], ["photos.example.com"])
+        self.assertIsNone(rows["127.0.0.1:2283"]["unhealthy_since"])
+        self.assertEqual(body["configured_sites"], 3)
+
+
+class LastChangeTest(AppTestCase):
+    def status(self):
+        with mock.patch.object(ops_mod, "_caddy_version", return_value="v2.test"):
+            return self.client.get("/api/status", headers=AUTH).get_json()
+
+    def test_null_without_any_change(self):
+        audit.log_action("login", "admin@example.com")
+        self.assertIsNone(self.status()["last_change"])
+
+    def test_newest_save_or_restore_wins_and_logins_are_ignored(self):
+        audit.log_action("save_reload", "a@example.com", "backup=Caddyfile.20261120-100000")
+        audit.log_action("restore_reload", "b@example.com", "backup=x, from=Caddyfile.20261119-081000")
+        audit.log_action("login", "c@example.com")
+        change = self.status()["last_change"]
+        self.assertEqual(change["action"], "restore")
+        self.assertEqual(change["user"], "b@example.com")
+        self.assertAlmostEqual(change["ts"], time.time(), delta=60)
+
+    def test_rejected_reload_counts_only_when_the_file_was_left_changed(self):
+        audit.log_action("save_reload_failed", "a@example.com", "rolled_back=True, nope")
+        self.assertIsNone(self.status()["last_change"])
+        audit.log_action("save_reload_failed", "a@example.com", "rolled_back=False, nope")
+        self.assertEqual(self.status()["last_change"]["action"], "save")
+
+    def test_found_in_the_rotated_file(self):
+        audit.log_action("save_reload", "a@example.com")
+        os.replace(env.AUDIT_LOG, audit.rotated_path())
+        audit.log_action("login", "b@example.com")
+        self.assertEqual(self.status()["last_change"]["user"], "a@example.com")
+
+
+class ValidateWarningsApiTest(AppTestCase):
+    def test_unformatted_content_gets_a_line_linked_warning_first(self):
+        with mock.patch.object(editor_mod, "caddy_fmt", lambda c: c.replace("    ", "\t")):
+            body = self.post("/api/validate", {"content": ":80 {\n    respond 200\n}\n"}).get_json()
+        self.assertTrue(body["valid"])
+        self.assertEqual(body["warnings"][0], "Line 2: not formatted — Check will fix whitespace on 1 line")
+        self.assertEqual(body["formatted"], ":80 {\n\trespond 200\n}\n")
+
+    def test_formatted_content_has_no_format_warning(self):
+        body = self.post("/api/validate", {"content": ":80 {\n\trespond 200\n}\n"}).get_json()
+        self.assertEqual(body["warnings"], [])
+
+
+class ValidateResolveApiTest(AppTestCase):
+    def test_validate_reports_unresolvable_upstreams(self):
+        with mock.patch.object(editor_mod, "upstream_resolve_warnings",
+                               return_value=["Line 2: upstream nope:80 could not be resolved from the console container"]):
+            body = self.post("/api/validate", {"content": "a.example.com {\n\treverse_proxy nope:80\n}\n"}).get_json()
+        self.assertIn("Line 2: upstream nope:80 could not be resolved from the console container", body["warnings"])
+
+    def test_save_never_resolves(self):
+        with mock.patch.object(editor_mod, "upstream_resolve_warnings", side_effect=AssertionError("save resolved")), \
+             mock.patch.object(editor_mod.http_client, "post", lambda *a, **k: FakeResponse(200)):
+            r = self.post("/api/save", {"content": "a.example.com {\n\treverse_proxy nope:80\n}\n"})
+        self.assertEqual(r.status_code, 200)
+
+
+def assert_inline_script_allowed(test, response):
+    """Exactly one inline <script>, allowed by its sha256 and nothing looser."""
+    html = response.get_data(as_text=True)
+    inline = re.findall(r"<script>(.*?)</script>", html, re.S)
+    test.assertEqual(len(inline), 1, "exactly one inline script")
+    digest = "sha256-" + base64.b64encode(hashlib.sha256(inline[0].encode()).digest()).decode()
+    script_src = re.search(r"script-src ([^;]+)", response.headers["Content-Security-Policy"]).group(1)
+    test.assertIn(f"'{digest}'", script_src)
+    test.assertNotIn("unsafe-inline", script_src)
+
+
+class ThemeBootCspTest(AppTestCase):
+    def test_app_page_theme_script_is_allowed_by_hash(self):
+        assert_inline_script_allowed(self, self.client.get("/", headers=AUTH))
+
+    def test_script_uses_the_shared_storage_key(self):
+        from src import theme_boot
+        self.assertIn(f"'{theme_boot.THEME_STORAGE_KEY}'", theme_boot.THEME_BOOT_JS)
+
+
+class SignInPageTest(AppTestCase):
+    def test_cloudflare_page_without_identity(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 403)
+        html = r.get_data(as_text=True)
+        self.assertIn("Protected by Cloudflare Access", html)
+        self.assertIn("Manage the Caddy server at", html)
+        self.assertIn(">localhost<", html)
+        self.assertIn("allowed list", html)
+        assert_inline_script_allowed(self, r)
+
+    def test_api_still_answers_json(self):
+        r = self.client.get("/api/me")
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.get_json(), {"error": "unauthorized"})
+
+    def test_server_url_wins_when_configured(self):
+        with mock.patch.object(auth, "SERVER_URL_CONFIGURED", True), \
+             mock.patch.object(auth, "SERVER_URL", "https://console.example.com"):
+            html = self.client.get("/").get_data(as_text=True)
+        self.assertIn(">console.example.com<", html)
+
+    def test_no_host_reads_as_this_server(self):
+        with self.app.test_request_context("/welcome"):
+            html = flask.render_template("welcome.html", auth_mode="google", server_host="")
+        self.assertIn("Manage this Caddy server:", html)
+        self.assertNotIn("at this Caddy server", html)
+
+    def test_google_variant(self):
+        with self.app.test_request_context("/welcome"):
+            html = flask.render_template("welcome.html", auth_mode="google",
+                                         server_host="console.example.com")
+        self.assertIn('href="/login"', html)
+        self.assertIn("Sign in with Google", html)
+        self.assertNotIn("Cloudflare Access", html)
 
 
 if __name__ == "__main__":

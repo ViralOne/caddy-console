@@ -9,28 +9,107 @@ export function renderDiff(current, backup) {
   renderDiffInto(document.getElementById('diff-content'), current, backup);
 }
 
-export function renderDiffInto(container, oldText, newText) {
+export function renderDiffInto(container, oldText, newText, { context = DIFF_CONTEXT } = {}) {
   container.textContent = '';
   const a = oldText.split('\n'), b = newText.split('\n');
   const ops = diffLines(a, b);
+  // Identical texts show in full with a note; real diffs show only the changes
+  // with a little context, so the reader lands on what changed.
+  const rows = collapseOps(ops, context);
+  const shown = rows.length ? rows : allRows(ops);
   // Build off-document and attach once: appending thousands of rows directly to
   // a live container forces a style recalc per row.
   const frag = document.createDocumentFragment();
-  let aLn = 1, bLn = 1, changes = 0;
-  for (const op of ops) {
-    const d = document.createElement('div');
-    if (op.type === 'equal') { d.style.cssText = 'color:#555'; d.textContent = ` ${String(aLn).padStart(3)} ${op.line}`; aLn++; bLn++; }
-    else if (op.type === 'delete') { d.className = 'diff-del'; d.textContent = `-${String(aLn).padStart(3)} ${op.line}`; aLn++; changes++; }
-    else { d.className = 'diff-ins'; d.textContent = `+${String(bLn).padStart(3)} ${op.line}`; bLn++; changes++; }
-    frag.appendChild(d);
-  }
-  if (changes === 0) {
+  for (const row of shown) frag.appendChild(row.kind === 'skip' ? skipButton(row) : rowEl(row));
+  if (!rows.length) {
     const d = document.createElement('div');
     d.className = 'diff-meta';
     d.textContent = '(no differences)';
     frag.appendChild(d);
   }
   container.appendChild(frag);
+  return summarizeOps(ops);
+}
+
+// Lines of unchanged text kept around each change, and the smallest run worth
+// collapsing (hiding one or two lines behind a button costs more than it saves).
+const DIFF_CONTEXT = 3;
+const MIN_SKIP = 4;
+
+function allRows(ops) {
+  let aLn = 1, bLn = 1;
+  return ops.map(op => ({ kind: 'eq', line: op.line, aLn: aLn++, bLn: bLn++ }));
+}
+
+function rowEl(row) {
+  const d = document.createElement('div');
+  if (row.kind === 'eq') { d.className = 'diff-eq'; d.textContent = ` ${String(row.aLn).padStart(3)} ${row.line}`; }
+  else if (row.kind === 'del') { d.className = 'diff-del'; d.textContent = `-${String(row.aLn).padStart(3)} ${row.line}`; }
+  else { d.className = 'diff-ins'; d.textContent = `+${String(row.bLn).padStart(3)} ${row.line}`; }
+  return d;
+}
+
+/** A collapsed run of unchanged lines; clicking it puts the lines back in place. */
+function skipButton(row) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'diff-skip';
+  btn.textContent = `Show ${row.count} unchanged ${row.count === 1 ? 'line' : 'lines'}`;
+  btn.addEventListener('click', () => {
+    const frag = document.createDocumentFragment();
+    for (const r of row.rows) frag.appendChild(rowEl(r));
+    btn.replaceWith(frag);
+  });
+  return btn;
+}
+
+/** The rows a diff shows: every change, `context` unchanged lines around each,
+ *  and longer unchanged runs folded into {kind:'skip', count, rows}. No changes
+ *  gives []. Rows carry the old (aLn) and new (bLn) line numbers. */
+export function collapseOps(ops, context = DIFF_CONTEXT) {
+  const all = [];
+  let aLn = 1, bLn = 1;
+  for (const op of ops) {
+    if (op.type === 'equal') all.push({ kind: 'eq', line: op.line, aLn: aLn++, bLn: bLn++ });
+    else if (op.type === 'delete') all.push({ kind: 'del', line: op.line, aLn: aLn++, bLn });
+    else all.push({ kind: 'ins', line: op.line, aLn, bLn: bLn++ });
+  }
+  if (!all.some(r => r.kind !== 'eq')) return [];
+  // Distance from each row to the nearest change, so context can be kept on both sides.
+  const keep = new Array(all.length).fill(false);
+  let last = -Infinity;
+  for (let i = 0; i < all.length; i++) {
+    if (all[i].kind !== 'eq') last = i;
+    if (i - last <= context) keep[i] = true;
+  }
+  last = Infinity;
+  for (let i = all.length - 1; i >= 0; i--) {
+    if (all[i].kind !== 'eq') last = i;
+    if (last - i <= context) keep[i] = true;
+  }
+  const out = [];
+  for (let i = 0; i < all.length;) {
+    if (keep[i]) { out.push(all[i++]); continue; }
+    let j = i;
+    while (j < all.length && !keep[j]) j++;
+    const run = all.slice(i, j);
+    if (run.length >= MIN_SKIP) out.push({ kind: 'skip', count: run.length, rows: run });
+    else out.push(...run);
+    i = j;
+  }
+  return out;
+}
+
+/** Counts and line numbers of a diff: removed lines in the old text, added in the new. */
+export function summarizeOps(ops) {
+  let a = 1, b = 1;
+  const out = { added: 0, removed: 0, oldLines: [], newLines: [] };
+  for (const op of ops) {
+    if (op.type === 'equal') { a++; b++; }
+    else if (op.type === 'delete') { out.removed++; out.oldLines.push(a); a++; }
+    else { out.added++; out.newLines.push(b); b++; }
+  }
+  return out;
 }
 
 export function diffLines(a, b) {

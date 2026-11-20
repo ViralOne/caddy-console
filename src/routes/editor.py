@@ -26,7 +26,7 @@ from ..config import (
     CADDYFILE,
     SESSION_TIMEOUT_HOURS,
 )
-from ..validator import caddy_check, caddy_fmt, caddy_validate, smart_validate
+from ..validator import caddy_check, caddy_fmt, caddy_validate, fmt_warning, smart_validate, upstream_resolve_warnings
 
 
 editor_bp = Blueprint("editor", __name__)
@@ -412,21 +412,25 @@ def validate():
     data = request.get_json(silent=True) or {}
     content = data.get("content", "")
 
+    # Every check runs on `content`, the text the editor shows, so each
+    # "Line N" (ours and Caddy's) points at the editor's line. Formatting only
+    # changes whitespace, which never changes validity, but it can collapse
+    # blank lines and shift every line after them. `formatted` is still
+    # returned so Check can apply it.
     formatted = caddy_fmt(content)
-    warnings = smart_validate(formatted)
-    is_valid, message, check_level = caddy_check(formatted)
+    is_valid, message, check_level = caddy_check(content)
 
     if not is_valid:
         return jsonify({"valid": False, "message": message, "warnings": [],
                         "formatted": None, "check_level": check_level})
 
-    if warnings:
-        return jsonify({"valid": True, "message": "Caddyfile check passed, but review warnings",
-                        "warnings": warnings,
-                        "formatted": formatted if formatted != content else None,
-                        "check_level": check_level})
+    warnings = [w for w in (fmt_warning(content, formatted),) if w]
+    warnings += smart_validate(content)
+    warnings += upstream_resolve_warnings(content)
 
-    return jsonify({"valid": True, "message": message, "warnings": [],
+    return jsonify({"valid": True,
+                    "message": "Caddyfile check passed, but review warnings" if warnings else message,
+                    "warnings": warnings,
                     "formatted": formatted if formatted != content else None,
                     "check_level": check_level})
 
