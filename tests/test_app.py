@@ -752,6 +752,12 @@ class SignInPageTest(AppTestCase):
             html = self.client.get("/").get_data(as_text=True)
         self.assertIn(">console.example.com<", html)
 
+    def test_no_host_reads_as_this_server(self):
+        with self.app.test_request_context("/welcome"):
+            html = flask.render_template("welcome.html", auth_mode="google", server_host="")
+        self.assertIn("Manage this Caddy server:", html)
+        self.assertNotIn("at this Caddy server", html)
+
     def test_google_variant(self):
         with self.app.test_request_context("/welcome"):
             html = flask.render_template("welcome.html", auth_mode="google",
