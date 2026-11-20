@@ -264,6 +264,9 @@ table{border-collapse:collapse;width:100%}
 .spark{width:160px;height:28px;display:block;margin-left:auto}
 .h-unchecked{color:var(--ink-3)}
 .dash-cols{display:grid;grid-template-columns:minmax(0,1fr);gap:0 40px}
+/* Last resort: the table scrolls inside its column, never paints over the next one. */
+.dash-sites{min-width:0;overflow-x:auto}
+.sites td.num,.sites th.num,.sites td.c-health{white-space:nowrap}
 .changes{list-style:none;margin:0;padding:0}
 .changes li{display:grid;grid-template-columns:120px 200px 1fr auto;gap:16px;align-items:baseline;padding:11px 0;border-bottom:1px solid var(--line)}
 .changes li:last-child{border-bottom:0}
@@ -436,9 +439,10 @@ details.raw[open]{flex-basis:100%}
 
 /* === responsive ===
  * Last in the file so these overrides win over the component rules above. */
-/* Wide screens: Sites (about 2/3) beside Recent changes (about 1/3). */
-@media (min-width:1280px){
-  .page.dash{max-width:1480px}
+/* Wide screens: Sites (about 2/3) beside Recent changes (about 1/3). Only from
+   1600px, where the table's natural width fits its column; below that they stack. */
+@media (min-width:1600px){
+  .page.dash{max-width:1680px}
   .dash-cols{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}
   .dash-changes .changes li{grid-template-columns:minmax(0,1fr) auto;gap:2px 12px}
   .dash-changes .changes .who,.dash-changes .changes .det{grid-column:1/2}
