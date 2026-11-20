@@ -680,5 +680,18 @@ class LastChangeTest(AppTestCase):
         self.assertEqual(self.status()["last_change"]["user"], "a@example.com")
 
 
+class ValidateWarningsApiTest(AppTestCase):
+    def test_unformatted_content_gets_a_line_linked_warning_first(self):
+        with mock.patch.object(editor_mod, "caddy_fmt", lambda c: c.replace("    ", "\t")):
+            body = self.post("/api/validate", {"content": ":80 {\n    respond 200\n}\n"}).get_json()
+        self.assertTrue(body["valid"])
+        self.assertEqual(body["warnings"][0], "Line 2: not formatted — Check will fix whitespace on 1 line")
+        self.assertEqual(body["formatted"], ":80 {\n\trespond 200\n}\n")
+
+    def test_formatted_content_has_no_format_warning(self):
+        body = self.post("/api/validate", {"content": ":80 {\n\trespond 200\n}\n"}).get_json()
+        self.assertEqual(body["warnings"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -26,7 +26,7 @@ from ..config import (
     CADDYFILE,
     SESSION_TIMEOUT_HOURS,
 )
-from ..validator import caddy_check, caddy_fmt, caddy_validate, smart_validate
+from ..validator import caddy_check, caddy_fmt, caddy_validate, fmt_warning, smart_validate
 
 
 editor_bp = Blueprint("editor", __name__)
@@ -413,20 +413,21 @@ def validate():
     content = data.get("content", "")
 
     formatted = caddy_fmt(content)
-    warnings = smart_validate(formatted)
     is_valid, message, check_level = caddy_check(formatted)
 
     if not is_valid:
         return jsonify({"valid": False, "message": message, "warnings": [],
                         "formatted": None, "check_level": check_level})
 
-    if warnings:
-        return jsonify({"valid": True, "message": "Caddyfile check passed, but review warnings",
-                        "warnings": warnings,
-                        "formatted": formatted if formatted != content else None,
-                        "check_level": check_level})
+    # Line numbers: the format warning points into `content` (what the editor
+    # shows); the others into `formatted`, as before. They agree whenever the
+    # file is already formatted, which every save through the console ensures.
+    warnings = [w for w in (fmt_warning(content, formatted),) if w]
+    warnings += smart_validate(formatted)
 
-    return jsonify({"valid": True, "message": message, "warnings": [],
+    return jsonify({"valid": True,
+                    "message": "Caddyfile check passed, but review warnings" if warnings else message,
+                    "warnings": warnings,
                     "formatted": formatted if formatted != content else None,
                     "check_level": check_level})
 

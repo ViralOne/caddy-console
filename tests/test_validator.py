@@ -272,5 +272,24 @@ class AdaptValidationTest(unittest.TestCase):
         self.assertEqual(len(self.posts), 1)
 
 
+class FmtWarningTest(unittest.TestCase):
+    def test_identical_is_none(self):
+        self.assertIsNone(validator.fmt_warning("a {\n}\n", "a {\n}\n"))
+
+    def test_points_at_the_first_changed_line_and_counts_lines(self):
+        before = "a.example.com {\n    respond 200\n}\n\nb.example.com {\n  respond 201\n}\n"
+        after = "a.example.com {\n\trespond 200\n}\n\nb.example.com {\n\trespond 201\n}\n"
+        self.assertEqual(validator.fmt_warning(before, after),
+                         "Line 2: not formatted — Check will fix whitespace on 2 lines")
+
+    def test_singular(self):
+        self.assertEqual(validator.fmt_warning("a {\n  x\n}\n", "a {\n\tx\n}\n"),
+                         "Line 2: not formatted — Check will fix whitespace on 1 line")
+
+    def test_change_past_the_end_is_clamped_to_the_last_line(self):
+        self.assertEqual(validator.fmt_warning("a {\n}", "a {\n}\n"),
+                         "Line 2: not formatted — Check will fix whitespace on 1 line")
+
+
 if __name__ == "__main__":
     unittest.main()

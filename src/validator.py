@@ -1,3 +1,4 @@
+import difflib
 import hashlib
 import os
 import re
@@ -280,3 +281,22 @@ def smart_validate(content: str) -> list[str]:
 
     warnings.extend(_access_log_warnings(content))
     return warnings
+
+
+def fmt_warning(content: str, formatted: str) -> str | None:
+    """'Line N: not formatted …' when `caddy fmt` would change `content`, else None.
+
+    N is a line in `content` (what the editor shows), so the strip can link it.
+    """
+    if formatted == content:
+        return None
+    a, b = content.split("\n"), formatted.split("\n")
+    first, changed = None, 0
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        if first is None:
+            first = i1 + 1
+        changed += max(i2 - i1, j2 - j1)
+    first = min(max(first or 1, 1), max(len(a), 1))
+    return f"Line {first}: not formatted — Check will fix whitespace on {changed} line{'' if changed == 1 else 's'}"
