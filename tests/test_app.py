@@ -17,6 +17,7 @@ from unittest import mock
 
 import tests._env as env  # noqa: F401  (sets env before src is imported)
 
+import flask
 import requests
 from authlib.jose import JsonWebKey, JsonWebToken
 
@@ -727,6 +728,37 @@ class ThemeBootCspTest(AppTestCase):
     def test_script_uses_the_shared_storage_key(self):
         from src import theme_boot
         self.assertIn(f"'{theme_boot.THEME_STORAGE_KEY}'", theme_boot.THEME_BOOT_JS)
+
+
+class SignInPageTest(AppTestCase):
+    def test_cloudflare_page_without_identity(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 403)
+        html = r.get_data(as_text=True)
+        self.assertIn("Protected by Cloudflare Access", html)
+        self.assertIn("Manage the Caddy server at", html)
+        self.assertIn(">localhost<", html)
+        self.assertIn("allowed list", html)
+        assert_inline_script_allowed(self, r)
+
+    def test_api_still_answers_json(self):
+        r = self.client.get("/api/me")
+        self.assertEqual(r.status_code, 401)
+        self.assertEqual(r.get_json(), {"error": "unauthorized"})
+
+    def test_server_url_wins_when_configured(self):
+        with mock.patch.object(auth, "SERVER_URL_CONFIGURED", True), \
+             mock.patch.object(auth, "SERVER_URL", "https://console.example.com"):
+            html = self.client.get("/").get_data(as_text=True)
+        self.assertIn(">console.example.com<", html)
+
+    def test_google_variant(self):
+        with self.app.test_request_context("/welcome"):
+            html = flask.render_template("welcome.html", auth_mode="google",
+                                         server_host="console.example.com")
+        self.assertIn('href="/login"', html)
+        self.assertIn("Sign in with Google", html)
+        self.assertNotIn("Cloudflare Access", html)
 
 
 if __name__ == "__main__":
