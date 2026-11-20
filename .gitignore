@@ -18,3 +18,4 @@ dev/run/
 *.png
 !docs/screenshots/*.png
 poc-ui/
+.superpowers/
