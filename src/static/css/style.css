@@ -129,6 +129,12 @@ main{min-height:calc(100vh - var(--hdr))}
 .diff-del{background:var(--del-bg)}
 .diff-ins{background:var(--add-bg)}
 .diff-meta{color:var(--ink-3)}
+/* In the backups panel the viewer takes all the height between the tabs and the
+   actions, instead of stopping at half the screen. */
+.bk-preview .pv{flex:1;min-height:0;max-height:none}
+.bk-preview .panel-ft{margin-top:12px}
+.diff-skip{display:block;width:100%;margin:2px 0;padding:3px 14px;border:0;border-block:1px dashed var(--line);background:var(--bg-2);color:var(--ink-3);font:inherit;text-align:left;cursor:pointer}
+.diff-skip:hover{color:var(--ink)}
 /* The preview is the backup's raw text in one node, not one div per line. */
 #preview-content{padding:10px 12px;white-space:pre;tab-size:4}
 
