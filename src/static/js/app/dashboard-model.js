@@ -23,8 +23,10 @@ export function exploreHref(query) {
   return '/explore?' + p.toString();
 }
 
-/** A site's health is its upstreams'. No upstream (respond, file_server) is not "unhealthy". */
+/** A site's health is its upstreams'. No upstream (respond, file_server) is not "unhealthy".
+ *  upstreams === null means the list could not be loaded, so nothing is known. */
 export function healthOf(host, upstreams) {
+  if (upstreams === null) return { state: 'unknown', label: 'Not checked', icon: 'status-unknown' };
   const mine = (upstreams || []).filter(u => (u.domains || []).includes(host));
   if (!mine.length) return { state: 'none', label: 'No upstream', icon: 'status-none' };
   if (mine.some(u => u.healthy === 0)) return { state: 'down', label: 'Unhealthy', icon: 'status-down' };

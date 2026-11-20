@@ -214,7 +214,7 @@ function App() {
 
       <div class="h-sec"><h2>Sites</h2><p>Last hour, from the access log. Every figure opens in Explore.</p></div>
       ${sites.length
-        ? html`<${SitesTable} sites=${sites} upstreams=${data.upstreams} />`
+        ? html`<${SitesTable} sites=${sites} upstreams=${data.upstreamsError ? null : data.upstreams} />`
         : html`<p class="metrics-hint">No requests in the last hour${data.sites.skipped ? ` (${formatCount(data.sites.skipped)} log lines could not be indexed; check the log format)` : ''}.</p>`}
 
       <div class="h-sec"><h2>Recent changes</h2><p>From this console's audit log.</p></div>

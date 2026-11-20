@@ -149,6 +149,9 @@ check('health labels', () => {
   assert.equal(m.healthOf('a', [UP('1:1', ['a'], 0)]).label, 'Unhealthy');
   assert.equal(m.healthOf('a', [UP('1:1', ['a'], undefined)]).label, 'Not checked');
 });
+check('no upstream data (admin API down) reads Not checked, not No upstream', () => {
+  assert.equal(m.healthOf('a', null).label, 'Not checked');
+});
 check('tags at the thresholds', () => {
   assert.deepEqual(m.siteTags({ error_rate: 10, p95_latency_ms: 2000 }), ['high', 'slow']);
   assert.deepEqual(m.siteTags({ error_rate: 9.99, p95_latency_ms: 1999 }), []);
