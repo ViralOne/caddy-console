@@ -434,3 +434,17 @@ details.raw pre{margin:10px 0 0;padding:12px 14px;border-radius:var(--r-md);back
 /* Open, the log line takes its own row instead of stretching the Ray ID beside it. */
 details.raw[open]{flex-basis:100%}
 .jv-key{color:var(--code-kw)} .jv-string{color:var(--code-str)} .jv-number{color:var(--code-num)} .jv-bool,.jv-null{color:var(--code-mt)}
+
+/* === login === */
+.login{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(1200px 500px at 50% -10%,var(--accent-soft),transparent 70%),var(--bg)}
+.login-card{width:min(400px,100%)}
+.login-card svg.mark{width:44px;height:44px}
+.login-card h1{margin:22px 0 6px;font-size:var(--t-2xl);font-weight:650;letter-spacing:-.022em;line-height:1.15}
+.login-card p{margin:0 0 24px;color:var(--ink-2)}
+.gbtn{width:100%;justify-content:center;height:44px;font-size:var(--t-md)}
+.login-card .fine{margin-top:18px;font-size:var(--t-xs);color:var(--ink-3)}
+.cf{display:flex;gap:12px;padding:14px 16px;border-radius:var(--r-lg);background:var(--bg-2);margin-bottom:18px}
+.cf .icon{color:var(--accent);width:20px;height:20px}
+.login-card p .mono{color:var(--ink)}
+.cf .muted{font-size:var(--t-sm)}
+.login .gbtn svg{flex:none}

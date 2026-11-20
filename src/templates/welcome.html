@@ -15,7 +15,7 @@
   <div class="login-card">
     <svg class="mark" width="44" height="44" aria-hidden="true" focusable="false"><use href="#i-mark"/></svg>
     <h1 id="login-h">Sign in to Caddy Console</h1>
-    <p>Manage the Caddy server at <span class="mono">{{ server_host }}</span>: health, access logs and the Caddyfile.</p>
+    <p>Manage the Caddy server at {% if server_host %}<span class="mono">{{ server_host }}</span>{% else %}this Caddy server{% endif %}: health, access logs and the Caddyfile.</p>
     {% if auth_mode == "cloudflare" %}
     <div class="cf">
       <svg class="icon" width="20" height="20" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg>
