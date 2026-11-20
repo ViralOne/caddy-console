@@ -3,6 +3,8 @@
 Run with:  python3 -m unittest discover -s tests -t . -v
 No caddy binary or network required.
 """
+import base64
+import hashlib
 import json
 import os
 import re
@@ -705,6 +707,26 @@ class ValidateResolveApiTest(AppTestCase):
              mock.patch.object(editor_mod.http_client, "post", lambda *a, **k: FakeResponse(200)):
             r = self.post("/api/save", {"content": "a.example.com {\n\treverse_proxy nope:80\n}\n"})
         self.assertEqual(r.status_code, 200)
+
+
+def assert_inline_script_allowed(test, response):
+    """Exactly one inline <script>, allowed by its sha256 and nothing looser."""
+    html = response.get_data(as_text=True)
+    inline = re.findall(r"<script>(.*?)</script>", html, re.S)
+    test.assertEqual(len(inline), 1, "exactly one inline script")
+    digest = "sha256-" + base64.b64encode(hashlib.sha256(inline[0].encode()).digest()).decode()
+    script_src = re.search(r"script-src ([^;]+)", response.headers["Content-Security-Policy"]).group(1)
+    test.assertIn(f"'{digest}'", script_src)
+    test.assertNotIn("unsafe-inline", script_src)
+
+
+class ThemeBootCspTest(AppTestCase):
+    def test_app_page_theme_script_is_allowed_by_hash(self):
+        assert_inline_script_allowed(self, self.client.get("/", headers=AUTH))
+
+    def test_script_uses_the_shared_storage_key(self):
+        from src import theme_boot
+        self.assertIn(f"'{theme_boot.THEME_STORAGE_KEY}'", theme_boot.THEME_BOOT_JS)
 
 
 if __name__ == "__main__":
