@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import threading
@@ -24,6 +25,7 @@ from ..geoip import geoip
 from ..validator import caddy_check, run_caddy
 
 ops_bp = Blueprint("ops", __name__)
+logger = logging.getLogger(__name__)
 
 
 @ops_bp.route("/api/audit", methods=["GET"])
@@ -192,7 +194,13 @@ def upstreams():
     # health check are configured.
     detail = _get_upstream_detail()
     # Caddy only says "healthy now"; the shared state file remembers since when.
-    since = upstream_health.record(_upstream_health_flags())
+    # The state file is a nicety: if it cannot be used, list the upstreams
+    # without "since" rather than failing the whole endpoint.
+    try:
+        since = upstream_health.record(_upstream_health_flags())
+    except Exception as e:
+        logger.warning("Upstream health state unavailable: %s", e)
+        since = {}
     enriched = []
     for row in rows if isinstance(rows, list) else []:
         info = detail.get(row.get("address"), {})

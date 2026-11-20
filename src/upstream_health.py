@@ -10,11 +10,14 @@ the honest fallback.
 """
 import fcntl
 import json
+import logging
 import os
 import tempfile
 import time
 
 from .config import BACKUP_DIR
+
+logger = logging.getLogger(__name__)
 
 STATE_PATH = os.path.join(BACKUP_DIR, "upstream-health.json")
 LOCK_PATH = os.path.join(BACKUP_DIR, ".upstream-health.lock")
@@ -84,8 +87,8 @@ def record(healthy: dict, now: float | None = None) -> dict:
         if dirty:
             try:
                 _write(STATE_PATH, state)
-            except OSError:
-                pass
+            except OSError as e:
+                logger.warning("Could not write %s: %s", STATE_PATH, e)
         return {a: state[a] for a, flag in healthy.items() if flag == 0 and a in state}
     finally:
         if lock_fd is not None:

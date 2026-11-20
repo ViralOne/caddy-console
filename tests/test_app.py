@@ -671,6 +671,17 @@ class UpstreamsApiTest(AppTestCase):
     def test_configured_sites_is_null_without_a_config(self):
         self.assertIsNone(self.get({})["configured_sites"])
 
+    def test_a_failing_health_state_file_never_fails_the_endpoint(self):
+        with mock.patch.object(ops_mod.upstream_health, "record", side_effect=OSError("flock failed")), \
+             self.assertLogs(ops_mod.logger, "WARNING"):
+            body = self.get(self.SERVERS)
+        rows = {u["address"]: u for u in body["upstreams"]}
+        self.assertEqual(sorted(rows), ["127.0.0.1:2283", "127.0.0.1:8096"])
+        self.assertEqual(rows["127.0.0.1:2283"]["fails"], 3)
+        self.assertEqual(rows["127.0.0.1:2283"]["domains"], ["photos.example.com"])
+        self.assertIsNone(rows["127.0.0.1:2283"]["unhealthy_since"])
+        self.assertEqual(body["configured_sites"], 3)
+
 
 class LastChangeTest(AppTestCase):
     def status(self):
