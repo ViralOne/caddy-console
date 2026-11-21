@@ -6,14 +6,22 @@ A console for a self-hosted Caddy: edit the Caddyfile, save and reload with no
 downtime, and see what your sites are actually doing — read from Caddy's own access
 log, with no database and nothing to keep in sync.
 
-Three views, each with its own URL.
+Three views, each with its own URL. Light and dark themes (it follows the OS; override
+it in the account menu), and it works on a phone.
 
 ## Dashboard — is anything broken?
 
-One row per site: upstream health, requests, 5xx rate, p95 latency, bandwidth and
-an hourly sparkline. **Every figure is a link** into the explorer with that filter
-already applied, so "torrent is at 21% errors" is one click from the requests that
-caused it.
+It opens on a verdict: what is broken, since when, and one click to Explore or to
+the affected site's block in the Caddyfile. Under it, tiles for requests (with a
+trend and the change against the previous hour), the 5xx rate, sites with traffic,
+bytes sent to visitors (with the top site's share) and the config state.
+
+The sites table lists problems first: down, then high 5xx, then slow. Health reads
+"Not checked" for a site with no health check configured. **Every figure is a
+link** into Explore with that filter already applied, so "torrent is at 21% errors"
+is one click from the requests that caused it. Recent changes (from the console's
+audit log) sit below. If almost all requests come from a Docker network address,
+a notice says real visitor IPs are not being logged and how to fix it.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -21,10 +29,10 @@ caused it.
 
 Faceted search over the access log. Type `host:… status:5xx path:/api client:1.2.3.4`, or plain
 text, or prefix a term with `-` to exclude it — `-status:2xx` is everything that
-did not go well. Sidebar rows cycle through the same three states as you click
-them: off, only this (☑), everything but this (☒). Counts update with your filters,
-and a count always equals what clicking it returns. Drag the histogram to zoom
-into a spike.
+did not go well. Each facet value has a checkbox (only this) and an exclude button
+(everything but this); excluded values are struck through and tagged. Counts update
+with your filters, and a count always equals what clicking it returns. Drag the
+histogram to zoom into a spike, or use the arrow keys to move its readout.
 
 ![Explore](docs/screenshots/explore.png)
 
@@ -37,16 +45,22 @@ Expand an event for its fields, each with a menu to filter, exclude or copy — 
 the original log line, formatted. Click the client IP to see where it is from — city, country
 and network, from a local DB-IP database that updates itself monthly — and what
 else that IP did: its hosts, paths and status mix, each one click from a filter.
+Behind Cloudflare, add the opt-in `log_append` lines from
+[docs/setup.md](docs/setup.md) and you also get a Country facet (`country:RO`) and
+each event's Ray ID, with a copy button.
 
 ![Event detail](docs/screenshots/event-detail.png)
 
 ## Editor — fix it
 
 CodeMirror 6 with Caddyfile syntax highlighting, find and replace, and `Cmd+S` to
-save. **Check** formats the file and verifies syntax/module availability without
-saving; **Save & Reload** asks Caddy to perform its full transactional load, then
-keeps the file on disk. Every save takes a backup first, with an inline diff and
-one-click restore.
+save. A warnings strip links to the offending lines: a file that is not formatted,
+or an upstream that could not be resolved from the console container. **Check**
+formats the file and verifies syntax and module availability without saving;
+**Save & Reload** shows a diff of only your changes, then asks Caddy to perform its
+full transactional load. Every save takes a backup first; Backups lets you preview,
+diff and roll back. Snippets inserts common Caddyfile patterns, and the account menu
+switches the editor to a Vim keymap.
 
 ![Editor](docs/screenshots/editor.png)
 
