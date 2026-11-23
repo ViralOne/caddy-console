@@ -176,8 +176,8 @@ def manual_changes(*values):
             txn.Change(store.STATE_PATH, "state", store.dumps(state), owns=(src.filename,))]
 
 
-def apply(changes):
+def apply(changes, audit=()):
     from src.bans import txn
     from src.routes.editor import caddyfile_lock
     with caddyfile_lock():
-        return txn.apply_locked(changes, actor="t@example.com", source="manual")
+        return txn.apply_locked(changes, actor="t@example.com", source="manual", audit_events=audit)
