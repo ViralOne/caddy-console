@@ -35,6 +35,9 @@ services:
     image: ${CADDY_CONSOLE_IMAGE:?Set immutable CADDY_CONSOLE_IMAGE}
     restart: unless-stopped
     read_only: true
+    user: "0:0"
+    cap_add:
+      - DAC_OVERRIDE
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
