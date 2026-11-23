@@ -36,8 +36,9 @@ cross-process lock until Caddy's blocking `POST /load` succeeds or rollback is
 complete.
 
 The temporary `docker-compose.internal.yaml` stack instead publishes Caddy on
-8080/8443 so it can run beside Nginx. Its synthetic-login proxy is loopback-only
-on `127.0.0.1:8888`; use an SSH local port forward from an administrator machine.
+8080/8443 so it can run beside Nginx. Its console uses Google OAuth, has no
+published port, and is served by that Caddy on a LAN-only hostname; see the
+README's "Internal stack" section for the Caddyfile site and DNS.
 Do not run the internal and production stacks simultaneously. While Nginx still
 owns public 80/443, Caddy cannot complete HTTP-01 or TLS-ALPN certificate
 challenges through 8080/8443. Use DNS-01 for pre-cutover certificates, or expect
@@ -133,8 +134,8 @@ Both values are mandatory. The application verifies the signed Access JWT's
 signature, issuer, audience and expiry and refuses to start if verification is not
 configured. Production has no unsigned-header fallback.
 
-`UNSAFE_ALLOW_UNVERIFIED_CF_HEADER` exists only inside the committed internal/dev
-Compose files for their loopback-bound synthetic login. Never pass it to the
+`UNSAFE_ALLOW_UNVERIFIED_CF_HEADER` exists only inside the committed dev Compose
+file for its loopback-bound synthetic login. Never pass it to the internal or
 production service.
 
 ## 3. Turn on access logging
@@ -402,7 +403,7 @@ lines nothing changes: no facet, no extra fields.
 | `CLOUDFLARE_TUNNEL_TOKEN` | production stack | — | Remotely managed Tunnel token; passed to cloudflared outside argv |
 | `CF_ACCESS_TEAM_DOMAIN` | cloudflare mode | — | `<team>.cloudflareaccess.com`; mandatory for JWT issuer and JWKS validation |
 | `CF_ACCESS_AUD` | cloudflare mode | — | Access application AUD tag; mandatory for JWT audience validation |
-| `UNSAFE_ALLOW_UNVERIFIED_CF_HEADER` | never in production | `false` | Explicit synthetic-login escape hatch used only by internal/dev Compose |
+| `UNSAFE_ALLOW_UNVERIFIED_CF_HEADER` | never in production | `false` | Explicit synthetic-login escape hatch used only by dev Compose |
 | `ALLOWED_DOMAIN` | no | — | Restrict to an email domain |
 | `ALLOWED_EMAILS` | no | — | Comma-separated allowed emails |
 | `SESSION_TIMEOUT_HOURS` | no | `8` | Session lifetime in Google mode |
@@ -424,8 +425,8 @@ Use the same Compose project/Portainer stack name so the named volumes are reuse
 Before Caddy claims host ports 80/443:
 
 1. Verify the production authentication variables and immutable image reference.
-2. Stop the synthetic-login proxy:
-   `docker compose -f docker-compose.internal.yaml stop console-proxy`.
+2. If you are upgrading from an older internal stack, stop its synthetic-login
+   proxy: `docker compose -f docker-compose.internal.yaml stop console-proxy`.
 3. Stop Nginx using the host's service manager, freeing 80/443.
 4. Start the production definition and remove the internal-only orphan:
 
@@ -433,8 +434,9 @@ Before Caddy claims host ports 80/443:
    docker compose -f docker-compose.prod.yaml up -d --remove-orphans
    ```
 
-Without `--remove-orphans`, `console-proxy` can remain running on loopback and keep
-injecting `admin@local` after the authenticated stack starts. Do not add `-v` to
+Without `--remove-orphans`, a `console-proxy` left over from an older internal
+stack can keep running and injecting `admin@local` after the authenticated stack
+starts. Do not add `-v` to
 `down` during cutover because that deletes the certificate, backup and log volumes.
 
 ## Day-to-day commands

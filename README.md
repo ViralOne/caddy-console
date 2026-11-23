@@ -92,20 +92,45 @@ docker compose -f docker-compose.prod.yaml up -d
   next to the compose file). `CADDY_CONSOLE_IMAGE` and the tunnel token are
   required by Compose; authentication settings are validated by the app.
 
-### Internal stack (temporary, no login)
+### Internal stack (temporary, Google login)
 
-`docker-compose.internal.yaml` runs the console without any login, for temporary
-transition work only. Its synthetic-login proxy is bound to `127.0.0.1:8888`;
-open `http://localhost:8888` on the host or use an SSH local port forward from an
-administrator workstation.
+`docker-compose.internal.yaml` runs Caddy beside Nginx on 8080/8443 and puts the
+console behind Google OAuth. The console has no published port: the stack's own
+Caddy serves it on a hostname that only the LAN can reach.
 
-Anyone who reaches that loopback port is a full admin: they can rewrite and reload
-the Caddyfile, so they control every site Caddy serves. `console-proxy` logs every
-visitor in as `admin@local` through the explicit
-`UNSAFE_ALLOW_UNVERIFIED_CF_HEADER` escape hatch. Production Cloudflare mode has
-no fallback and refuses to start unless Access JWT verification is configured.
-Switch to `docker-compose.prod.yaml` as soon as Google OAuth or Cloudflare Access
-is ready.
+Google rejects bare IP redirect URIs, so `http://<host-ip>:<port>` cannot use
+Google login. Use a hostname instead:
+
+1. Pick a hostname, for example `caddy-console.example.com`, and point its public
+   DNS at your WAN IP so Caddy can get a certificate. Point a LAN DNS record (split
+   DNS) at the Caddy host so LAN clients connect directly.
+2. Add a LAN-only site to the Caddyfile:
+
+   ```caddy
+   caddy-console.example.com {
+       @lan remote_ip 192.168.0.0/24
+       handle @lan {
+           reverse_proxy caddy-console:9090
+       }
+       handle {
+           abort
+       }
+   }
+   ```
+
+   Use your exact LAN subnet, not `private_ranges`. `private_ranges` includes
+   172.16.0.0/12, and Docker's userland proxy (for example on IPv6) can present
+   internet clients with a 172.x bridge address. ACME challenges are answered
+   before this route runs, so certificate issuance still works.
+3. Create a Google OAuth web client with the redirect URI
+   `https://caddy-console.example.com/auth/callback`.
+4. Set `SERVER_URL=https://caddy-console.example.com`, `GOOGLE_CLIENT_ID`,
+   `GOOGLE_CLIENT_SECRET`, `SECRET_KEY` and `ALLOWED_DOMAIN` or `ALLOWED_EMAILS`.
+   Compose refuses to start without the first four.
+
+Anyone who signs in is a full admin: they can rewrite and reload the Caddyfile, so
+they control every site Caddy serves. Keep `ALLOWED_EMAILS` or `ALLOWED_DOMAIN`
+set. Switch to `docker-compose.prod.yaml` after the Nginx cutover.
 
 Two things to do next, both in [docs/setup.md](docs/setup.md):
 
