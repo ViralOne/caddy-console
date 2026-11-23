@@ -109,6 +109,23 @@ def caddy_fmt(content: str) -> str:
     return formatted
 
 
+def adapt_caddyfile(content: str):
+    """POST /adapt to the running Caddy. The response, or None when unreachable.
+
+    Shared by Check (below) and the ban transaction (src/bans/caddy.py), so both
+    ask the exact running build the same way.
+    """
+    try:
+        return http_client.post(
+            f"{CADDY_API_URL}/adapt",
+            data=content.encode(),
+            headers={"Content-Type": "text/caddyfile"},
+            timeout=CADDY_TIMEOUT,
+        )
+    except Exception:
+        return None
+
+
 def _adapt_via_admin_api(content: str):
     """Adapt with the running Caddy without loading the result.
 
@@ -118,27 +135,24 @@ def _adapt_via_admin_api(content: str):
 
     Returns (accepted, message, "adapted"), or None if the API was unreachable.
     """
-    try:
-        resp = http_client.post(
-            f"{CADDY_API_URL}/adapt",
-            data=content.encode(),
-            headers={"Content-Type": "text/caddyfile"},
-            timeout=CADDY_TIMEOUT,
-        )
-    except Exception:
+    resp = adapt_caddyfile(content)
+    if resp is None:
         return None
     if resp.status_code == 200:
         return (True, "Caddyfile syntax and modules were accepted by the running Caddy", "adapted")
-    return (False, _admin_error(resp), "adapted")
+    return (False, admin_error(resp), "adapted")
 
 
-def _admin_error(resp) -> str:
+def admin_error(resp) -> str:
     """The admin API reports errors as {"error": "..."}; show just the message."""
     try:
         message = resp.json().get("error")
     except Exception:
         message = None
     return (message or resp.text or "").strip() or f"caddy rejected the config (HTTP {resp.status_code})"
+
+
+_admin_error = admin_error
 
 
 def caddy_check(content: str) -> tuple[bool, str, str]:
