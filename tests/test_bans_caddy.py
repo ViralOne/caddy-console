@@ -41,10 +41,13 @@ class AdminClientTest(unittest.TestCase):
 
     def test_load_outcomes(self):
         for mode, status in (("ok", "applied"), ("reject", "rejected"),
-                             ("connect_timeout", "failed"), ("read_timeout", "unknown")):
+                             ("connect_timeout", "failed"), ("connection_refused", "failed"),
+                             ("connection_reset", "unknown"), ("read_timeout", "unknown")):
             with self.subTest(mode=mode):
                 self.fake.load_mode = mode
+                self.fake.calls.clear()
                 self.assertEqual(caddy.load("example.com {\n}\n").status, status)
+                self.assertEqual(self.fake.calls, [("load", "example.com {\n}\n")])
 
     def test_fake_adapt_reflects_imported_files(self):
         with open(_bans.MANUAL_PATH(), "w") as f:

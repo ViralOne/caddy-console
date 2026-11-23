@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 
 import requests as http_client
+from urllib3 import exceptions as urllib3_exc
 
 from .. import validator
 from ..config import CADDY_API_URL
@@ -65,6 +66,22 @@ def adapt(text: str) -> AdaptResult:
     return AdaptResult(True, body["result"], "adapted")
 
 
+def _never_sent(exc) -> bool:
+    """True when the exception chain proves the request never reached Caddy:
+    a refused/unresolvable connection or a connect timeout. Resets and aborts
+    (ProtocolError) can happen after the request was sent, so they are not."""
+    seen, stack = set(), [exc]
+    while stack:
+        e = stack.pop()
+        if not isinstance(e, BaseException) or id(e) in seen:
+            continue
+        seen.add(id(e))
+        if isinstance(e, (urllib3_exc.NewConnectionError, urllib3_exc.ConnectTimeoutError)):
+            return True
+        stack.extend([getattr(e, "reason", None), e.__cause__, e.__context__, *e.args])
+    return False
+
+
 def load(text: str) -> LoadResult:
     """POST the unchanged on-disk Caddyfile. Only a connect timeout proves the
     request never reached Caddy; any other transport error is ambiguous."""
@@ -73,6 +90,10 @@ def load(text: str) -> LoadResult:
                                 headers={"Content-Type": "text/caddyfile"}, timeout=LOAD_TIMEOUT)
     except http_client.ConnectTimeout:
         return LoadResult("failed", "A connection to Caddy could not be established.")
+    except http_client.ConnectionError as e:
+        if _never_sent(e):
+            return LoadResult("failed", "A connection to Caddy could not be established.")
+        return LoadResult("unknown", f"Caddy did not confirm the reload ({type(e).__name__}).")
     except http_client.RequestException as e:
         return LoadResult("unknown", f"Caddy did not confirm the reload ({type(e).__name__}).")
     if 200 <= resp.status_code < 300:

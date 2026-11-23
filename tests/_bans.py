@@ -12,6 +12,7 @@ import shutil
 from unittest import mock
 
 import requests
+from urllib3 import exceptions as urllib3_exc
 
 import tests._env as env
 
@@ -116,6 +117,12 @@ class FakeCaddy:
             self.calls.append(("load", text))
             if self.load_mode == "connect_timeout":
                 raise requests.ConnectTimeout("fake connect timeout")
+            if self.load_mode == "connection_refused":
+                reason = urllib3_exc.NewConnectionError(None, "Failed to establish a new connection: refused")
+                raise requests.ConnectionError(urllib3_exc.MaxRetryError(None, url, reason))
+            if self.load_mode == "connection_reset":
+                reason = urllib3_exc.ProtocolError("Connection aborted.", ConnectionResetError(54, "reset"))
+                raise requests.ConnectionError(reason)
             if self.load_mode == "reject":
                 return FakeResponse(400, {"error": "fake load rejection"})
             self.live = self.live_after_load if self.live_after_load is not None else self.adapt_text(text)
