@@ -1,6 +1,7 @@
-# Temporary synthetic-login stack for local transition work. See README:
-# "Internal stack". The console proxy is loopback-only; use an SSH local port
-# forward when administering it from another machine.
+# Transition stack: Caddy beside Nginx on 8080/8443, console behind Google
+# OAuth. The console has no published port; the Caddy in this stack serves it
+# on a LAN-only hostname (see README: "Internal stack"). Never publish 9090 or
+# 2019.
 services:
   caddy:
     image: caddy:2.11.9-alpine
@@ -45,12 +46,17 @@ services:
     tmpfs:
       - /tmp:size=128m,mode=1777
     environment:
-      - AUTH_MODE=cloudflare
-      - UNSAFE_ALLOW_UNVERIFIED_CF_HEADER=true
-      - ALLOWED_EMAILS=admin@local
-      - SESSION_COOKIE_SECURE=false
+      - AUTH_MODE=google
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY}
+      # LAN-only HTTPS hostname served by this stack's Caddy, e.g.
+      # https://caddy-console.example.com. Register ${SERVER_URL}/auth/callback.
+      - SERVER_URL=${SERVER_URL:?Set SERVER_URL}
+      - ALLOWED_DOMAIN
+      - ALLOWED_EMAILS
+      - SESSION_TIMEOUT_HOURS
       - CADDY_API_URL=http://caddy:2019
-      - SECRET_KEY
       - CADDYFILE_PATH
       - CADDY_LOG_FILE
       - CADDY_EXPLORE_MAX_EVENTS
@@ -71,6 +77,9 @@ services:
       - caddy-backups:/backups
       - caddy-logs:/var/log/caddy:ro
       - caddy-geoip:/data/geoip
+    # No published port. caddy-admin (shared with Caddy only) carries both
+    # Caddy's proxy to the console and the console's admin API calls;
+    # console-ui is egress for Google's token endpoint and GeoIP updates.
     networks:
       - caddy-admin
       - console-ui
@@ -85,42 +94,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-  console-proxy:
-    image: caddy:2.11.9-alpine
-    restart: unless-stopped
-    read_only: true
-    cap_drop: [ALL]
-    security_opt:
-      - no-new-privileges:true
-    pids_limit: 128
-    tmpfs:
-      - /tmp:size=32m,mode=1777
-      - /data:size=16m,mode=0755
-      - /config:size=16m,mode=0755
-    command:
-      - caddy
-      - reverse-proxy
-      - --from
-      - :8888
-      - --to
-      - caddy-console:9090
-      - --header-up
-      - "Cf-Access-Authenticated-User-Email: admin@local"
-    environment:
-      - CADDY_ADMIN=off
-    ports:
-      - "8888:8888"
-    networks:
-      - console-ui
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8888/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    depends_on:
-      caddy-console:
-        condition: service_healthy
 
 networks:
   caddy-public:
