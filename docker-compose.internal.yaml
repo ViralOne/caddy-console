@@ -1,7 +1,6 @@
 # Transition stack: Caddy beside Nginx on 8080/8443, console behind Google
-# OAuth. The console has no published port; the Caddy in this stack serves it
-# on a LAN-only hostname (see README: "Internal stack"). Never publish 9090 or
-# 2019.
+# OAuth on host port 8888, served through this stack's Caddy on an HTTPS
+# hostname (see README: "Internal stack"). Never publish 2019.
 services:
   caddy:
     image: caddy:2.11.9-alpine
@@ -77,9 +76,13 @@ services:
       - caddy-backups:/backups
       - caddy-logs:/var/log/caddy:ro
       - caddy-geoip:/data/geoip
-    # No published port. caddy-admin (shared with Caddy only) carries both
-    # Caddy's proxy to the console and the console's admin API calls;
+    # Published on the host so Caddy can proxy it by host IP
+    # (reverse_proxy <host-ip>:8888). Google OAuth still gates every request.
+    # Never forward 8888 on the router; only Caddy's 80/443 are public.
+    # caddy-admin (shared with Caddy only) carries the admin API calls;
     # console-ui is egress for Google's token endpoint and GeoIP updates.
+    ports:
+      - "8888:9090"
     networks:
       - caddy-admin
       - console-ui
