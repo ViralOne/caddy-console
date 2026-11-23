@@ -66,6 +66,12 @@ class StoreRoundTripTest(unittest.TestCase):
                     store.parse(raw)
                 self.assertEqual(cm.exception.raw, raw)
 
+    def test_deeply_nested_json_is_corrupt(self):
+        raw = b"[" * 200000
+        with self.assertRaises(store.StateCorrupt) as cm:
+            store.parse(raw)
+        self.assertEqual(cm.exception.raw, raw)
+
     def test_unreadable_file_is_corrupt(self):
         if os.geteuid() == 0:
             self.skipTest("root can read a 0000 file")
@@ -79,7 +85,7 @@ class InputValidationTest(unittest.TestCase):
         self.assertEqual(store.validate_reason(None), "")
         self.assertEqual(store.validate_reason("é" * 500), "é" * 500)
         self.assertEqual(store.validate_reason("a\nb\tc"), "a\nb\tc")
-        for bad in ("é" * 501, "a\rb", "a\x85b", 5):
+        for bad in ("é" * 501, "a\rb", "a\x85b", 5, "a\ud800b"):
             with self.subTest(bad=bad), self.assertRaises(store.InputError) as cm:
                 store.validate_reason(bad)
             self.assertEqual(cm.exception.code, "invalid_reason")

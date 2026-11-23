@@ -102,6 +102,10 @@ def validate_reason(value) -> str:
         raise InputError("invalid_reason", "Reason must be text.")
     if len(value) > REASON_MAX:
         raise InputError("invalid_reason", f"Reason must be at most {REASON_MAX} characters.")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise InputError("invalid_reason", "Reason must be valid Unicode text.") from None
     if _CONTROL.search(value):
         raise InputError("invalid_reason", "Reason may not contain control characters other than newline and tab.")
     return value
@@ -186,7 +190,7 @@ def _from_doc(doc) -> State:
 def parse(raw: bytes) -> State:
     try:
         doc = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as e:
+    except (UnicodeDecodeError, ValueError, RecursionError) as e:
         raise StateCorrupt(f"bans.json is not valid JSON ({e})", raw) from None
     try:
         state = _from_doc(migrate(doc))
