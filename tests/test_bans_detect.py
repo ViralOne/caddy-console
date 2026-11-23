@@ -2,6 +2,7 @@
 
 Run with:  uv run --frozen python -m unittest tests.test_bans_detect -v
 """
+import copy
 import json
 import os
 import unittest
@@ -50,6 +51,27 @@ class LiveDetectionTest(unittest.TestCase):
         self.assertEqual(detect.site_statuses(config, MANUAL, active=False)[0].status, "imported_empty")
         # Bans exist but the live config has no matcher yet: not proven.
         self.assertEqual(detect.site_statuses(config, MANUAL, active=True)[0].status, "unknown")
+
+    def _with_user_route(self):
+        """empty_policy plus the user's own `@blocked client_ip 1.2.3.4` / `respond 403` sibling route."""
+        config = copy.deepcopy(FIXTURES["empty_policy"])
+        sub = config["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][0]["routes"]
+        sub.append({"match": [{"client_ip": {"ranges": ["1.2.3.4"]}}],
+                    "handle": [{"handler": "subroute", "routes": [{"handle": [{"handler": "static_response", "status_code": 403}]}]}]})
+        return config
+
+    def test_users_own_client_ip_403_route_is_not_the_ban_route(self):
+        config = self._with_user_route()
+        self.assertEqual(detect.site_statuses(config, MANUAL, active=False)[0].status, "imported_empty")
+        self.assertEqual(detect.site_statuses(config, MANUAL, active=True)[0].status, "unknown")
+
+    def test_expected_ranges_must_match_the_managed_route(self):
+        config = FIXTURES["simple_proxy"]
+        ok = ["198.51.100.0/24", "203.0.113.7"]
+        self.assertEqual(detect.site_statuses(config, MANUAL, active=True, expected_ranges=ok)[0].status, "enforced")
+        for wrong in (["198.51.100.0/24"], ok + ["192.0.2.1"]):
+            self.assertEqual(detect.site_statuses(config, MANUAL, active=True, expected_ranges=wrong)[0].status, "unknown")
+        self.assertEqual(detect.site_statuses(config, MANUAL, active=False, expected_ranges=["192.0.2.1"])[0].status, "imported_empty")
 
     def test_marker_values_and_missing_config(self):
         for value in ("1", 1):
