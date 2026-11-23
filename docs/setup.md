@@ -304,6 +304,60 @@ reverse_proxy 10.0.0.1:8080 {
 }
 ```
 
+## Wildcard subdomains without DNS credentials (on-demand TLS)
+
+A wildcard certificate (`*.apps.yourdomain.com`) needs a DNS-01 challenge, which
+means a Caddy build with a DNS provider module plus API credentials. When the
+subdomains are created by another app and there are only a handful of them,
+on-demand TLS is simpler: Caddy gets a normal HTTP-01 certificate for each
+hostname the first time it is requested, with the stock image.
+
+It needs WAN ports 80 and 443 forwarded to Caddy, a wildcard DNS record pointing
+at them, and an **`ask` endpoint** that approves each hostname. Without a strict
+`ask`, anyone can request `random123.apps.yourdomain.com` and spend your Let's
+Encrypt quota (50 certificates per registered domain per week, shared with every
+other site on that domain).
+
+```caddyfile
+{
+    on_demand_tls {
+        ask http://10.0.0.5:8081/__caddy_ask   # returns 200 only for real hostnames
+    }
+}
+
+*.apps.yourdomain.com {
+    tls {
+        on_demand
+    }
+    respond /__caddy_ask 404                  # keep the approval endpoint internal
+    reverse_proxy 10.0.0.5:8081
+}
+```
+
+Caddy calls `ask` with `?domain=<hostname>`. The endpoint can live in the app
+that creates the subdomains, or in a backend Caddy that checks the site exists:
+
+```caddyfile
+@ask path /__caddy_ask
+handle @ask {
+    map {query.domain} {project} {
+        ~^([a-z0-9-]+)\.apps\.yourdomain\.com$ "${1}"
+        default "__none__"
+    }
+    @published file {
+        root /var/www/sites
+        try_files /{project}/index.html
+    }
+    respond @published 200
+    respond 404
+}
+```
+
+`on_demand_tls` is a global option, so restart Caddy after adding it. The first
+request to a new hostname waits a few seconds for its certificate. With many
+subdomains, or frequent new ones, use a DNS-01 wildcard instead (see
+[Running a custom Caddy build](#running-a-custom-caddy-build)).
+
 ## Prometheus metrics (optional)
 
 Add `metrics` to the global block to expose Caddy's Prometheus endpoint, which the
