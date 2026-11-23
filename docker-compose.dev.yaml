@@ -66,12 +66,17 @@ services:
       CADDY_LOG_FILE: /var/log/caddy/access.log
       GEOIP_AUTO_UPDATE: "false"
       SERVER_URL: http://localhost:8888
+      BANS_ENABLED: "true"
+      BANS_DIR: /etc/caddy/console
     volumes:
       - ./dev/run:/etc/caddy
       - ./dev/run/backups:/backups
       - caddy-logs:/var/log/caddy:ro
       - caddy-geoip:/data/geoip
       - ./src:/app/src:ro
+      # Integration suites under tests/integration run inside this container,
+      # the only place that shares /etc/caddy with caddy-target and reaches 2019.
+      - ./tests:/app/tests:ro
     networks:
       - console-ui
       - caddy-admin

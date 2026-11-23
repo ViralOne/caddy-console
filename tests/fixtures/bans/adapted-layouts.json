@@ -1,0 +1,1645 @@
+{
+ "basic_auth_before": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             },
+             {
+              "handler": "authentication",
+              "providers": {
+               "http_basic": {
+                "accounts": [
+                 {
+                  "password": "$2a$14$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG",
+                  "username": "bob"
+                 }
+                ],
+                "hash": {
+                 "algorithm": "bcrypt"
+                },
+                "hash_cache": {}
+               }
+              }
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "reverse_proxy",
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "custom_order_first": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "body": "hi",
+              "handler": "static_response",
+              "status_code": 200
+             },
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "empty_policy": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             },
+             {
+              "handler": "reverse_proxy",
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "forward_auth_before": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             },
+             {
+              "handle_response": [
+               {
+                "match": {
+                 "status_code": [
+                  2
+                 ]
+                },
+                "routes": [
+                 {
+                  "handle": [
+                   {
+                    "handler": "vars"
+                   }
+                  ]
+                 }
+                ]
+               }
+              ],
+              "handler": "reverse_proxy",
+              "headers": {
+               "request": {
+                "set": {
+                 "X-Forwarded-Method": [
+                  "{http.request.method}"
+                 ],
+                 "X-Forwarded-Uri": [
+                  "{http.request.uri}"
+                 ]
+                }
+               }
+              },
+              "rewrite": {
+               "method": "GET",
+               "uri": "/verify"
+              },
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "reverse_proxy",
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "handle_before_import": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "body": "x",
+                  "handler": "static_response"
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "path": [
+               "/x/*"
+              ]
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "body": "app",
+                  "handler": "static_response"
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "handle_catchall": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             }
+            ]
+           },
+           {
+            "group": "group2",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "group": "group2",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                   {
+                    "dial": "127.0.0.1:9"
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "handle_path": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "rewrite",
+                  "strip_path_prefix": "/static"
+                 }
+                ]
+               },
+               {
+                "handle": [
+                 {
+                  "body": "static",
+                  "handler": "static_response"
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "path": [
+               "/static/*"
+              ]
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "body": "app",
+                  "handler": "static_response"
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "handle_path_specific": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "body": "api",
+                  "handler": "static_response"
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "path": [
+               "/api/*"
+              ]
+             }
+            ]
+           },
+           {
+            "group": "group3",
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "body": "app",
+                  "handler": "static_response"
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "invoke_before": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "named_routes": {
+       "app": {
+        "handle": [
+         {
+          "body": "named",
+          "handler": "static_response",
+          "status_code": 200
+         }
+        ]
+       }
+      },
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             },
+             {
+              "handler": "invoke",
+              "name": "app"
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "not_imported": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "handler": "reverse_proxy",
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "redir_before": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "static_response",
+              "headers": {
+               "Location": [
+                "/new"
+               ]
+              },
+              "status_code": 302
+             }
+            ],
+            "match": [
+             {
+              "path": [
+               "/old"
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "reverse_proxy",
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "request_header_before": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             },
+             {
+              "handler": "headers",
+              "request": {
+               "set": {
+                "X-Test": [
+                 "1"
+                ]
+               }
+              }
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "reverse_proxy",
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "rewrite_before": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             }
+            ]
+           },
+           {
+            "group": "group1",
+            "handle": [
+             {
+              "handler": "rewrite",
+              "uri": "/new"
+             }
+            ],
+            "match": [
+             {
+              "path": [
+               "/old"
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "reverse_proxy",
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "route_strict": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "caddy_console_manual_policy": 1,
+                  "handler": "vars"
+                 }
+                ]
+               },
+               {
+                "handle": [
+                 {
+                  "handler": "subroute",
+                  "routes": [
+                   {
+                    "handle": [
+                     {
+                      "handler": "static_response",
+                      "status_code": 403
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ],
+                "match": [
+                 {
+                  "client_ip": {
+                   "ranges": [
+                    "198.51.100.0/24",
+                    "203.0.113.7"
+                   ]
+                  },
+                  "not": [
+                   {
+                    "client_ip": {
+                     "ranges": [
+                      "192.168.0.0/16",
+                      "172.16.0.0/12",
+                      "10.0.0.0/8",
+                      "127.0.0.1/8",
+                      "fd00::/8",
+                      "::1",
+                      "100.64.0.0/10",
+                      "169.254.0.0/16",
+                      "fc00::/7",
+                      "fe80::/10"
+                     ]
+                    }
+                   }
+                  ]
+                 }
+                ]
+               },
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "headers": {
+                   "Location": [
+                    "/new"
+                   ]
+                  },
+                  "status_code": 302
+                 }
+                ],
+                "match": [
+                 {
+                  "path": [
+                   "/old"
+                  ]
+                 }
+                ]
+               },
+               {
+                "handle": [
+                 {
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                   {
+                    "dial": "127.0.0.1:9"
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ },
+ "simple_proxy": {
+  "admin": {
+   "listen": "0.0.0.0:2019"
+  },
+  "apps": {
+   "http": {
+    "servers": {
+     "srv0": {
+      "listen": [
+       ":443"
+      ],
+      "routes": [
+       {
+        "handle": [
+         {
+          "handler": "subroute",
+          "routes": [
+           {
+            "handle": [
+             {
+              "caddy_console_manual_policy": 1,
+              "handler": "vars"
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "subroute",
+              "routes": [
+               {
+                "handle": [
+                 {
+                  "handler": "static_response",
+                  "status_code": 403
+                 }
+                ]
+               }
+              ]
+             }
+            ],
+            "match": [
+             {
+              "client_ip": {
+               "ranges": [
+                "198.51.100.0/24",
+                "203.0.113.7"
+               ]
+              },
+              "not": [
+               {
+                "client_ip": {
+                 "ranges": [
+                  "192.168.0.0/16",
+                  "172.16.0.0/12",
+                  "10.0.0.0/8",
+                  "127.0.0.1/8",
+                  "fd00::/8",
+                  "::1",
+                  "100.64.0.0/10",
+                  "169.254.0.0/16",
+                  "fc00::/7",
+                  "fe80::/10"
+                 ]
+                }
+               }
+              ]
+             }
+            ]
+           },
+           {
+            "handle": [
+             {
+              "handler": "reverse_proxy",
+              "upstreams": [
+               {
+                "dial": "127.0.0.1:9"
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ],
+        "match": [
+         {
+          "host": [
+           "a.example.com"
+          ]
+         }
+        ],
+        "terminal": true
+       }
+      ]
+     }
+    }
+   }
+  }
+ }
+}

@@ -64,3 +64,29 @@ EXPLORE_MAX_EVENTS = int(os.environ.get("CADDY_EXPLORE_MAX_EVENTS", "200000"))
 # host without egress and drop the .mmdb files into GEOIP_DIR by hand.
 GEOIP_DIR = os.environ.get("GEOIP_DIR", "/data/geoip")
 GEOIP_AUTO_UPDATE = os.environ.get("GEOIP_AUTO_UPDATE", "true").lower() not in ("0", "false", "no")
+
+
+def bounded_int(name: str, default: int, low: int, high: int) -> int:
+    """An integer setting with server-side bounds; anything else stops startup."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError(f"{name} must be an integer between {low} and {high}, got {raw!r}") from None
+    if not low <= value <= high:
+        raise RuntimeError(f"{name} must be between {low} and {high}, got {value}")
+    return value
+
+
+# IP bans (docs/security.md). Sites are unchanged until one imports the managed
+# file, so this defaults on. BANS_DIR must be inside the Caddyfile directory and
+# visible at the same absolute path in the Caddy container.
+BANS_ENABLED = os.environ.get("BANS_ENABLED", "true").lower() not in ("0", "false", "no")
+BANS_DIR = os.environ.get("BANS_DIR", "/etc/caddy/console").rstrip("/") or "/etc/caddy/console"
+# Total prefixes rendered into stock Caddy. Task 16's benchmark sets the default.
+BANS_MAX = bounded_int("BANS_MAX", 10000, 1, 100000)
+# Extra protected IPs/CIDRs, comma or space separated. Parsed by src/bans/protected.py
+# at app start; one invalid token refuses startup.
+BANS_NEVER = os.environ.get("BANS_NEVER", "")
