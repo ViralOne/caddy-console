@@ -581,4 +581,8 @@ details.raw[open]{flex-basis:100%}
 .ban-sect{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .ban-badge{display:inline-flex;gap:4px;align-items:center;font-weight:600;color:var(--crit)}
 .sec-sites .sec-policy{display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:baseline;grid-column:1/-1}
+.sec label.inline{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:var(--t-sm);color:var(--ink-2)}
+.sec-filter{display:flex;flex-direction:column;gap:4px;max-width:320px;margin:10px 0;font-size:var(--t-sm);color:var(--ink-2)}
+.sec-countries{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:4px 16px;max-height:260px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:var(--r-md)}
+.sec-countries .sec-special{color:var(--warn)}
 .sec-src{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);min-width:5.5rem}
