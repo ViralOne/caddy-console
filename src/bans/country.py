@@ -22,9 +22,10 @@ from .render import COUNTRY, HEADER
 PATH = os.path.join(BACKUP_DIR, "country-policy.json")
 VERSION = 1
 MAX_BYTES = 64 * 1024
-# PROVISIONAL (not yet benchmarked, spec 4.3): the hard cap defaults to
-# DEFAULT_MAX_PREFIXES and the warning appears above WARN_PREFIXES. The Phase 4
-# benchmark step replaces both with measured values.
+# Measured (tests/integration/country_benchmark.py, docs/security.md): 20000
+# prefixes stay within the Phase 1 budget on stock Caddy, so that is the cap
+# (src/config.py); above WARN_PREFIXES a reload already takes about half a
+# second more than without a policy, which is worth telling the operator.
 DEFAULT_MAX_PREFIXES = 20000
 WARN_PREFIXES = 10000
 SPECIAL = ("XX", "T1")           # unknown and Tor in Cloudflare's header; allowed only when named
@@ -214,10 +215,11 @@ def render(p: Policy, mode: str, peers, exclusion_tokens, directory=None):
             raise CountryError("cloudflare_peers_required", "The Cloudflare profile has no trusted peer, so the "
                                "country header cannot be trusted. Configure the profile first.", 409)
         facts["profile"] = "cloudflare"
+        # Stock Caddy's `header` matcher takes one value; the anchored alternation matches any selected code.
         body = [f"vars {MARKER} cloudflare\n", f"@{matcher} {{\n",
                 "\tnot client_ip " + " ".join(exclusion_tokens) + "\n",
                 "\tnot {\n", "\t\tremote_ip " + " ".join(peers) + "\n",
-                "\t\theader CF-IPCountry " + " ".join(p.countries) + "\n", "\t}\n", "}\n"]
+                "\t\theader_regexp CF-IPCountry ^(?:" + "|".join(p.countries) + ")$\n", "\t}\n", "}\n"]
     return (HEADER + "".join(body + tail)).encode("ascii"), facts
 
 

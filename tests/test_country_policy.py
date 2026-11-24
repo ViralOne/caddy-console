@@ -79,7 +79,7 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(data.decode(), HEADER + "vars caddy_console_country_policy cloudflare\n"
                          "@caddy_console_country_denied {\n"
                          f"\tnot client_ip {BASE}\n\tnot {{\n\t\tremote_ip 172.31.0.2/32\n"
-                         "\t\theader CF-IPCountry DE RO\n\t}\n}\n"
+                         "\t\theader_regexp CF-IPCountry ^(?:DE|RO)$\n\t}\n}\n"
                          "handle @caddy_console_country_denied {\n\trespond 403\n}\n")
         self.assertEqual(facts["profile"], "cloudflare")
 
@@ -192,10 +192,10 @@ class CountryApiTest(_bans.ApiCase):
         self.assertEqual(self.client.put(URL, json=body, headers={"X-CSRF-Token": self.csrf}).status_code, 401)
         self.assertEqual(self.client.get(URL).status_code, 401)
 
-    def test_default_get_reports_off_and_the_provisional_limits(self):
+    def test_default_get_reports_off_and_the_measured_limits(self):
         info = self.get(URL).get_json()
         self.assertEqual((info["enabled"], info["stored"], info["present"]), (False, False, False))
-        self.assertEqual(info["limits"], {"max": 20000, "warn": 10000, "provisional": True})
+        self.assertEqual(info["limits"], {"max": 20000, "warn": 10000})
         self.assertIn("RO", info["iso_codes"])
         self.assertEqual(info["dataset"]["month"], "2026-11")
 
@@ -260,7 +260,7 @@ class CountryApiTest(_bans.ApiCase):
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         text = read(render.COUNTRY.path)
         self.assertIn("vars caddy_console_country_policy cloudflare", text)
-        self.assertIn("\t\tremote_ip 172.31.0.2/32\n\t\theader CF-IPCountry DE RO\n", text)
+        self.assertIn("\t\tremote_ip 172.31.0.2/32\n\t\theader_regexp CF-IPCountry ^(?:DE|RO)$\n", text)
         self.assertNotIn("2001:db8", text)
         self.assertEqual(json.loads(read(country.PATH))["profile"], "cloudflare-tunnel")
         info = self.get(URL).get_json()
