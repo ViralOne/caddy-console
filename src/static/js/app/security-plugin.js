@@ -4,34 +4,38 @@
 // a text child. `onCopy(text, what)` is the view's clipboard helper.
 import { h, htm } from '../explore-vendor.js';
 import { Icon } from './icons.js';
+import { KV, Mark, SectionHead, StateLine } from './security-ui.js';
 import { pluginState } from './security-model.js';
 
 const html = htm.bind(h);
-const SEV = { crit: 'critical', warn: 'warn', ok: 'ok', none: 'ok' };
 
 export function PluginSection({ plugin, onCopy, onReapply }) {
   const st = pluginState(plugin);
   if (!st) return null;
   const d = plugin.definition || {};
   const key = plugin.key_mode === 'file' ? `File secret ${plugin.key_file} (${plugin.placeholder})` : `Environment (${plugin.placeholder})`;
+  const module = plugin.module === true
+    ? html`<${Mark} tone="ok" label="Present in the running Caddy" />`
+    : plugin.module === false ? html`<${Mark} tone="warn" label="Missing" />` : html`<${Mark} tone="none" label="Unknown (Caddy did not answer)" />`;
+  const admin = plugin.refused
+    ? html`<${Mark} tone="crit" label=${plugin.admin?.message || 'Exposed'} />`
+    : html`<${Mark} tone="ok" label="Fixed caddy-admin address only" />`;
   return html`
-    <section aria-labelledby="sec-plugin-h">
-      <div class="h-sec"><h2 id="sec-plugin-h">CrowdSec plugin</h2>
-        <p>Caddy asks CrowdSec directly. Protected addresses never reach the plugin; manual bans still use the ban file.</p></div>
-      <p class=${'sec-cs-state sev-' + SEV[st.tone]} role=${st.tone === 'crit' ? 'alert' : 'status'}>
-        <strong>${st.title}</strong>${st.detail && html` <span class="muted small">${st.detail}</span>`}</p>
-      <dl class="sec-protected">
-        <div><dt>Module</dt><dd>${plugin.module === true ? 'Present in the running Caddy' : plugin.module === false ? 'Missing' : 'Unknown (Caddy did not answer)'}</dd></div>
-        <div><dt>Admin API</dt><dd>${plugin.refused ? plugin.admin?.message || 'Exposed' : 'Fixed caddy-admin address only'}</dd></div>
-        <div><dt>Bouncer key</dt><dd class="mono">${key}</dd></div>
-        <div><dt>Polling</dt><dd>Every ${plugin.ticker_interval}, near-real-time without reload</dd></div>
-        <div><dt>Protected route</dt><dd class="mono">${d.import_line}${d.hash ? ` (protected ranges ${d.hash}${d.current ? '' : ', out of date'})` : ' (not generated yet)'}</dd></div>
-      </dl>
+    <section class="sec-s" aria-labelledby="sec-plugin-h">
+      <${SectionHead} id="sec-plugin-h" title="CrowdSec plugin" desc="Caddy asks CrowdSec directly; manual bans still use the ban file." />
+      <${StateLine} st=${st} />
+      <${KV} label="CrowdSec plugin" rows=${[
+        { k: 'Module', v: module },
+        { k: 'Admin API', v: admin },
+        { k: 'Bouncer key', v: key, mono: true },
+        { k: 'Polling', v: `Every ${plugin.ticker_interval}, near-real-time without reload` },
+        { k: 'Protected route', v: `${d.import_line}${d.hash ? ` (protected ranges ${d.hash}${d.current ? '' : ', out of date'})` : ' (not generated yet)'}`, mono: true },
+      ]} />
+      <p class="sec-p sec-detail">Protected addresses never reach the plugin. Run the isolation check on the host after every start: Caddy port 2019 must refuse connections from the CrowdSec and cloudflared containers.</p>
       <div class="acts">
-        <button class="btn" type="button" onClick=${onReapply}>Re-apply plugin route</button>
+        <button class="btn" type="button" onClick=${onReapply}><${Icon} name="restore" size=${14} />Re-apply plugin route</button>
         <button class="btn btn-quiet" type="button" title=${plugin.allowlist} onClick=${() => onCopy(plugin.allowlist, 'cscli allowlist commands')}><${Icon} name="copy" size=${14} />Copy LAPI allowlist commands</button>
         <button class="btn btn-quiet" type="button" title=${plugin.check_command} onClick=${() => onCopy(plugin.check_command, 'Isolation check command')}><${Icon} name="copy" size=${14} />Copy isolation check</button>
       </div>
-      <p class="muted small">Run the isolation check on the host after every start: Caddy port 2019 must refuse connections from the CrowdSec and cloudflared containers.</p>
     </section>`;
 }
