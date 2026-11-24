@@ -651,9 +651,9 @@ def _refused_error(refused):
 
 
 def _policy_transaction(actor, source, events, *, prof=None, check=None, force=(), background=False,
-                        allow_corrupt=False, country_candidate=None):
+                        allow_corrupt=False, country_candidate=None, strict_country_shape=False):
     """A profile, range or country change: the candidate profile (and the
-    country candidate, see _country_override) expanded through every dependent
+    country candidate) expanded through every dependent
     file, committed by one journal under caddyfile_lock() (spec 4.2).
     check(state) runs under the lock and returns an error response to stop."""
     def prepare(state, corrupt):
@@ -664,11 +664,21 @@ def _policy_transaction(actor, source, events, *, prof=None, check=None, force=(
         holds = {} if corrupt else {k: v for k, v in _holds(state).items() if k not in force}
         candidate = prof if prof is not None else profile.load_or_default()
         prot = protected_for(state, prof=candidate)
+        country_cand = country_candidate
+        if strict_country_shape and country_cand is None:
+            # An enabled country policy follows the profile's shape: render the new shape
+            # strictly (policy re-read under the lock), so a refused render (dataset
+            # missing, over the cap) refuses the change instead of leaving a geo.caddy
+            # that does not fit the profile and denies every public client.
+            policy = country.load_or_default()
+            shape = lambda mode: "direct" if mode == "direct" else "cloudflare"
+            if country.effective_enabled(policy) and config.BANS_ENABLED and shape(policy.profile) != shape(candidate.mode):
+                country_cand = policy
         try:
             # A corrupt bans.json is never rewritten here: the operator recovers it.
             changes = _candidates(state, prot, holds, store.utc_now(), prof=candidate,
                                   bans=corrupt is None and _bans_present(state), with_profile=prof is not None,
-                                  country_candidate=country_candidate)
+                                  country_candidate=country_cand)
         except country.CountryError as e:
             return _error(e.code, str(e), e.status, **e.extra)
         except render.CapacityError as e:
@@ -730,7 +740,7 @@ def set_client_ip_profile(payload, actor):
         return _error(e.code, str(e), 400)
     detail = candidate.mode + (f" peers={' '.join(candidate.tunnel_peers)}" if candidate.tunnel_peers else "")
     return _policy_transaction(actor, "profile", [("client_ip_profile_changed", detail)], prof=candidate,
-                               force=("cloudflare",))
+                               force=("cloudflare",), strict_country_shape=True)
 
 
 RANGES_CHECK_PATH = os.path.join(config.BACKUP_DIR, "cloudflare-ranges-check.json")

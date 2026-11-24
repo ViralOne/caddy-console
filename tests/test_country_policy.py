@@ -269,6 +269,24 @@ class CountryApiTest(_bans.ApiCase):
         self.put({"enabled": True, "countries": ["RO", "DE"], "cloudflare_geolocation_confirmed": True})
         self.assertTrue(self.get(URL).get_json()["healthy"])
 
+    def test_switching_to_direct_without_a_renderable_direct_shape_is_refused(self):
+        prof_url = "/api/security/client-ip-profile"
+        super().put(prof_url, {"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
+        self.assertEqual(self.put({"enabled": True, "countries": ["RO"]}).status_code, 200)
+        before = {p: read(p) for p in (render.COUNTRY.path, render.PROFILE.path, country.PATH, profile.PATH)}
+        remove_dataset()
+        r = super().put(prof_url, {"mode": "direct"})
+        self.assertEqual((r.status_code, r.get_json()["code"]), (409, "country_dataset_unavailable"))
+        self.assertEqual({p: read(p) for p in before}, before, "geo.caddy must not stay in the Cloudflare shape "
+                         "under a direct profile")
+        install_dataset()
+        with mock.patch.object(config, "COUNTRY_MAX_PREFIXES", 1):
+            r = super().put(prof_url, {"mode": "direct"})
+        self.assertEqual((r.status_code, r.get_json()["code"]), (409, "country_prefix_cap_exceeded"))
+        self.assertEqual({p: read(p) for p in before}, before)
+        self.assertEqual(super().put(prof_url, {"mode": "direct"}).status_code, 200)
+        self.assertIn("vars caddy_console_country_policy direct", read(render.COUNTRY.path))
+
     def test_proxied_mode_puts_the_edge_ranges_in_remote_ip(self):
         self.put({"enabled": True, "countries": ["RO"]})
         super().put("/api/security/client-ip-profile", {"mode": "cloudflare-proxied"})
