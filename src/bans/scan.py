@@ -110,9 +110,17 @@ def _is_policy_import(line, path) -> bool:
     return bool(m and glob_matches(m.group(1), path))
 
 
-def block_import_state(text, block, path, after=()) -> dict:
+def _is_snippet_import(line, snippet) -> bool:
+    m = _IMPORT.match(line)
+    return bool(m and m.group(1) == snippet)
+
+
+def block_import_state(text, block, path, after=(), snippet=None) -> dict:
     """`after`: other managed policy paths that may come before this import
-    (the CrowdSec import goes directly after the manual one)."""
+    (the CrowdSec import goes directly after the manual one). `snippet`: match
+    `import <snippet>` (a Caddyfile snippet such as protect_crowdsec) instead
+    of a file glob covering `path`."""
+    mine = (lambda line: _is_snippet_import(line, snippet)) if snippet else (lambda line: _is_policy_import(line, path))
     lines = str(text).split("\n")
     children, depth = [], 1
     for n in range(block.start, block.end - 1):        # interior lines; n + 1 is the line number
@@ -122,13 +130,13 @@ def block_import_state(text, block, path, after=()) -> dict:
         children.append((n + 1, line, depth))
         bare = _PLACEHOLDER.sub("", line)
         depth += bare.count("{") - bare.count("}")
-    matches = [ln for ln, line, _ in children if _is_policy_import(line, path)]
+    matches = [ln for ln, line, _ in children if mine(line)]
     state = {"present": bool(matches), "count": len(matches),
              "line": matches[0] if matches else None, "first_child": False, "layout": None}
 
     def leads(seq) -> bool:
         for _, line in seq:
-            if _is_policy_import(line, path):
+            if mine(line):
                 return True
             if not any(_is_policy_import(line, p) for p in after):
                 return False

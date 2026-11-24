@@ -48,6 +48,16 @@ def _has_403(node) -> bool:
 
 
 REQUIRED_PROTECTED = ("100.64.0.0/10", "169.254.0.0/16")
+# Caddy's `private_ranges` shortcut as it appears in adapted JSON
+# (caddyhttp.PrivateRangesCIDR in Caddy 2.11.9).
+PRIVATE_RANGES = ("192.168.0.0/16", "172.16.0.0/12", "10.0.0.0/8", "127.0.0.1/8", "fd00::/8", "::1")
+
+
+def expand_tokens(tokens) -> list:
+    out = []
+    for t in tokens:
+        out.extend(PRIVATE_RANGES if t == "private_ranges" else (t,))
+    return out
 
 
 def _nets(ranges):
@@ -101,6 +111,10 @@ def classify(h):
         if str(h.get("status_code", "")).startswith("3") and (h.get("headers") or {}).get("Location"):
             return "pre", "redir"
         return "unknown", "respond"
+    if name == "crowdsec":
+        # The plugin only blocks banned clients (spec 3.5): never an application
+        # pre-handler for a file policy, wherever `order crowdsec first` puts it.
+        return "benign", None
     return "unknown", name or "unnamed handler"
 
 
@@ -177,4 +191,80 @@ def site_statuses(config, source, active: bool, *, expected_ranges=None) -> list
                 continue
             hosts = [h for m in route.get("match") or [] if isinstance(m, dict) for h in (m.get("host") or [])]
             out.append(_status(route, source, active, hosts[0] if hosts else (listen or name), hosts, name, expected))
+    return out
+
+
+PLUGIN_UNPROTECTED = ("The crowdsec handler runs here without import protect_crowdsec, so private, Docker and "
+                      "BANS_NEVER addresses reach the plugin. Replace the crowdsec line with import protect_crowdsec.")
+PLUGIN_OUTDATED = ("The running protected route is older than the current protected set. Use Re-apply for the "
+                   "plugin route in Security.")
+
+
+def _protect_ranges(route):
+    """The union of `not client_ip` ranges in the route's matchers, or None."""
+    found = None
+    for m in route.get("match") or []:
+        if not isinstance(m, dict):
+            continue
+        for n in m.get("not") or []:
+            nets = _client_ip_ranges(n)
+            if nets:
+                found = (found or set()) | nets
+    return found
+
+
+def _plugin_status(route, label, hosts, server, expected=None) -> SiteStatus:
+    events = []
+    _events(route, events, id(route))
+    s = SiteStatus(label, hosts, server, "not_imported")
+    at = next((i for i, (k, v, _, _) in enumerate(events) if k == "handler" and v.get("handler") == "crowdsec"), None)
+    if at is None:
+        return s
+    handler = events[at][1]
+    # _events records each route before its handlers, so the owner is earlier.
+    owner_at = max(i for i, (k, v, _, _) in enumerate(events[:at])
+                   if k == "route" and any(h is handler for h in v.get("handle") or []))
+    owner = events[owner_at][1]
+    ranges = _protect_ranges(owner)
+    if ranges is None or not _nets(REQUIRED_PROTECTED) <= ranges:
+        s.status, s.detail = "plugin_unprotected", PLUGIN_UNPROTECTED
+        return s
+    if expected is not None and ranges != expected:
+        s.status, s.detail = "unknown", PLUGIN_OUTDATED
+        return s
+    pre, unknown = [], []
+    for kind, h, _, shielded in events[:owner_at]:
+        if kind != "handler" or shielded:
+            continue
+        verdict, name = classify(h)
+        bucket = pre if verdict == "pre" else unknown if verdict == "unknown" else None
+        if bucket is not None and name not in bucket:
+            bucket.append(name)
+    if unknown:
+        s.status, s.pre_handlers = "unknown", pre + unknown
+        s.detail = "Handlers run before the plugin check that could answer the request first: " + ", ".join(unknown) + "."
+    elif pre:
+        s.status, s.pre_handlers = "enforced_pre_handler", pre
+    else:
+        s.status = "enforced"
+    return s
+
+
+def plugin_site_statuses(config, *, expected_exclusions=None) -> list:
+    """Per site, is the crowdsec handler in effective order behind the
+    protected matcher? Same iteration as site_statuses, so rows align.
+    `expected_exclusions`: the current protected tokens (expand_tokens form);
+    a running route with another set is reported as out of date."""
+    expected = None if expected_exclusions is None else _nets(expected_exclusions)
+    servers = (((config or {}).get("apps") or {}).get("http") or {}).get("servers") or {}
+    out = []
+    for name, srv in sorted(servers.items()):
+        if not isinstance(srv, dict):
+            continue
+        listen = (srv.get("listen") or [""])[0]
+        for route in srv.get("routes") or []:
+            if not isinstance(route, dict):
+                continue
+            hosts = [h for m in route.get("match") or [] if isinstance(m, dict) for h in (m.get("host") or [])]
+            out.append(_plugin_status(route, hosts[0] if hosts else (listen or name), hosts, name, expected))
     return out

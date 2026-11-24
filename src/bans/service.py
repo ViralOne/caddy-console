@@ -801,9 +801,21 @@ def _site_rows(live, text, state, now, holds) -> list:
             prefixes = None if state is None else render.effective_prefixes(state.records, now, name)
             expected = None if name in holds or prefixes is None else [addr.token(p) for p in prefixes]
             detected[name] = detect.site_statuses(live, src, bool(prefixes), expected_ranges=expected)
+    show_plugin = _plugin_rows_wanted(live)
+    names = list(sources) + (["plugin"] if show_plugin else [])
+    if live is not None and show_plugin:
+        expected = None
+        if "plugin" not in holds:
+            expected = detect.expand_tokens(protected_for(state or store.State()).exclusion_tokens())
+        detected["plugin"] = detect.plugin_site_statuses(live, expected_exclusions=expected)
+    plugin_after = tuple(render.SOURCES[n].path for n in render.SOURCES)
 
     def policy(name, status, block, mgmt, found=None):
-        imp = scan.block_import_state(text, block, sources[name].path, after=after.get(name, ())) if block else None
+        imp = None
+        if block is not None:
+            imp = (scan.block_import_state(text, block, None, after=plugin_after, snippet=render.PLUGIN.snippet)
+                   if name == "plugin" else
+                   scan.block_import_state(text, block, sources[name].path, after=after.get(name, ())))
         return {"status": _management_status(status, imp) if mgmt else status,
                 "pre_handlers": found.pre_handlers if found else [], "detail": found.detail if found else "",
                 "import": imp}
@@ -827,10 +839,16 @@ def _site_rows(live, text, state, now, holds) -> list:
         if b.start in seen:
             continue
         mgmt = bool(set(b.hosts) & management)
-        policies = {name: {**policy(name, fallback, b, mgmt), "detail": fallback_detail} for name in sources}
+        policies = {name: {**policy(name, fallback, b, mgmt), "detail": fallback_detail} for name in names}
         rows.append({"label": b.hosts[0] if b.hosts else b.addresses[0], "hosts": b.hosts,
                      "source": "main", "line": b.start, **policies["manual"], "policies": policies})
     return rows
+
+
+def _plugin_rows_wanted(live) -> bool:
+    if _plugin_active():
+        return True
+    return live is not None and any(s.status != "not_imported" for s in detect.plugin_site_statuses(live))
 
 
 def _management_status(live_status, imp) -> str:
@@ -902,6 +920,39 @@ def _crowdsec_status(now) -> dict:
             "list_origins": [o for o in origins if o in lapi.LIST_ORIGINS], "sync": doc, "stale": stale}
 
 
+ISOLATION_CHECK = ("crowdsec/check-plugin-isolation.sh -- -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml "
+                   "-f docker-compose.crowdsec-plugin.yaml")
+
+
+def _plugin_status(live, state, holds, text) -> dict:
+    """The plugin block of GET /api/security. Never probes Caddy: status()
+    already ran availability(), which refreshed the module cache."""
+    module = plugin.cached_module() if lapi.enabled() else None
+    app = plugin.live_app(live) if live is not None else None
+    if not (_plugin_active() or module or app):
+        return {"enabled": False}
+    problem = plugin.admin_problem(live) if live is not None else None
+    data = fsio.read_bytes(render.PLUGIN.path)
+    static = protected.build(never=never_networks(), docker=protected.read_docker_networks())
+    return {
+        "enabled": True, "module": module, "refused": problem is not None,
+        "admin": None if problem is None else {"code": problem.code, "message": problem.message},
+        "app": app, "key_mode": plugin.key_mode(), "key_file": plugin.key_file() or None,
+        "placeholder": plugin.api_key_placeholder(),
+        "ticker_interval": app["ticker_interval"] if app else plugin.TICKER_INTERVAL,
+        "definition": {
+            "file": render.PLUGIN.path, "import_line": render.PLUGIN.import_line,
+            "site_import": render.PLUGIN.site_import, "present": data is not None,
+            "hash": fsio.sha256_tag(data)[7:19] if data is not None else None,
+            "current": data is not None and state is not None and plugin_route_current(state),
+            "hold": "plugin" in holds, "hold_reason": holds.get("plugin"),
+            "imported": scan.mentions_import(text, render.PLUGIN.path),
+        },
+        "allowlist": plugin.allowlist_commands(static),
+        "check_command": ISOLATION_CHECK,
+    }
+
+
 def status(remote_addr) -> dict:
     avail = availability()
     info = recovery_info()
@@ -930,13 +981,15 @@ def status(remote_addr) -> dict:
     if info["required"] and info["kind"] in ("journal", "state_corrupt"):
         degraded = {"kind": info["kind"], "reason": info["reason"], "phase": info["phase"], "message": info["summary"]}
     by_source = {name: s["rendered_prefixes"] for name, s in sources.items()}
+    text = _read_caddyfile()
     return {
         "enabled": True, "available": avail.ok,
         "unavailable": None if avail.ok else {"code": avail.code, "message": avail.message},
         "state_version": info["state_version"], "degraded": degraded, "recovery": info,
         "sources": sources,
         "protected": protected_for(state or store.State(), _verified_client(remote_addr)).summary(),
-        "sites": _site_rows(live, _read_caddyfile(), state, now, holds),
+        "sites": _site_rows(live, text, state, now, holds),
+        "plugin": _plugin_status(live, state, holds, text),
         "caddy": caddy,
         "limits": {"max_prefixes": config.BANS_MAX, "used": sum(by_source.values()), "by_source": by_source},
         "last_apply": _last_apply(),
