@@ -116,6 +116,16 @@ class SecurityApiTest(_bans.ApiCase):
         self.assertIn("crowdsec-log-fields", by_id)
         self.assertTrue(body["context"]["crowdsec"])
 
+    def test_whitespace_crowdsec_url_is_disabled_for_snippets_and_warnings(self):
+        _crowdsec.enable(self, CROWDSEC_URL="  \t ")
+        body = self.get("/api/snippets").get_json()
+        ids = [s.get("id") for s in body["snippets"]]
+        self.assertNotIn("crowdsec-bans-site", ids)
+        self.assertFalse(body["context"]["crowdsec"])
+        text = f"a.example.com {{\n\trespond 200\n\timport {env.BANS_DIR}/bans-crowdsec*.caddy\n}}\n"
+        warnings = self.post("/api/validate", {"content": text}).get_json()["warnings"]
+        self.assertFalse(any("CrowdSec" in w for w in warnings), warnings)
+
     def test_validate_reports_crowdsec_import_problems(self):
         text = f"a.example.com {{\n\trespond 200\n\timport {env.BANS_DIR}/bans-crowdsec*.caddy\n}}\n"
         self.assertFalse(any("CrowdSec" in w for w in self.post("/api/validate", {"content": text}).get_json()["warnings"]))

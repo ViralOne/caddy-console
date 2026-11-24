@@ -12,7 +12,7 @@ import tests._env as env
 from tests import _bans, _crowdsec
 
 from src import audit, config
-from src.bans import addr, fsio, protected, render, service, store
+from src.bans import addr, fsio, lapi, protected, render, service, store
 
 CS = render.SOURCES["crowdsec"]
 MANUAL = render.SOURCES["manual"]
@@ -81,6 +81,16 @@ class RenderTest(SourcesCase):
         with mock.patch.object(config, "CROWDSEC_URL", _crowdsec.URL):
             self.assertEqual(list(render.active_sources(store.State())), ["manual", "crowdsec"])
 
+    def test_whitespace_url_is_disabled_like_lapi_enabled(self):
+        with mock.patch.object(config, "CROWDSEC_URL", "   "):
+            self.assertFalse(lapi.enabled())
+            self.assertEqual(list(render.active_sources(store.State())), ["manual"])
+
+    def test_a_crowdsec_file_on_disk_keeps_the_source_active(self):
+        fsio.atomic_write(CS.path, b"# left behind\n", 0o644)
+        self.assertIn("crowdsec", render.active_sources(store.State()))
+        self.assertIn("crowdsec", render.active_sources(None))
+
     def test_check_capacity_counts_the_total(self):
         render.check_capacity({"manual": 2, "crowdsec": 1}, 3)
         with self.assertRaises(render.CapacityError) as cm:
@@ -139,6 +149,37 @@ class ServiceSourcesTest(SourcesCase):
         version = store.load().version
         body, _ = service.reset({"source": "crowdsec", "version": version, "confirm": True}, "op", None)
         self.assertEqual(body["code"], "source_not_enabled")
+
+    def test_corrupt_state_reset_never_strands_crowdsec_bans_when_disabled(self):
+        # CrowdSec on, a decision rendered, then CrowdSec off and bans.json corrupt:
+        # the store no longer says crowdsec was used, but its file still enforces.
+        _crowdsec.enable(self)
+        put_records(cs_record("198.51.100.9", 1))
+        self.assertEqual(service.reapply({"source": "crowdsec"}, "op", None)[1], 200)
+        self.assertIn(b"198.51.100.9", fsio.read_bytes(CS.path))
+        with mock.patch.object(config, "CROWDSEC_URL", ""):
+            with open(store.STATE_PATH, "wb") as f:
+                f.write(b"{broken")
+            status = service.status("127.0.0.1")
+            self.assertIn("crowdsec", status["sources"])             # shown, so the UI offers its Reset
+            self.assertFalse(status["sources"]["crowdsec"]["enabled"])
+            version = status["recovery"]["state_version"]
+            body, code = service.reset({"source": "crowdsec", "version": version, "confirm": True}, "op", None)
+            self.assertEqual(code, 200, body)
+            self.assertNotIn(b"198.51.100.9", fsio.read_bytes(CS.path))
+            self.assertIn(CS.filename, store.load().last_rendered_hashes)
+
+    def test_corrupt_state_manual_reset_also_clears_a_stale_crowdsec_file(self):
+        _crowdsec.enable(self)
+        put_records(cs_record("198.51.100.9", 1))
+        self.assertEqual(service.reapply({"source": "crowdsec"}, "op", None)[1], 200)
+        with mock.patch.object(config, "CROWDSEC_URL", ""):
+            with open(store.STATE_PATH, "wb") as f:
+                f.write(b"{broken")
+            version = service.recovery_info()["state_version"]
+            body, code = service.reset({"source": "manual", "version": version, "confirm": True}, "op", None)
+            self.assertEqual(code, 200, body)
+            self.assertNotIn(b"198.51.100.9", fsio.read_bytes(CS.path))
 
     def test_held_crowdsec_file_does_not_mark_a_manual_ban_held(self):
         _crowdsec.enable(self)

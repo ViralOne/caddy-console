@@ -17,7 +17,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 from .. import config
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
-from ..bans import render as bans_render, scan as bans_scan, txn as bans_txn
+from ..bans import lapi as bans_lapi, render as bans_render, scan as bans_scan, txn as bans_txn
 from ..caddy_api import get_servers, invalidate_servers_cache
 from ..config import (
     APP_VERSION,
@@ -448,7 +448,7 @@ def validate():
         mgmt = bans_scan.management_hosts(content, bans_scan.console_host())
         manual_path = bans_render.SOURCES["manual"].path
         warnings += bans_scan.bans_warnings(content, manual_path, mgmt)
-        if config.CROWDSEC_URL:
+        if bans_lapi.url():
             warnings += bans_scan.bans_warnings(content, bans_render.SOURCES["crowdsec"].path, mgmt,
                                                 label="CrowdSec ban list", short="the CrowdSec ban list",
                                                 after=tuple(bans_render.SOURCES[n].path for n in bans_render.AFTER["crowdsec"]),
@@ -592,7 +592,7 @@ def get_snippets():
     if not config.BANS_ENABLED:
         return jsonify({"snippets": [s for s in snippets if "BANS_ENABLED" not in s.get("prerequisites", [])],
                         "context": {}})
-    crowdsec = bool(config.CROWDSEC_URL)
+    crowdsec = bool(bans_lapi.url())
     snippets = [s for s in snippets if crowdsec or "CROWDSEC_URL" not in s.get("prerequisites", [])]
     bans_dir = config.BANS_DIR.rstrip("/")
     for s in snippets:

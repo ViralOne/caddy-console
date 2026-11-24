@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass
 
 from .. import config
-from . import addr
+from . import addr, lapi
 
 HEADER = "# Managed by Caddy Console. Do not edit; changes are overwritten.\n"
 
@@ -47,12 +47,15 @@ LOCAL_ORIGINS = ("crowdsec", "cscli")
 
 def active_sources(state=None) -> dict:
     """The sources the console renders. Manual always. CrowdSec once it is
-    configured, or once it left something behind (records or a recorded policy
-    hash), so turning CrowdSec off still lets expiry and Reset clear what it
-    rendered. An install that never used CrowdSec never gets bans-crowdsec.caddy."""
+    configured (CROWDSEC_URL read as lapi.enabled() reads it), or once it left
+    something behind: records, a recorded policy hash or the policy file itself.
+    The file counts on its own so that, with CrowdSec off and bans.json corrupt,
+    a recovery Reset still clears bans-crowdsec.caddy instead of leaving it
+    enforcing bans nobody can see. An install that never used CrowdSec never
+    gets bans-crowdsec.caddy."""
     out = {"manual": SOURCES["manual"]}
     cs = SOURCES["crowdsec"]
-    if config.CROWDSEC_URL or (state is not None and (
+    if lapi.url() or os.path.exists(cs.path) or (state is not None and (
             any(r.source == "crowdsec" for r in state.records) or cs.filename in state.last_rendered_hashes)):
         out["crowdsec"] = cs
     return out
