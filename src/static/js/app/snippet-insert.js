@@ -24,9 +24,13 @@ export function importMatches(token, target) {
   return globToRegExp(base(token)).test(base(target));             // relative: Caddy's cwd is unknown
 }
 
+/** Mirrors render.AFTER in src/bans/render.py: the CrowdSec import may follow the manual one. */
+export const IMPORT_AFTER = { crowdsec: ['manual'] };
+export const SOURCE_FILES = { manual: 'bans-manual.caddy', crowdsec: 'bans-crowdsec.caddy' };
+
 const stripComment = (raw) => String(raw ?? '').replace(/(^|\s)#.*$/, '').trim();
 
-export function planSiteInsertion(text, cursorLine, code, { target, managementHosts = [] } = {}) {
+export function planSiteInsertion(text, cursorLine, code, { target, managementHosts = [], after = [] } = {}) {
   const lines = String(text).split('\n');
   const block = siteBlocks(text).find(b => cursorLine >= b.start && cursorLine <= b.end);
   if (!block) return { ok: false, reason: 'outside-site' };
@@ -36,6 +40,21 @@ export function planSiteInsertion(text, cursorLine, code, { target, managementHo
   for (let n = block.start + 1; n <= block.end - 1; n++) {
     const m = stripComment(lines[n - 1]).match(/^import\s+(\S+)/);
     if (m && importMatches(m[1], target)) return { ok: false, reason: 'duplicate', block, line: n };
+  }
+  // `after`: managed imports that may lead the block (the CrowdSec import goes
+  // directly after the manual one). Skip a leading run of them, if any.
+  const kids = [];
+  for (let n = block.start + 1; n <= block.end - 1; n++) if (stripComment(lines[n - 1])) kids.push(n);
+  const leadsAfter = (n) => {
+    const m = stripComment(lines[n - 1]).match(/^import\s+(\S+)/);
+    return !!m && after.some(t => importMatches(m[1], t));
+  };
+  let lead = 0;
+  while (lead < kids.length && leadsAfter(kids[lead])) lead++;
+  if (lead > 0) {
+    const prev = kids[lead - 1];
+    const indent = lines[prev - 1].match(/^\s*/)[0];
+    return { ok: true, block, line: prev + 1, text: indent + String(code).trim() + '\n' };
   }
   const firstChild = lines.slice(block.start, block.end - 1).find(l => stripComment(l));
   const indent = (firstChild && firstChild.match(/^\s*/)[0]) || '\t';

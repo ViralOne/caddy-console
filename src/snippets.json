@@ -75,5 +75,27 @@
     "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
     "prerequisites": ["BANS_ENABLED"],
     "code": "docker compose -f docker-compose.prod.yaml stop caddy-console\nsudo sh -c ': > /opt/caddy/console/bans-manual.caddy'\ndocker compose -f docker-compose.prod.yaml exec caddy sh -c \\\n  'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \\\n   --address \"${CADDY_ADMIN_ADDRESS:-0.0.0.0:2019}\"'\ndocker compose -f docker-compose.prod.yaml start caddy-console\n"
+  },
+  {
+    "id": "crowdsec-bans-site",
+    "name": "CrowdSec bans: protect this site",
+    "description": "Answer 403 to addresses CrowdSec decided to ban. Goes first in a site block, or directly after the manual ban import.",
+    "phase": "crowdsec",
+    "scope": "site",
+    "insert": "site-first",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED", "CROWDSEC_URL"],
+    "code": "import /etc/caddy/console/bans-crowdsec*.caddy\n"
+  },
+  {
+    "id": "crowdsec-log-fields",
+    "name": "CrowdSec: log fields for detection",
+    "description": "Logs the User-Agent and a Basic auth challenge as two top-level access-log fields, so CrowdSec's bad User-Agent and brute-force scenarios work while request and response headers stay out of the log. Put it in each logged site, below the ban imports. Copy only.",
+    "phase": "crowdsec",
+    "scope": "site",
+    "insert": "copy-only",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED", "CROWDSEC_URL"],
+    "code": "log_append <user_agent {http.request.header.User-Agent}\nlog_append auth_challenge {http.response.header.Www-Authenticate}\n"
   }
 ]

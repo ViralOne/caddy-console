@@ -1,7 +1,7 @@
 // Side panels (Snippets, Backups): one open at a time, toggled from the header.
 import { clearPreview, loadBackups } from './backups.js';
 import { editorView, fetchJson, setDot, showError } from './core.js';
-import { planSiteInsertion } from './snippet-insert.js';
+import { IMPORT_AFTER, SOURCE_FILES, planSiteInsertion } from './snippet-insert.js';
 import { toast } from './ui/toast.js';
 
 const panel = (name) => document.getElementById(`panel-${name}`);
@@ -59,9 +59,11 @@ export async function loadSnippets() {
   });
 }
 
+const SOURCE_SNIPPETS = { manual: 'manual-bans-site', crowdsec: 'crowdsec-bans-site' };
+
 const REFUSED = {
   'outside-site': 'Put the cursor inside a site block first; the import goes first in that site.',
-  duplicate: 'This site already imports the ban list.',
+  duplicate: 'This site already imports this ban list.',
   'management-site': "This is the console's own site; a ban there could lock you out, so the import is not offered.",
 };
 
@@ -79,9 +81,12 @@ export function insertSiteFirst(s, cursorLine) {
       { kind: 'warn', action: { label: 'Copy', run: () => copySnippet(s) } });
     return false;
   }
+  const dir = ctx.bans_dir || '/etc/caddy/console';
+  const source = Object.keys(SOURCE_SNIPPETS).find(k => SOURCE_SNIPPETS[k] === s.id) || 'manual';
   const plan = planSiteInsertion(editorView.state.doc.toString(), cursorLine, s.code, {
-    target: `${ctx.bans_dir || '/etc/caddy/console'}/bans-manual.caddy`,
+    target: `${dir}/${SOURCE_FILES[source]}`,
     managementHosts: ctx.management_hosts || [],
+    after: (IMPORT_AFTER[source] || []).map(a => `${dir}/${SOURCE_FILES[a]}`),
   });
   if (!plan.ok) {
     toast(REFUSED[plan.reason], { kind: 'warn', action: { label: 'Copy', run: () => copySnippet(s) } });
@@ -97,12 +102,12 @@ export function insertSiteFirst(s, cursorLine) {
 }
 
 /** Security view entry: a site with no known line (external import) gets Copy only. */
-export async function insertBanImportAtLine(siteLine) {
+export async function insertBanImportAtLine(siteLine, source = 'manual') {
   let data;
   try { data = await loadSnippetData(); }
   catch (e) { toast(`Could not load snippets: ${e.message}`, { kind: 'error' }); return false; }
-  const s = data.snippets.find(x => x.id === 'manual-bans-site');
-  if (!s) return false;
+  const s = data.snippets.find(x => x.id === SOURCE_SNIPPETS[source]);
+  if (!s) { toast('This ban list is not available: CrowdSec is not configured.', { kind: 'warn' }); return false; }
   if (!Number.isInteger(siteLine)) {
     toast('This site is not defined in the editor buffer (for example an imported file), so the import cannot be inserted here.',
       { kind: 'warn', action: { label: 'Copy', run: () => copySnippet(s) } });

@@ -69,10 +69,38 @@ check('the site snippet carries the spec metadata', () => {
     code: 'import /etc/caddy/console/bans-manual*.caddy\n',
   });
 });
-check('scopes: site snippets insert first, host snippets are copy only', () => {
+check('scopes: ban imports insert first in a site, everything else is copy only', () => {
   for (const s of snippets.filter(x => x.scope)) {
-    assert.equal(s.insert, s.scope === 'site' ? 'site-first' : 'copy-only', s.id);
+    const importsBans = s.scope === 'site' && /^import \S*bans-\w+\*\.caddy\n$/.test(s.code);
+    assert.equal(s.insert, importsBans ? 'site-first' : 'copy-only', s.id);
   }
   assert.doesNotMatch(snippets.find(x => x.id === 'manual-bans-recovery').code, /^import /m);
+});
+const CS_T = '/etc/caddy/console/bans-crowdsec.caddy';
+const CS_CODE = 'import /etc/caddy/console/bans-crowdsec*.caddy\n';
+const CS_OPTS = { target: CS_T, managementHosts: ['console.example.com'], after: [T] };
+const WITH_MANUAL = ['a.example.com {', '\timport /etc/caddy/console/bans-manual*.caddy', '\treverse_proxy 127.0.0.1:9', '}', ''].join('\n');
+check('the CrowdSec import goes directly after the manual import', () => {
+  const p = planSiteInsertion(WITH_MANUAL, 1, CS_CODE, CS_OPTS);
+  assert.deepEqual([p.ok, p.line, p.text], [true, 3, '\timport /etc/caddy/console/bans-crowdsec*.caddy\n']);
+});
+check('without a manual import the CrowdSec import goes first', () => {
+  const p = planSiteInsertion(CF, 13, CS_CODE, CS_OPTS);
+  assert.deepEqual([p.ok, p.line], [true, 14]);
+});
+check('the CrowdSec import is not inserted twice, nor into the console site', () => {
+  const twice = applyPlan(WITH_MANUAL, planSiteInsertion(WITH_MANUAL, 1, CS_CODE, CS_OPTS));
+  assert.equal(planSiteInsertion(twice, 1, CS_CODE, CS_OPTS).reason, 'duplicate');
+  assert.equal(planSiteInsertion(CF, 29, CS_CODE, CS_OPTS).reason, 'management-site');
+});
+check('the CrowdSec snippets carry their metadata', () => {
+  const s = snippets.find(x => x.id === 'crowdsec-bans-site');
+  assert.deepEqual([s.phase, s.scope, s.insert, s.prerequisites, s.code],
+    ['crowdsec', 'site', 'site-first', ['BANS_ENABLED', 'CROWDSEC_URL'], CS_CODE]);
+  const f = snippets.find(x => x.id === 'crowdsec-log-fields');
+  assert.deepEqual([f.scope, f.insert, f.prerequisites], ['site', 'copy-only', ['BANS_ENABLED', 'CROWDSEC_URL']]);
+  assert.match(f.code, /^log_append <user_agent \{http\.request\.header\.User-Agent\}$/m);
+  assert.match(f.code, /^log_append auth_challenge \{http\.response\.header\.Www-Authenticate\}$/m);
+  assert.doesNotMatch(f.code, /Authorization|Cookie/i);
 });
 console.log(`\n${passed} passed`);

@@ -8,7 +8,7 @@ import unittest
 from unittest import mock
 
 import tests._env as env
-from tests import _bans
+from tests import _bans, _crowdsec
 
 from src import config, create_app
 from src.bans import service, store
@@ -104,6 +104,28 @@ class SecurityApiTest(_bans.ApiCase):
             self.assertFalse(self.get("/api/security").get_json()["available"])
             r = self.post("/api/save", {"content": "example.com {\n\trespond 200\n}\n"})
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+
+    def test_crowdsec_snippets_only_when_configured(self):
+        ids = [s.get("id") for s in self.get("/api/snippets").get_json()["snippets"]]
+        self.assertNotIn("crowdsec-bans-site", ids)
+        self.assertNotIn("crowdsec-log-fields", ids)
+        _crowdsec.enable(self)
+        body = self.get("/api/snippets").get_json()
+        by_id = {s.get("id"): s for s in body["snippets"]}
+        self.assertEqual(by_id["crowdsec-bans-site"]["code"], f"import {env.BANS_DIR}/bans-crowdsec*.caddy\n")
+        self.assertIn("crowdsec-log-fields", by_id)
+        self.assertTrue(body["context"]["crowdsec"])
+
+    def test_validate_reports_crowdsec_import_problems(self):
+        text = f"a.example.com {{\n\trespond 200\n\timport {env.BANS_DIR}/bans-crowdsec*.caddy\n}}\n"
+        self.assertFalse(any("CrowdSec" in w for w in self.post("/api/validate", {"content": text}).get_json()["warnings"]))
+        _crowdsec.enable(self)
+        warnings = self.post("/api/validate", {"content": text}).get_json()["warnings"]
+        self.assertTrue(any("put the CrowdSec import first" in w for w in warnings), warnings)
+        ok = (f"a.example.com {{\n\timport {env.BANS_DIR}/bans-manual*.caddy\n"
+              f"\timport {env.BANS_DIR}/bans-crowdsec*.caddy\n\trespond 200\n}}\n")
+        self.assertEqual([w for w in self.post("/api/validate", {"content": ok}).get_json()["warnings"]
+                          if "import" in w], [])
 
 
 class DisabledTest(unittest.TestCase):

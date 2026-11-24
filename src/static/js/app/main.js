@@ -81,7 +81,7 @@ document.addEventListener('app:open-site', (e) => {
 // Security "Add import in editor": insert in the editor buffer only; on a refusal, show the site.
 document.addEventListener('app:insert-ban-import', async (e) => {
   showView('editor');
-  if (!(await insertBanImportAtLine(e.detail.line))) revealLine(e.detail.line);
+  if (!(await insertBanImportAtLine(e.detail.line, e.detail.source || 'manual'))) revealLine(e.detail.line);
 });
 
 syncViewFromUrl();

@@ -445,8 +445,13 @@ def validate():
     warnings += smart_validate(content)
     warnings += upstream_resolve_warnings(content)
     if config.BANS_ENABLED:
-        warnings += bans_scan.bans_warnings(content, bans_render.SOURCES["manual"].path,
-                                            bans_scan.management_hosts(content, bans_scan.console_host()))
+        mgmt = bans_scan.management_hosts(content, bans_scan.console_host())
+        manual_path = bans_render.SOURCES["manual"].path
+        warnings += bans_scan.bans_warnings(content, manual_path, mgmt)
+        if config.CROWDSEC_URL:
+            warnings += bans_scan.bans_warnings(content, bans_render.SOURCES["crowdsec"].path, mgmt,
+                                                label="CrowdSec ban list", short="the CrowdSec ban list",
+                                                after=(manual_path,), reserved=False)
 
     return jsonify({"valid": True,
                     "message": "Caddyfile check passed, but review warnings" if warnings else message,
@@ -586,6 +591,8 @@ def get_snippets():
     if not config.BANS_ENABLED:
         return jsonify({"snippets": [s for s in snippets if "BANS_ENABLED" not in s.get("prerequisites", [])],
                         "context": {}})
+    crowdsec = bool(config.CROWDSEC_URL)
+    snippets = [s for s in snippets if crowdsec or "CROWDSEC_URL" not in s.get("prerequisites", [])]
     bans_dir = config.BANS_DIR.rstrip("/")
     for s in snippets:
         if s.get("phase"):
@@ -597,5 +604,6 @@ def get_snippets():
         text = ""
     return jsonify({"snippets": snippets, "context": {
         "bans_dir": bans_dir,
+        "crowdsec": crowdsec,
         "management_hosts": sorted(bans_scan.management_hosts(text, bans_scan.console_host())),
     }})

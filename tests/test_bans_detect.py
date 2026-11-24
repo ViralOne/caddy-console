@@ -164,6 +164,19 @@ class ScanTest(unittest.TestCase):
         custom = "x.example.com {\n\t@caddy_console_mine path /a\n\trespond @caddy_console_mine 404\n}\n"
         self.assertIn("reserved for Caddy Console", scan.bans_warnings(custom, P)[0])
 
+    def test_crowdsec_warnings(self):
+        cs = "/etc/caddy/console/bans-crowdsec.caddy"
+        text = ("a.example.com {\n\timport /etc/caddy/console/bans-crowdsec*.caddy\n"
+                "\timport /etc/caddy/console/bans-crowdsec*.caddy\n}\n"
+                "console.example.com {\n\timport /etc/caddy/console/bans-crowdsec*.caddy\n}\n"
+                "x.example.com {\n\t@caddy_console_mine path /a\n\trespond @caddy_console_mine 404\n}\n")
+        warnings = scan.bans_warnings(text, cs, {"console.example.com"}, label="CrowdSec ban list",
+                                      short="the CrowdSec ban list", after=(P,), reserved=False)
+        self.assertEqual(warnings, [
+            "Line 2: this site imports the CrowdSec ban list 2 times; keep one import.",
+            "Line 6: this is the console's own site; importing the CrowdSec ban list here could lock you out of the console.",
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

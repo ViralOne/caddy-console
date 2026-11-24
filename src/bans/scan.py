@@ -18,6 +18,9 @@ _USER_MATCHER = re.compile(r"^@caddy_console_\w*")
 _ROUTE = re.compile(r"^route(\s|\{|$)")
 FIRST_MSG = "put the ban import first in the site block (or first inside its top-level route) so nothing runs before the ban check."
 
+AFTER_MSG = ("put the CrowdSec import first in the site block, or directly after the manual ban import, "
+             "so nothing runs before the ban check.")
+
 
 @dataclass
 class SiteBlock:
@@ -161,21 +164,23 @@ def management_hosts(text, server_host=None) -> set:
     return hosts
 
 
-def bans_warnings(text, path, management=frozenset()) -> list:
+def bans_warnings(text, path, management=frozenset(), *, label="manual ban list", short="the ban list",
+                  after=(), reserved=True) -> list:
     out = []
-    for i, raw in enumerate(str(text).split("\n"), 1):
-        if _USER_MATCHER.match(_strip(raw)):
-            out.append(f"Line {i}: matcher names starting with @caddy_console_ are reserved for "
-                       "Caddy Console's generated policy; rename this matcher.")
+    if reserved:
+        for i, raw in enumerate(str(text).split("\n"), 1):
+            if _USER_MATCHER.match(_strip(raw)):
+                out.append(f"Line {i}: matcher names starting with @caddy_console_ are reserved for "
+                           "Caddy Console's generated policy; rename this matcher.")
     for block in site_blocks(text):
-        st = block_import_state(text, block, path)
+        st = block_import_state(text, block, path, after=after)
         if not st["present"]:
             continue
         if set(block.hosts) & set(management):
-            out.append(f"Line {st['line']}: this is the console's own site; importing the ban list "
+            out.append(f"Line {st['line']}: this is the console's own site; importing {short} "
                        "here could lock you out of the console.")
         if st["count"] > 1:
-            out.append(f"Line {st['line']}: this site imports the manual ban list {st['count']} times; keep one import.")
+            out.append(f"Line {st['line']}: this site imports the {label} {st['count']} times; keep one import.")
         if not st["first_child"]:
-            out.append(f"Line {st['line']}: {FIRST_MSG}")
+            out.append(f"Line {st['line']}: {AFTER_MSG if after else FIRST_MSG}")
     return out
