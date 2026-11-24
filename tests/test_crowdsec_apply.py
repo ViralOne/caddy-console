@@ -72,6 +72,17 @@ class ApplyTest(ApplyCase):
         self.assertEqual(service.apply_crowdsec(again, snapshot=True).code, "unchanged")
         self.assertEqual((fsio.read_bytes(store.STATE_PATH), self.loads()), (state_bytes, loads))
 
+    def test_no_op_applies_write_no_audit_line_in_either_mode(self):
+        service.apply_crowdsec([A("203.0.113.9", 1)], snapshot=True, ignored={"not_ban": 1})
+        entries = len(list(audit.iter_entries()))
+        files, loads = (fsio.read_bytes(CS.path), fsio.read_bytes(store.STATE_PATH)), self.loads()
+        for snapshot in (True, False, True, False):
+            r = service.apply_crowdsec([A("203.0.113.9", 1)], snapshot=snapshot, ignored={"not_ban": 1})
+            self.assertEqual(r.code, "unchanged")
+        self.assertEqual(len(list(audit.iter_entries())), entries)
+        self.assertEqual(((fsio.read_bytes(CS.path), fsio.read_bytes(store.STATE_PATH)), self.loads()),
+                         (files, loads))
+
     def test_extended_decision_is_refreshed_without_a_reload(self):
         service.apply_crowdsec([A("203.0.113.9", 1, hours=4)])
         loads = self.loads()

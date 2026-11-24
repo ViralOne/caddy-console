@@ -595,7 +595,9 @@ def apply_crowdsec(desired, *, snapshot=False, ignored=None, now=None) -> SyncAp
             return result
         events = _expired_events(expired)
         all_ignored = ignored + collections.Counter({f"protected:{k}": v for k, v in prot_counts.items()})
-        if snapshot:
+        # A sync that changes nothing is silent in both modes: no audit line,
+        # and txn writes no file and reloads nothing for unchanged bytes.
+        if snapshot and (added or removed or expired):
             events.append(("crowdsec_snapshot", f"{len(keep)} active, {added} added, {removed} removed; "
                            f"ignored: {_counts_text(all_ignored)}"))
         elif added or removed:
