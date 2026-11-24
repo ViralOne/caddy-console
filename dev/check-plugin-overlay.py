@@ -70,6 +70,12 @@ def main(caddy, console, variant):
             problems.append(f"{name} publishes port 2019 or container port 8080")
     if cs.get("ports"):
         problems.append("crowdsec publishes ports")
+    # A peer that shares a network with Caddy must not forge frames or routes to
+    # the admin address (weak host model): no NET_RAW, no NET_ADMIN.
+    for name, svc in services.items():
+        if name == "crowdsec" or name.startswith("cloudflared"):
+            if "ALL" not in (svc.get("cap_drop") or []) or set(svc.get("cap_add") or []) & {"NET_RAW", "NET_ADMIN", "ALL"}:
+                problems.append(f"{name} must drop all capabilities (cap_drop: [ALL], no NET_RAW or NET_ADMIN)")
     if problems:
         sys.exit("\n".join(problems))
 

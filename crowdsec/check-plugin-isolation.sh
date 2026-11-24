@@ -2,7 +2,8 @@
 # Deployment check for CrowdSec plugin mode (docs/security.md#crowdsec-plugin, spec 3.1).
 # Run it on the Docker host after every start; plugin mode is not started
 # successfully until it passes. It needs no published port: each probe runs in
-# the network namespace of the CrowdSec or cloudflared container itself.
+# the network namespace of the CrowdSec or cloudflared container itself. It also
+# checks that those containers have no CAP_NET_RAW or CAP_NET_ADMIN.
 #
 #   crowdsec/check-plugin-isolation.sh [--caddy caddy] [--console caddy-console] [--data-port 80] \
 #     -- -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml
@@ -27,12 +28,26 @@ probe_image="$(docker inspect -f '{{.Config.Image}}' "$console_id")"
 
 # Exit 0 when a TCP connection to $2:$3 succeeds from inside container $1.
 reach() {
-  docker run --rm --network "container:$1" --entrypoint /app/.venv/bin/python "$probe_image" -c '
+  docker run --rm --cap-drop ALL --security-opt no-new-privileges:true --network "container:$1" \
+    --entrypoint /app/.venv/bin/python "$probe_image" -c '
 import socket, sys
 try:
     socket.create_connection((sys.argv[1], int(sys.argv[2])), 3).close()
 except OSError:
     sys.exit(1)' "$2" "$3"
+}
+# Exit 0 when the main process of container $1 has neither CAP_NET_ADMIN (12) nor
+# CAP_NET_RAW (13) in its bounding set (what cap_drop removes; a process can never
+# gain a capability outside it, not even through a setuid or file-capability binary). Caddy accepts a packet for 172.30.250.2
+# on any of its interfaces, so a peer able to write raw frames or routes could
+# address the admin port through a network it shares with Caddy.
+no_net_caps() {
+  docker run --rm --cap-drop ALL --security-opt no-new-privileges:true --network none --pid "container:$1" \
+    --entrypoint /app/.venv/bin/python "$probe_image" -c '
+import sys
+with open("/proc/1/status") as f:
+    bnd = next(int(line.split()[1], 16) for line in f if line.startswith("CapBnd:"))
+sys.exit(1 if bnd & (1 << 12 | 1 << 13) else 0)'
 }
 networks_of() { docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}={{$v.IPAddress}} {{end}}' "$1"; }
 
@@ -42,6 +57,7 @@ peers="$("${COMPOSE[@]}" ps --format '{{.Service}}' | grep -E '^(crowdsec|cloudf
 for peer in $peers; do
   peer_id="$("${COMPOSE[@]}" ps -q "$peer")"
   peer_nets="$(networks_of "$peer_id")"
+  no_net_caps "$peer_id" || fail "$peer has CAP_NET_RAW or CAP_NET_ADMIN; give it cap_drop: [ALL]"
   targets="$ADMIN_IP"
   for entry in $caddy_nets; do targets="$targets ${entry#*=}"; done
   for ip in $targets; do
@@ -56,9 +72,9 @@ for peer in $peers; do
     answered=""
     for ip in $shared; do if reach "$peer_id" "$ip" "$DATA_PORT"; then answered="$ip"; break; fi; done
     [ -n "$answered" ] || fail "$peer cannot reach Caddy's data plane on port $DATA_PORT ($shared)"
-    echo "$peer: 2019 refused on $(echo "$targets" | wc -w | tr -d ' ') addresses; data plane answers at $answered:$DATA_PORT"
+    echo "$peer: no NET_RAW/NET_ADMIN; 2019 refused on $(echo "$targets" | wc -w | tr -d ' ') addresses; data plane answers at $answered:$DATA_PORT"
   else
-    echo "$peer: 2019 refused on $(echo "$targets" | wc -w | tr -d ' ') addresses; shares no network with Caddy"
+    echo "$peer: no NET_RAW/NET_ADMIN; 2019 refused on $(echo "$targets" | wc -w | tr -d ' ') addresses; shares no network with Caddy"
   fi
 done
 

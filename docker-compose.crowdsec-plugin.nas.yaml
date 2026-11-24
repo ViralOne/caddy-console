@@ -20,7 +20,8 @@
 #   }
 #
 # The image's entrypoint refuses to start Caddy otherwise. No port is
-# published; CrowdSec and cloudflared never join caddy-admin. A stack whose
+# published; CrowdSec and cloudflared never join caddy-admin and run without
+# capabilities (no raw frames or routes towards the admin address). A stack whose
 # caddy-admin network already exists without this subnet must be taken down
 # once (docker compose ... down, without -v) so Compose can recreate it.
 services:
@@ -50,6 +51,12 @@ services:
       CROWDSEC_PLUGIN_BOUNCER_KEY_FILE: ""
 
   crowdsec:
+    # Caddy now shares crowdsec-lapi with CrowdSec. Linux accepts a packet for
+    # any local address on any interface, so a peer that can write raw frames
+    # (NET_RAW) or routes (NET_ADMIN) could address 172.30.250.2:2019 through
+    # Caddy's crowdsec-lapi interface. CrowdSec needs no capability at all;
+    # crowdsec/check-plugin-isolation.sh checks its effective set.
+    cap_drop: [ALL]
     environment:
       BOUNCER_KEY_caddy_plugin: ${CROWDSEC_PLUGIN_BOUNCER_KEY:?Set CROWDSEC_PLUGIN_BOUNCER_KEY}
 
