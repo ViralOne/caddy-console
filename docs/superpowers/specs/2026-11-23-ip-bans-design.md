@@ -1077,8 +1077,11 @@ Requirements:
   If direct LAN access is required, exact LAN ranges are handled separately.
 - A Caddy origin guard verifies `remote_ip` is Cloudflare or an approved LAN
   before any `CF-IPCountry` policy is trusted.
-- Cloudflare edge ranges are added to the generated protected set so a
-  misconfigured client-IP chain cannot ban the complete proxy layer.
+- Cloudflare edge ranges are added to the input-refusal set so a ban or decision
+  cannot target the complete proxy layer, but they are never rendered into a
+  `not client_ip` exclusion: a request whose client IP is an edge address (Worker
+  subrequest, missing trusted-proxies import) must not skip bans or the country
+  policy.
 
 ### Cloudflare Tunnel
 

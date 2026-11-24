@@ -1433,12 +1433,17 @@ def _country_status(live, holds) -> dict:
     # Healthy needs the rendered file, the confirmation (Cloudflare) and, when
     # Caddy answers, the same shape running live.
     live_ok = None if shapes is None else bool(shapes) and set(shapes) == {info["shape"] or "off"}
+    # The header and range trust only hold when the live Caddy runs the selected
+    # profile's trusted proxies; without the import client_ip is the edge peer.
+    trust = _live_trust(live, profile.load_or_default()) if live is not None else None
+    trust_ok = None if trust is None else bool(trust) and all(t["matches"] for t in trust)
     prefixes = info["prefixes"] if isinstance(info["prefixes"], dict) else {}
     summary = {"mode": info["shape"], "countries": info["countries"], "prefixes": prefixes,
                "cap": info["limits"]["max"], "warn": info["limits"]["warn"], "warnings": info["warnings"],
-               "healthy": bool(info["healthy"] and live_ok is not False), "live_ok": live_ok}
+               "healthy": bool(info["healthy"] and live_ok is not False and trust_ok is not False),
+               "live_ok": live_ok, "trust_ok": trust_ok}
     return {**info, "active": _country_active(), "hold": holds.get("country"), "live_shapes": shapes,
-            "summary": summary}
+            "healthy": summary["healthy"], "trust_ok": trust_ok, "summary": summary}
 
 
 def status(remote_addr) -> dict:

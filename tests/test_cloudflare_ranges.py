@@ -111,9 +111,10 @@ class RefreshTest(_bans.ApiCase):
                                           "cloudflare-ranges.json", "cloudflare-trusted-proxies.caddy",
                                           "crowdsec-plugin-protect.caddy", "plugin-policy.json"]))
         self.assertEqual([k for k, _ in self.caddy.calls].count("load"), 1)
-        for path in (render.PROFILE.path, render.SOURCES["manual"].path, render.PLUGIN.path):
-            self.assertNotIn(DROPPED, fsio.read_bytes(path).decode(), path)
-            self.assertIn("173.245.48.0/20", fsio.read_bytes(path).decode(), path)
+        self.assertNotIn(DROPPED, fsio.read_bytes(render.PROFILE.path).decode())
+        self.assertIn("173.245.48.0/20", fsio.read_bytes(render.PROFILE.path).decode())
+        for path in (render.SOURCES["manual"].path, render.PLUGIN.path):
+            self.assertNotIn("173.245.48.0/20", fsio.read_bytes(path).decode(), "the edge is never an exclusion")
         st = store.load()
         for name in ("bans-manual.caddy", "bans-crowdsec.caddy"):
             self.assertEqual(st.last_rendered_hashes[name], fsio.sha256_tag(fsio.read_bytes(os.path.join(D, name))))
@@ -125,7 +126,7 @@ class RefreshTest(_bans.ApiCase):
         self.post("/api/bans", {"value": "203.0.113.7", "duration": "4h", "reason": ""})
         before = {p: fsio.read_bytes(p) for p in (render.PROFILE.path, render.SOURCES["manual"].path,
                                                   profile.PATH, store.STATE_PATH)}
-        with _bans.crash_at("replaced:bans-manual.caddy"):
+        with _bans.crash_at("replaced:cloudflare-trusted-proxies.caddy"):
             with self.assertRaises(_bans.SimulatedCrash):
                 self.refresh(FakeSession(v4=V4_LESS))
         self.assertIsNone(txn.resolve_pending(), "live still runs the previous config: restored")

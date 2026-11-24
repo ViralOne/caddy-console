@@ -722,8 +722,11 @@ Trusting a header is only as safe as the network path:
   dedicated Docker network and enter it. The console refuses `private_ranges`
   unless you confirm that the listener is reachable only from the tunnel network:
   trusting a broad range lets any container or LAN host forge the client IP.
-- Proxied mode adds the edge ranges to the protected set, so a ban or country
-  rule can never lock Cloudflare itself out.
+- Proxied mode refuses to ban an edge range, so a ban can never lock Cloudflare
+  itself out. The edge ranges are never written into the allowed side
+  (`not client_ip`) of a ban or country matcher: a request whose client address
+  is an edge address (a Cloudflare Worker subrequest, or a site that does not
+  import the trusted proxies file) is checked like any other client.
 
 **Range auto-update.** In proxied mode the console fetches
 `https://www.cloudflare.com/ips-v4` and `/ips-v6` daily
@@ -737,8 +740,10 @@ Security shows its age. Direct and tunnel mode never contact Cloudflare.
 ### Country policy
 
 An allowlist: clients outside the selected countries get `403`. Protected
-addresses (loopback, private and your LAN, plus the edge ranges in proxied mode)
-and the management session are always allowed. Enable it with
+addresses (loopback, private and your LAN) and the management session are always
+allowed; Cloudflare's edge ranges are not, so an edge address that reaches the
+policy as the client is judged like anyone else. Security shows the policy as
+healthy only when the running Caddy trusts the selected profile's proxies. Enable it with
 `COUNTRY_POLICY_ENABLED=true`, choose countries in Security and import it per
 site with **Country policy: protect this site**:
 

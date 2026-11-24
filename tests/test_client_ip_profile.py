@@ -119,8 +119,8 @@ class ProfileApiTest(_bans.ApiCase):
         self.assertEqual([k for k, _ in self.caddy.calls].count("load"), 1, "one /load for the whole set")
         self.assertIn(" 173.245.48.0/20", read(render.PROFILE.path))
         manual = read(render.SOURCES["manual"].path)
-        self.assertIn("173.245.48.0/20", manual.split("not client_ip", 1)[1])
-        self.assertIn("2400:cb00::/32", manual.split("not client_ip", 1)[1])
+        self.assertNotIn("173.245.48.0/20", manual, "the edge never sits on the allowed side of a ban")
+        self.assertNotIn("2400:cb00::/32", manual)
         doc = json.loads(read(profile.PATH))
         self.assertEqual(doc["mode"], "cloudflare-proxied")
         self.assertEqual(doc["last_rendered_hashes"]["cloudflare-trusted-proxies.caddy"],

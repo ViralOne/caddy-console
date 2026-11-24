@@ -9,7 +9,7 @@ from tests import _bans
 from tests.test_country_policy import SITE, URL, install_dataset, remove_dataset
 
 from src import config
-from src.bans import detect, service
+from src.bans import detect, profile, service
 
 MARK = "caddy_console_country_policy"
 
@@ -104,6 +104,12 @@ class StatusTest(_bans.ApiCase):
         self.assertFalse(self.status()["country_policy"]["summary"]["healthy"])
         self.put(URL, {"enabled": True, "countries": ["RO"], "cloudflare_geolocation_confirmed": True})
         self.caddy.live = live("cloudflare")
+        self.assertFalse(self.status()["country_policy"]["summary"]["healthy"],
+                         "Caddy does not run the profile's trusted proxies")
+        self.caddy.live = live("cloudflare")
+        srv = self.caddy.live["apps"]["http"]["servers"]["srv0"]
+        srv["trusted_proxies"] = {"source": "static", "ranges": profile.load_or_default().peers()}
+        srv["client_ip_headers"] = ["CF-Connecting-IP"]
         self.assertTrue(self.status()["country_policy"]["summary"]["healthy"])
 
     def test_no_country_row_while_the_policy_was_never_used(self):

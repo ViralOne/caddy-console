@@ -276,6 +276,26 @@ class CountryApiTest(_bans.ApiCase):
         for net in cfranges.BUNDLED["v4"] + cfranges.BUNDLED["v6"]:
             self.assertIn(" " + net, line)
 
+    def test_edge_ranges_are_never_exempt_from_the_country_policy(self):
+        self.put({"enabled": True, "countries": ["RO"]})
+        super().put("/api/security/client-ip-profile", {"mode": "cloudflare-proxied"})
+        line = next(l for l in read(render.COUNTRY.path).splitlines() if "not client_ip" in l)
+        for net in cfranges.BUNDLED["v4"] + cfranges.BUNDLED["v6"]:
+            self.assertNotIn(net, line)
+        self.assertIn("private_ranges", line)
+
+    def test_cloudflare_health_needs_the_live_trusted_proxies_to_match_the_profile(self):
+        self.put({"enabled": True, "countries": ["RO"], "cloudflare_geolocation_confirmed": True})
+        super().put("/api/security/client-ip-profile", {"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
+        summary = lambda: self.get("/api/security").get_json()["country_policy"]["summary"]
+        self.assertFalse(summary()["healthy"], "the trusted proxies file is not imported: client_ip is the peer")
+        srv = self.caddy.live["apps"]["http"]["servers"]["srv0"]
+        srv["trusted_proxies"] = {"source": "static", "ranges": ["172.31.0.2/32"]}
+        srv["client_ip_headers"] = ["CF-Connecting-IP"]
+        self.assertTrue(summary()["healthy"])
+        srv["trusted_proxies"]["ranges"] = ["172.31.0.9/32"]
+        self.assertFalse(summary()["healthy"])
+
     def test_cloudflare_policy_cannot_be_enabled_without_a_peer(self):
         super().put("/api/security/client-ip-profile", {"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
         self.assertEqual(self.put({"enabled": True, "countries": ["RO"]}).status_code, 200)

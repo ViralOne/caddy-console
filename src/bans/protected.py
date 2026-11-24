@@ -29,7 +29,11 @@ RENDER_BASE = ("private_ranges", "100.64.0.0/10", "169.254.0.0/16", "fc00::/7", 
 _RENDER_BASE_NETS = tuple(_n(x) for x in (
     "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fd00::/8", "::1/128",
     "100.64.0.0/10", "169.254.0.0/16", "fc00::/7", "fe80::/10"))
-DYNAMIC = ("docker", "never", "operator", "profile")
+# "profile" (the Cloudflare edge) is deliberately absent: it stays in the input
+# refusal (overlap) but never in a rendered `not client_ip` exclusion, because a
+# request whose client_ip is an edge address (a Worker subrequest, or a site
+# without the trusted-proxies import) must not skip bans or the country policy.
+DYNAMIC = ("docker", "never", "operator")
 
 
 class ConfigError(ValueError):
