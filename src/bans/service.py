@@ -20,7 +20,7 @@ from datetime import timedelta
 from .. import audit, config
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
-from . import addr, detect, fsio, lapi, plugin, protected, render, scan, store, syncstate, txn
+from . import addr, detect, fsio, lapi, plugin, pluginpolicy, protected, render, scan, store, syncstate, txn
 from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
@@ -182,6 +182,8 @@ def availability(force=False, background=False) -> Availability:
     """background: the expiry tick, which tolerates an older configuration
     failure (see BACKGROUND_UNAVAILABLE_TTL). An unreachable Caddy is still
     re-checked on the short cache, so expiry resumes soon after it returns."""
+    if lapi.enabled():
+        plugin.module_available()            # outside caddyfile_lock(); cached
     now = time.monotonic()
     with _lock:
         hit = _cache.get("availability")
@@ -225,7 +227,45 @@ def _holds(state) -> dict:
         actual = fsio.sha256_tag(fsio.read_bytes(src.path))
         if recorded != actual:
             out[name] = "missing" if actual is None else "differs"
+    if _plugin_active():
+        recorded = pluginpolicy.recorded_hash()
+        actual = fsio.sha256_tag(fsio.read_bytes(render.PLUGIN.path))
+        if recorded != actual and not (recorded is None and actual is None):
+            out["plugin"] = "missing" if actual is None else "differs"
     return out
+
+
+def _plugin_active() -> bool:
+    """Render the protected route once the running Caddy has the module (with
+    CrowdSec configured), or once it left something behind (the file or its
+    recorded hash), so a Re-apply still manages it after the plugin is gone.
+    Only the cached probe result is used: this runs under caddyfile_lock()."""
+    if not config.BANS_ENABLED:
+        return False
+    return ((lapi.enabled() and plugin.cached_module() is True)
+            or os.path.exists(render.PLUGIN.path) or pluginpolicy.exists())
+
+
+def _plugin_changes(prot) -> list:
+    data = render.render_plugin_route(prot.exclusion_tokens())
+    return [txn.Change(render.PLUGIN.path, "policy", data, marker=render.PLUGIN.marker),
+            txn.Change(pluginpolicy.PATH, "state", pluginpolicy.dumps(fsio.sha256_tag(data)),
+                       owns=(render.PLUGIN.filename,))]
+
+
+def plugin_route_current(state) -> bool:
+    """The route file on disk equals what the current protected set renders."""
+    want = render.render_plugin_route(protected_for(state).exclusion_tokens())
+    return fsio.read_bytes(render.PLUGIN.path) == want
+
+
+def _policy_filename(name) -> str:
+    return render.PLUGIN.filename if name == "plugin" else render.SOURCES[name].filename
+
+
+def _route_detail(data: bytes) -> str:
+    line = next((l for l in data.decode("ascii").splitlines() if l.strip().startswith("not client_ip ")), "")
+    return f"{len(line.split()) - 2} protected ranges, {fsio.sha256_tag(data)[7:19]}"
 
 
 def _candidates(state, prot, holds, now) -> list:
@@ -245,6 +285,8 @@ def _candidates(state, prot, holds, now) -> list:
         state.last_rendered_hashes[src.filename] = fsio.sha256_tag(data)
         changes.append(txn.Change(src.path, "policy", data, marker=src.marker))
         owns.append(src.filename)
+    if _plugin_active() and "plugin" not in holds:
+        changes += _plugin_changes(prot)
     changes.append(txn.Change(store.STATE_PATH, "state", store.dumps(state), owns=tuple(owns)))
     return changes
 
@@ -439,11 +481,12 @@ def remove_ban(record_id, actor, remote_addr):
 
 def reapply(payload, actor, remote_addr):
     source = payload.get("source", "manual") if isinstance(payload, dict) else None
-    if source not in render.SOURCES:
+    if source not in render.SOURCES and source != "plugin":
         return _error("invalid_source", "Unknown policy source.", 400)
 
     def mutate(state, now, version):
-        if source not in render.active_sources(state):
+        active = _plugin_active() if source == "plugin" else source in render.active_sources(state)
+        if not active:
             raise BanError("source_not_enabled", f"The {source} source is not in use.", 400)
         return Mutation({"source": source}, 200, [("bans_reapply", source)])
     # Re-apply also reloads unchanged files: Caddy may never have loaded the
@@ -687,7 +730,7 @@ def _recovery_info_locked() -> dict:
     holds = _holds(state)
     if holds:
         return {**base, "kind": "policy_hold", "recovery_id": _rid("hold", sorted(holds.items()), state.version),
-                "reason": "policy_differs", "files": [render.SOURCES[n].filename for n in sorted(holds)],
+                "reason": "policy_differs", "files": [_policy_filename(n) for n in sorted(holds)],
                 "held_sources": sorted(holds), "actions": [],
                 "summary": "A managed ban file differs from the stored state, for example after host recovery. "
                            "It is not regenerated, and its expiry and CrowdSec sync are paused, until you fix "
@@ -918,7 +961,14 @@ def expire_tick(now=None) -> str:
         removed = store.prune_expired(state, now, sources=[n for n in render.active_sources(state) if n not in holds])
         aged = store.prune_management(state, now)
         if not removed and not aged:
-            return "idle"
+            if "plugin" in holds or not _plugin_active() or plugin_route_current(state):
+                return "idle"
+            # Only the plugin route is out of date (first start, BANS_NEVER or
+            # Docker networks changed): render it alone, writing no ban state.
+            changes = _plugin_changes(protected_for(state))
+            outcome = txn.apply_locked(changes, actor="system", source="plugin",
+                                       audit_events=[("plugin_route_rendered", _route_detail(changes[0].data))])
+            return "applied" if outcome.ok else outcome.code
         try:
             changes = _candidates(state, protected_for(state), holds, now)
         except render.CapacityError:

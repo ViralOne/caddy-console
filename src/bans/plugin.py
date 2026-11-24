@@ -234,3 +234,20 @@ def live_app(live):
             "hard_fails": app.get("enable_hard_fails") is True,
             "key_form": form, "key_placeholder": key if form == "placeholder" else None}
 
+
+ALLOWLIST = "caddy_console_protected"
+
+
+def allowlist_commands(prot) -> str:
+    """Copy-only commands for a CrowdSec LAPI allowlist with the static
+    protected set (core ranges, BANS_NEVER, Docker networks). Defense in depth
+    only (spec 3.4): allowlists stop new decisions but keep existing ones, and
+    verified console addresses change at runtime, so they are left out."""
+    from . import addr
+    values = [addr.token(n) for cat, n in prot.entries if cat not in ("operator", "profile")]
+    seen = list(dict.fromkeys(values))
+    return "\n".join([
+        f"cscli allowlists delete {ALLOWLIST} || true",
+        f"cscli allowlists create {ALLOWLIST} -d 'Caddy Console protected ranges'",
+        f"cscli allowlists add {ALLOWLIST} " + " ".join(seen),
+    ]) + "\n"

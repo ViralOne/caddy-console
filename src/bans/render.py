@@ -110,3 +110,49 @@ def render_policy(source: PolicySource, prefixes, exclusion_tokens, limit=None) 
             "}\n",
         ]
     return "".join(out).encode("ascii")
+
+
+@dataclass(frozen=True)
+class PluginRoute:
+    """The reusable protected route for plugin mode (spec 3.4). Not a ban
+    source: it holds no records, only the protected set, and its state lives
+    in BACKUP_DIR/plugin-policy.json (src/bans/pluginpolicy.py)."""
+    filename: str = "crowdsec-plugin-protect.caddy"
+    marker: str = "caddy_console_plugin_protect"
+    matcher: str = "caddy_console_crowdsec_candidate"
+    snippet: str = "protect_crowdsec"
+
+    @property
+    def glob(self) -> str:
+        return self.filename[: -len(".caddy")] + "*.caddy"
+
+    @property
+    def path(self) -> str:
+        return os.path.join(config.BANS_DIR, self.filename)
+
+    @property
+    def import_line(self) -> str:
+        return f"import {os.path.join(config.BANS_DIR, self.glob)}"
+
+    @property
+    def site_import(self) -> str:
+        return f"import {self.snippet}"
+
+
+PLUGIN = PluginRoute()
+
+
+def render_plugin_route(exclusion_tokens) -> bytes:
+    """The vars marker lets live JSON show which sites imported the snippet
+    (matcher names do not survive adaptation); the matcher keeps every
+    protected client away from the plugin, whatever LAPI decided."""
+    return "".join([
+        HEADER,
+        f"({PLUGIN.snippet}) {{\n",
+        f"\tvars {PLUGIN.marker} 1\n",
+        f"\t@{PLUGIN.matcher} {{\n",
+        "\t\tnot client_ip " + " ".join(exclusion_tokens) + "\n",
+        "\t}\n",
+        f"\tcrowdsec @{PLUGIN.matcher}\n",
+        "}\n",
+    ]).encode("ascii")
