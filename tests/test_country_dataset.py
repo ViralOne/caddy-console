@@ -162,6 +162,14 @@ class UpdaterTest(unittest.TestCase):
         self.assertEqual(meta["country_month"], "2026-10")
         self.assertIn("country_last_error", meta)
 
+    def test_an_overlong_line_is_rejected_and_the_previous_dataset_kept(self):
+        self.assertEqual(self.run_update({url("2026-10"): gzip.compress(CSV.encode())}, today=datetime.date(2026, 10, 5)),
+                         "updated")
+        before = open(countrydata.path(self.dir), "rb").read()
+        for body in (b"A" * 100000, b"192.0.2.1,192.0.2.9,RO\n" + b"B" * 1000 + b"\n"):
+            self.assertEqual(self.run_update({url("2026-11"): gzip.compress(body)}), "failed")
+            self.assertEqual(open(countrydata.path(self.dir), "rb").read(), before)
+
     def test_size_limits_apply_to_both_sides(self):
         body = gzip.compress(CSV.encode())
         self.addCleanup(setattr, geoip_update, "COUNTRY_MAX_DOWNLOAD_BYTES", geoip_update.COUNTRY_MAX_DOWNLOAD_BYTES)

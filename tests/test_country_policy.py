@@ -325,6 +325,20 @@ class CountryApiTest(_bans.ApiCase):
         self.assertIn("192.0.2.0/25", read(render.COUNTRY.path))
         self.assertEqual(json.loads(read(country.PATH))["dataset"]["month"], "2027-01")
 
+    def test_dataset_tick_never_overwrites_a_policy_changed_after_it_read_it(self):
+        self.put({"enabled": True, "countries": ["RO"]})
+        install_dataset(CSV.replace("192.0.2.0,192.0.2.255,RO", "192.0.2.0,192.0.2.127,RO"), "2027-01")
+        real = service._policy_transaction
+
+        def racing(*a, **kw):
+            with mock.patch.object(service, "_policy_transaction", real):
+                self.assertEqual(self.put({"enabled": True, "countries": ["RO", "DE"]}).status_code, 200)
+            return real(*a, **kw)
+        with mock.patch.object(service, "_policy_transaction", racing):
+            self.assertEqual(service.country_tick(), "version_conflict")
+        self.assertEqual(json.loads(read(country.PATH))["countries"], ["DE", "RO"])
+        self.assertIn("198.51.100.0/24", read(render.COUNTRY.path))
+
     def test_dataset_update_over_the_cap_keeps_the_last_good_file(self):
         self.put({"enabled": True, "countries": ["RO"]})
         before = read(render.COUNTRY.path)

@@ -209,6 +209,7 @@ def update_once(directory=GEOIP_DIR, today=None, session=None):
 COUNTRY_URL = "https://download.db-ip.com/free/dbip-country-lite-{month}.csv.gz"
 COUNTRY_MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024        # the real file is about 5 MB compressed
 COUNTRY_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024   # and about 25 MB of CSV
+COUNTRY_MAX_LINE = 256                               # a real row is under 80 bytes
 
 
 def _country_lines(url, session, gz_path):
@@ -227,7 +228,12 @@ def _country_lines(url, session, gz_path):
                 out.write(chunk)
     read = 0
     with gzip.open(gz_path, "rb") as src:
-        for raw in src:
+        while True:
+            raw = src.readline(COUNTRY_MAX_LINE + 1)     # never buffers more than one bounded piece
+            if not raw:
+                break
+            if len(raw) > COUNTRY_MAX_LINE and not raw.endswith(b"\n"):
+                raise ValueError(f"{url} has a line longer than {COUNTRY_MAX_LINE} bytes")
             read += len(raw)
             if read > COUNTRY_MAX_UNCOMPRESSED_BYTES:
                 raise ValueError(f"{url} expands beyond {COUNTRY_MAX_UNCOMPRESSED_BYTES} bytes")

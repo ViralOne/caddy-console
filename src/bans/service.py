@@ -919,8 +919,16 @@ def country_tick() -> str:
         return error.code
     if data == fsio.read_bytes(render.COUNTRY.path):
         return "current"
+    seen = country.dumps(policy)
+
+    def unchanged(_state):
+        # The policy was read before the lock: a PUT that landed since wins.
+        if country.dumps(country.load_or_default()) != seen:
+            return _error("version_conflict", "The country policy changed while the dataset update was prepared.", 409)
+        return None
+
     body, _ = _policy_transaction("system", "country-data", [("country_policy_rendered", "dataset update")],
-                                  country_candidate=policy, background=True)
+                                  country_candidate=policy, background=True, check=unchanged)
     return "applied" if body.get("ok") else str(body.get("code") or "failed")
 
 
