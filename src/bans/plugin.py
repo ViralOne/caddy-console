@@ -264,8 +264,9 @@ def admin_guard(content: str):
     """While the console runs with a fixed CADDY_ADMIN_ADDRESS (the plugin
     overlay), refuse to save a Caddyfile whose admin bind would expose port
     2019 or lose the console. None means "save may go on"; an unreachable
-    Caddy or an adapt error is left to the save path, which fails anyway."""
-    if not config.BANS_ENABLED or not admin_address().fixed:
+    Caddy or an adapt error is left to the save path, which fails anyway.
+    A safety control, not plugin UI: it applies whatever BANS_ENABLED says."""
+    if not admin_address().fixed:
         return None
     try:
         result = caddy_admin.adapt(content)

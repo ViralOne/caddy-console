@@ -153,6 +153,14 @@ class SaveGuardTest(_bans.ApiCase):
                 self.assertTrue(r.get_json()["message"].startswith("Not saved: "))
         self.assertFalse(any(k == "load" and "0.0.0.0" in t for k, t in self.caddy.calls))
 
+    def test_the_guard_applies_with_bans_disabled(self):
+        bad = "{\n\tadmin 0.0.0.0:2019\n}\nexample.com {\n\trespond 200\n}\n"
+        with mock.patch.object(config, "CADDY_ADMIN_ADDRESS", FIXED), mock.patch.object(config, "BANS_ENABLED", False):
+            r = self.save(bad)
+            self.assertEqual(r.status_code, 409)
+            self.assertEqual(r.get_json()["code"], "admin_exposed")
+            self.assertEqual(self.save(self.GOOD).status_code, 200)
+
     def test_the_guard_is_off_without_a_fixed_admin_address(self):
         self.assertEqual(self.save("{\n\tadmin 0.0.0.0:2019\n}\nexample.com {\n\trespond 200\n}\n").status_code, 200)
 
