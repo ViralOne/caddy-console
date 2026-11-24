@@ -474,7 +474,8 @@ above needs nothing from it. For enforcement without reloads, see
 | `SESSION_TIMEOUT_HOURS` | no | `8` | Session lifetime in Google mode |
 | `CADDY_API_URL` | no | `http://caddy:2019` | Caddy admin API address |
 | `CADDYFILE_PATH` | no | `/etc/caddy/Caddyfile` | Path to Caddyfile |
-| `BACKUP_DIR` | no | `/backups` | Backup storage directory |
+| `BACKUP_DIR` | no | `/backups` | Backup storage directory: a local disk or a Docker named volume used by one console container |
+| `LOCK_DIR` | no | `/tmp/caddy-console-locks` | Container-local lock files; must not be a shared mount |
 | `BACKUP_KEEP` | no | `50` | Pre-save backups to keep; oldest are pruned after each save (`0` = keep all) |
 | `AUDIT_LOG_MAX_BYTES` | no | `5242880` | Rotate the audit log past this size; one rotated file is kept |
 | `CADDY_LOG_FILE` | no | `/var/log/caddy/access.log` | Path to Caddy access log (must match Caddyfile) |

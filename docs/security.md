@@ -448,8 +448,17 @@ caddy-console preflight: refusing to start Caddy: the admin API listens on a wil
 Later, the console refuses to save a Caddyfile whose admin bind would expose
 port 2019 again.
 
-The tunnel stack already gives `caddy-admin` this subnet. The prod, internal and
-NAS stacks do not, so take the stack down once (no `-v`, volumes stay) and let
+The tunnel stack already gives `caddy-admin` this subnet. If you started the tunnel
+stack before the plugin overlay added its `ip_range` (`172.30.250.4/30`), Docker
+keeps the old network: recreate it, with no `-v`, so volumes stay:
+
+```bash
+docker compose -f docker-compose.tunnel.yaml -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml down
+docker compose -f docker-compose.tunnel.yaml -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml up -d
+```
+
+The prod, internal and
+NAS stacks do not give `caddy-admin` this subnet, so take the stack down once (no `-v`, volumes stay) and let
 Compose recreate the network with the overlay. Name every file the stack is
 running with, so the CrowdSec container and its networks go too:
 
@@ -887,4 +896,6 @@ Recovery never needs port 2019 published.
 | `CROWDSEC_POLL_INTERVAL` | `10` | Seconds between decision-stream polls (5-300). |
 | `CROWDSEC_PLUGIN_BOUNCER_KEY` | empty | Caddy container only: the plugin's own bouncer key. Never given to the console. |
 | `CROWDSEC_PLUGIN_BOUNCER_KEY_FILE` | empty | Absolute path of a mounted secret with the plugin key, used instead of the environment key; the console gets the path only, to offer `{file.<path>}`. |
+| `BACKUP_DIR` | `/backups` | Ban state, journals and backups. Use a local disk or a Docker named volume used by exactly one console container; flock on NFS/SMB/FUSE mounts, or one directory shared by two containers, is not reliable. |
+| `LOCK_DIR` | `/tmp/caddy-console-locks` | Container-local lock files that decide exclusion between workers and tools. Must be local to the container (its own `/tmp`), never a shared mount. |
 | `CADDY_ADMIN_ADDRESS` | `0.0.0.0:2019` | Admin address for health checks, recovery and the console's save guard; the plugin overlays set `172.30.250.2:2019`. |
