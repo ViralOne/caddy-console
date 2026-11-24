@@ -206,7 +206,7 @@ check('the origin guard matches remote_ip and never a forwarding header', () => 
   assert.match(g, /^@not_cloudflare_origin not remote_ip 173\.245\.48\.0\/20 .*2400:cb00::\/32 .*192\.168\.1\.0\/24$/m);
   assert.match(g, /^handle @not_cloudflare_origin \{\n\trespond 403\n\}\n$/m);
   assert.doesNotMatch(g, /^respond /m, 'a bare respond runs after handle');
-  assert.match(byId['cloudflare-origin-guard'].description, /WARNING: 192\.168\.1\.0\/24 is a placeholder/);
+  assert.match(byId['cloudflare-origin-guard'].description, /Replace the example LAN range/);
   assert.doesNotMatch(g, /header|client_ip|CF-|X-Forwarded/i);
 });
 check('the country import follows the ban imports and is never inserted twice or into the console site', () => {

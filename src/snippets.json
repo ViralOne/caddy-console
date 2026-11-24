@@ -63,7 +63,7 @@
   {
     "id": "manual-bans-recovery",
     "name": "Manual bans: host recovery",
-    "description": "Shell commands to clear manual bans from the host if you lock yourself out. With a fixed admin bind (tunnel stack), add -e CADDY_ADMIN_ADDRESS=<ip>:2019 to the exec command; that address must be in the bind's origins list. Wildcard-bound stacks need no -e. Copy only.",
+    "description": "Host shell commands to clear manual bans if you are locked out.",
     "phase": "manual",
     "scope": "host",
     "insert": "copy-only",
@@ -74,7 +74,7 @@
   {
     "id": "crowdsec-bans-site",
     "name": "CrowdSec bans: protect this site",
-    "description": "Answer 403 to addresses CrowdSec decided to ban. Goes first in a site block, or directly after the manual ban import.",
+    "description": "Answer 403 to addresses CrowdSec banned. Goes first in a site block.",
     "phase": "crowdsec",
     "scope": "site",
     "insert": "site-first",
@@ -85,7 +85,7 @@
   {
     "id": "crowdsec-log-fields",
     "name": "CrowdSec: log fields for detection",
-    "description": "Logs the User-Agent and a Basic auth challenge as two top-level access-log fields, so CrowdSec's bad User-Agent and brute-force scenarios work while request and response headers stay out of the log. Put it in each logged site, below the ban imports. Copy only.",
+    "description": "Log User-Agent and Basic auth challenge fields for CrowdSec detection.",
     "phase": "crowdsec",
     "scope": "site",
     "insert": "copy-only",
@@ -96,7 +96,7 @@
   {
     "id": "crowdsec-plugin-global-env",
     "name": "CrowdSec plugin: global app",
-    "description": "Loads the CrowdSec bouncer and runs its handler first. Goes inside the global options block. The key comes from CROWDSEC_PLUGIN_BOUNCER_KEY in the Caddy container; decisions are polled every 10 s, near-real-time without a reload.",
+    "description": "Load the CrowdSec bouncer in global options; key from the environment.",
     "phase": "plugin",
     "scope": "global",
     "insert": "global-options",
@@ -108,7 +108,7 @@
   {
     "id": "crowdsec-plugin-global-file",
     "name": "CrowdSec plugin: global app",
-    "description": "Loads the CrowdSec bouncer and runs its handler first. Goes inside the global options block. The key is read from the mounted secret file named by CROWDSEC_PLUGIN_BOUNCER_KEY_FILE; decisions are polled every 10 s, near-real-time without a reload.",
+    "description": "Load the CrowdSec bouncer in global options; key from a secret file.",
     "phase": "plugin",
     "scope": "global",
     "insert": "global-options",
@@ -120,7 +120,7 @@
   {
     "id": "crowdsec-plugin-definition",
     "name": "CrowdSec plugin: load protected route definition",
-    "description": "Loads the generated protect_crowdsec snippet, which keeps protected addresses away from the plugin. Goes at top level, outside every site and the global options.",
+    "description": "Load the protect_crowdsec definition at top level, outside any site.",
     "phase": "plugin",
     "scope": "top-level",
     "insert": "top-level",
@@ -131,7 +131,7 @@
   {
     "id": "crowdsec-plugin-site",
     "name": "CrowdSec plugin: protect this site",
-    "description": "Answer 403 to addresses CrowdSec banned, through the plugin. Goes first in a site block, or after the ban imports. Needs the global app and the definition loaded in Caddy first.",
+    "description": "Answer 403 to CrowdSec-banned addresses via the plugin. Needs the global app.",
     "phase": "plugin",
     "scope": "site",
     "insert": "site-first",
@@ -142,7 +142,7 @@
   {
     "id": "crowdsec-plugin-allowlist",
     "name": "CrowdSec plugin: LAPI allowlist",
-    "description": "cscli commands that put the static protected ranges into a CrowdSec allowlist, as defense in depth. Run them inside the crowdsec container. Copy only.",
+    "description": "cscli commands to allowlist protected ranges in CrowdSec.",
     "phase": "plugin",
     "scope": "host",
     "insert": "copy-only",
@@ -153,7 +153,7 @@
   {
     "id": "cloudflare-proxied-real-ip",
     "name": "Cloudflare proxied DNS: real client IP",
-    "description": "Trust CF-Connecting-IP only from Cloudflare's edge ranges, which the console keeps current. Goes inside the global options servers block. Needs the Cloudflare proxied DNS profile in Security, and your origin must accept connections only from Cloudflare (see Cloudflare origin guard or a firewall); otherwise anyone can claim any client IP.",
+    "description": "Trust CF-Connecting-IP from Cloudflare's edge. Needs an origin guard or firewall.",
     "phase": "cloudflare",
     "scope": "servers",
     "insert": "servers",
@@ -165,7 +165,7 @@
   {
     "id": "cloudflare-tunnel-real-ip",
     "name": "Cloudflare Tunnel: real client IP",
-    "description": "Trust CF-Connecting-IP only from your cloudflared address or dedicated subnet. Goes inside the global options servers block. Needs the Cloudflare Tunnel profile with a fixed cloudflared peer in Security, and no published Caddy port, so only cloudflared can reach Caddy.",
+    "description": "Trust CF-Connecting-IP from cloudflared only. Needs the Tunnel profile in Security.",
     "phase": "cloudflare",
     "scope": "servers",
     "insert": "servers",
@@ -177,7 +177,7 @@
   {
     "id": "country-policy-site",
     "name": "Country policy: protect this site",
-    "description": "Answer 403 to clients outside the allowed countries set in Security. Goes first in a site block, or after the ban imports.",
+    "description": "Answer 403 to clients outside the countries allowed in Security.",
     "phase": "country",
     "scope": "site",
     "insert": "site-first",
@@ -188,7 +188,7 @@
   {
     "id": "cloudflare-origin-guard",
     "name": "Cloudflare origin guard",
-    "description": "Refuse direct connections that do not come from Cloudflare's edge or your own LAN. It checks the connecting address (remote_ip), never a forwarding header. WARNING: 192.168.1.0/24 is a placeholder; replace it with your exact LAN ranges before you save, or that subnet bypasses the guard. The guard is a matcher-specific handle placed first in the site; it runs before handle and route blocks, but directives that Caddy orders earlier (forward_auth, redir, basic_auth, rewrite) still run before it. Only for proxied DNS: a tunnel connects from cloudflared, not from the edge.",
+    "description": "Refuse non-Cloudflare connections. Replace the example LAN range.",
     "phase": "cloudflare",
     "scope": "site",
     "insert": "site-first",
