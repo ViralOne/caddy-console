@@ -9,6 +9,9 @@ cd "$(dirname "$0")/.."
 BUILDER=caddy:2.11.9-builder@sha256:cda07fe9d82728c7ac44d844306d435e98131423dc7b114f05a8a8ecfff94707
 RUN=(docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e GOPATH=/tmp/go -e GOCACHE=/tmp/gocache
      -e GOTOOLCHAIN=local -e CGO_ENABLED=0)
+# Pass a GOPROXY override through (for example GOPROXY=direct where proxy.golang.org
+# is unreachable); checksums are still verified against sum.golang.org.
+if [ -n "${GOPROXY:-}" ]; then RUN+=(-e GOPROXY="$GOPROXY"); fi
 case "${1:-}" in
   test)
     "${RUN[@]}" -v "$PWD/caddy-plugin/preflight:/src:ro" -w /src "$BUILDER" \

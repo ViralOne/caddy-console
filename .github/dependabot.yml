@@ -79,3 +79,28 @@ updates:
         applies-to: version-updates
         patterns:
           - "*"
+
+  # Plugin images (caddy-plugin/): the Caddy builds' go.mod/go.sum. A plugin
+  # bump must pass the plugin integration suite (client IP in direct, proxied
+  # and tunnel fixtures) before it is merged (spec 3.2).
+  - package-ecosystem: "gomod"
+    directories:
+      - "/caddy-plugin/crowdsec"
+      - "/caddy-plugin/crowdsec-cloudflare"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    groups:
+      caddy-plugin-modules:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "docker"
+    directory: "/caddy-plugin"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
