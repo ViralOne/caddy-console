@@ -109,6 +109,9 @@ class Synchronizer:
             self._write()                                   # spec 2.6: no delta polling while refused
             return self.lapi_state
         startup = self.need_snapshot
+        # Stay "needs a snapshot" until the merge succeeds: a delta already
+        # consumed from LAPI must not be lost if anything below raises.
+        self.need_snapshot = True
         self.last_attempt = now_m
         fetched_at = self._wall()
         self.times["last_poll_at"] = store.iso(fetched_at)

@@ -109,7 +109,9 @@ def _is_policy_import(line, path) -> bool:
     return bool(m and glob_matches(m.group(1), path))
 
 
-def block_import_state(text, block, path) -> dict:
+def block_import_state(text, block, path, after=()) -> dict:
+    """`after`: other managed policy paths that may come before this import
+    (the CrowdSec import goes directly after the manual one)."""
     lines = str(text).split("\n")
     children, depth = [], 1
     for n in range(block.start, block.end - 1):        # interior lines; n + 1 is the line number
@@ -122,12 +124,21 @@ def block_import_state(text, block, path) -> dict:
     matches = [ln for ln, line, _ in children if _is_policy_import(line, path)]
     state = {"present": bool(matches), "count": len(matches),
              "line": matches[0] if matches else None, "first_child": False, "layout": None}
-    first = next(((ln, line) for ln, line, d in children if d == 1), None)
-    if first and _is_policy_import(first[1], path):
+
+    def leads(seq) -> bool:
+        for _, line in seq:
+            if _is_policy_import(line, path):
+                return True
+            if not any(_is_policy_import(line, p) for p in after):
+                return False
+        return False
+    top = [(ln, line) for ln, line, d in children if d == 1]
+    if leads(top):
         state.update(first_child=True, layout="site")
-    elif first and _ROUTE.match(first[1]):
-        inner = next((line for ln, line, d in children if d == 2 and ln > first[0]), None)
-        if inner and _is_policy_import(inner, path):
+    elif top and _ROUTE.match(top[0][1]):
+        route_ln = top[0][0]
+        inner = [(ln, line) for ln, line, d in children if d == 2 and ln > route_ln]
+        if leads(inner):
             state.update(first_child=True, layout="strict")
     return state
 

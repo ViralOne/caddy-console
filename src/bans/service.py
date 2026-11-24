@@ -20,7 +20,7 @@ from datetime import timedelta
 from .. import audit, config
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
-from . import addr, detect, fsio, lapi, protected, render, scan, store, txn
+from . import addr, detect, fsio, lapi, protected, render, scan, store, syncstate, txn
 from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
@@ -34,6 +34,7 @@ RESET_SOURCES = ("manual", "crowdsec", "country", "cloudflare")
 RECOVERY_ACTIONS = ("use_candidate", "use_previous", "restore_backup")
 PROBE_VAR = "caddy_console_probe"
 EXPIRED_AUDIT_MAX = 20
+STALE_POLLS = 3
 log = logging.getLogger(__name__)
 _lock = threading.Lock()
 _cache = {}
@@ -656,7 +657,8 @@ def _rid(*parts) -> str:
 
 
 def _recovery_info_locked() -> dict:
-    base = {"required": True, "phase": None, "backups": [], "reapply": False, "reset": False, "state_version": None}
+    base = {"required": True, "phase": None, "backups": [], "reapply": False, "reset": False, "state_version": None,
+            "held_sources": []}
     pending = txn.resolve_pending()
     if pending is not None:
         j = pending.journal or {}
@@ -679,9 +681,11 @@ def _recovery_info_locked() -> dict:
     holds = _holds(state)
     if holds:
         return {**base, "kind": "policy_hold", "recovery_id": _rid("hold", sorted(holds.items()), state.version),
-                "reason": "policy_differs", "files": [render.SOURCES[n].filename for n in holds], "actions": [],
+                "reason": "policy_differs", "files": [render.SOURCES[n].filename for n in sorted(holds)],
+                "held_sources": sorted(holds), "actions": [],
                 "summary": "A managed ban file differs from the stored state, for example after host recovery. "
-                           "It is not regenerated and its expiry is paused until you fix the records and Re-apply.",
+                           "It is not regenerated, and its expiry and CrowdSec sync are paused, until you fix "
+                           "the records and Re-apply.",
                 "reapply": True, "reset": True, "state_version": state.version}
     return {**base, "required": False, "kind": None, "recovery_id": None, "reason": None, "summary": "",
             "files": [], "actions": [], "state_version": state.version}
@@ -734,40 +738,49 @@ def _read_caddyfile() -> str:
         return ""
 
 
-def _site_rows(live, text, prefixes, held) -> list:
-    """prefixes: what the manual policy renders now, or None when unknown (held
-    or corrupt state); detection then accepts any managed ban route."""
-    src = render.SOURCES["manual"]
+def _site_rows(live, text, state, now, holds) -> list:
+    """One row per site: the manual policy's result at the top level (the Phase 1
+    shape) plus `policies` for every active source. `state` None means the
+    stored records are unknown (corrupt), so any managed ban route counts."""
+    sources = render.active_sources(state)
+    after = {n: tuple(render.SOURCES[a].path for a in names) for n, names in render.AFTER.items()}
     blocks = scan.site_blocks(text)
     management = scan.management_hosts(text, scan.console_host())
-    expected = None if held or prefixes is None else [addr.token(p) for p in prefixes]
-    live_rows = detect.site_statuses(live, src, bool(prefixes), expected_ranges=expected) if live is not None else []
+    detected = {}
+    if live is not None:
+        for name, src in sources.items():
+            prefixes = None if state is None else render.effective_prefixes(state.records, now, name)
+            expected = None if name in holds or prefixes is None else [addr.token(p) for p in prefixes]
+            detected[name] = detect.site_statuses(live, src, bool(prefixes), expected_ranges=expected)
+
+    def policy(name, status, block, mgmt, found=None):
+        imp = scan.block_import_state(text, block, sources[name].path, after=after.get(name, ())) if block else None
+        return {"status": _management_status(status, imp) if mgmt else status,
+                "pre_handlers": found.pre_handlers if found else [], "detail": found.detail if found else "",
+                "import": imp}
+
     rows, seen = [], set()
-    for s in live_rows:
+    for i, s in enumerate(detected.get("manual", [])):
         block = next((b for b in blocks if set(b.hosts) & set(s.hosts)), None) if s.hosts \
             else next((b for b in blocks if s.label in b.addresses), None)
         if block is not None:
             seen.add(block.start)
-        imp = scan.block_import_state(text, block, src.path) if block else None
-        status = s.status
-        if set(s.hosts) & management:
-            status = _management_status(s.status, imp)
-        rows.append({"label": s.label, "hosts": s.hosts, "status": status,
-                     "pre_handlers": s.pre_handlers, "detail": s.detail,
-                     "source": "main" if block else "external", "line": block.start if block else None,
-                     "import": imp})
+        mgmt = bool(set(s.hosts) & management)
+        policies = {name: policy(name, found[i].status, block, mgmt, found[i]) for name, found in detected.items()}
+        rows.append({"label": s.label, "hosts": s.hosts, "source": "main" if block else "external",
+                     "line": block.start if block else None, **policies["manual"], "policies": policies})
     unreachable = live is None
     fallback = "caddy_unreachable" if unreachable else "not_loaded"
     fallback_detail = ("The Caddy admin API is unreachable, so whether this site enforces the ban list "
                        "cannot be checked." if unreachable
                        else "This site block is not in Caddy's running configuration.")
     for b in blocks:
-        if b.start not in seen:
-            imp = scan.block_import_state(text, b, src.path)
-            rows.append({"label": b.hosts[0] if b.hosts else b.addresses[0], "hosts": b.hosts,
-                         "status": _management_status(fallback, imp) if set(b.hosts) & management else fallback,
-                         "pre_handlers": [], "detail": fallback_detail,
-                         "source": "main", "line": b.start, "import": imp})
+        if b.start in seen:
+            continue
+        mgmt = bool(set(b.hosts) & management)
+        policies = {name: {**policy(name, fallback, b, mgmt), "detail": fallback_detail} for name in sources}
+        rows.append({"label": b.hosts[0] if b.hosts else b.addresses[0], "hosts": b.hosts,
+                     "source": "main", "line": b.start, **policies["manual"], "policies": policies})
     return rows
 
 
@@ -795,6 +808,51 @@ def _last_apply():
     return None
 
 
+def _pid_alive(pid) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True                  # exists, but not ours to signal
+    return True
+
+
+def _scrub(value, secret):
+    """The sync report is data from outside this process: whatever it carries,
+    the bouncer key never leaves in an API response."""
+    if isinstance(value, str):
+        return value.replace(secret, "[redacted]") if secret else value
+    if isinstance(value, dict):
+        return {k: _scrub(v, secret) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub(v, secret) for v in value]
+    return value
+
+
+def _crowdsec_status(now) -> dict:
+    """CrowdSec health for the Security view. The report is only shown while
+    CrowdSec is enabled (a file left behind after disabling is ignored), and it
+    is stale when its updated_at is old or its leader process is gone."""
+    enabled = lapi.enabled()
+    origins = list(lapi.origins()) if enabled else []
+    doc = syncstate.read() if enabled else None
+    stale = enabled
+    if doc is not None:
+        try:
+            age = (now - store.parse_iso(doc["updated_at"])).total_seconds()
+            limit = STALE_POLLS * config.CROWDSEC_POLL_INTERVAL + config.BANS_SYNC_INTERVAL
+            stale = age > limit or not _pid_alive(doc.get("leader_pid"))
+        except (KeyError, TypeError, ValueError):
+            stale = True
+        key, _ = lapi.read_key()
+        doc = _scrub(doc, key)
+    return {"enabled": enabled, "origins": origins,
+            "list_origins": [o for o in origins if o in lapi.LIST_ORIGINS], "sync": doc, "stale": stale}
+
+
 def status(remote_addr) -> dict:
     avail = availability()
     info = recovery_info()
@@ -803,9 +861,18 @@ def status(remote_addr) -> dict:
     except store.StateCorrupt:
         state = None
     now = store.utc_now()
-    src = render.SOURCES["manual"]
-    prefixes = render.effective_prefixes(state.records, now, "manual") if state else []
     holds = _holds(state) if state else {}
+    sources = {}
+    for name, src in render.active_sources(state).items():
+        rendered = len(render.effective_prefixes(state.records, now, name)) if state else 0
+        sources[name] = {
+            "file": src.path, "import_line": src.import_line, "hold": name in holds,
+            "hold_reason": holds.get(name), "rendered_prefixes": rendered,
+            "active_records": sum(1 for r in (state.records if state else [])
+                                  if r.source == name and not r.expired(now)),
+        }
+    if "crowdsec" in sources:
+        sources["crowdsec"].update(_crowdsec_status(now))
     try:
         live, caddy = caddy_admin.live_config(), {"reachable": True, "message": None}
     except caddy_admin.CaddyUnavailable as e:
@@ -813,18 +880,17 @@ def status(remote_addr) -> dict:
     degraded = None
     if info["required"] and info["kind"] in ("journal", "state_corrupt"):
         degraded = {"kind": info["kind"], "reason": info["reason"], "phase": info["phase"], "message": info["summary"]}
+    by_source = {name: s["rendered_prefixes"] for name, s in sources.items()}
     return {
         "enabled": True, "available": avail.ok,
         "unavailable": None if avail.ok else {"code": avail.code, "message": avail.message},
         "state_version": info["state_version"], "degraded": degraded, "recovery": info,
-        "sources": {"manual": {
-            "file": src.path, "import_line": src.import_line, "hold": "manual" in holds,
-            "hold_reason": holds.get("manual"), "rendered_prefixes": len(prefixes),
-            "active_records": sum(1 for r in (state.records if state else []) if r.source == "manual" and not r.expired(now)),
-        }},
+        "sources": sources,
         "protected": protected_for(state or store.State(), _verified_client(remote_addr)).summary(),
-        "sites": _site_rows(live, _read_caddyfile(), prefixes if state else None, "manual" in holds),
-        "caddy": caddy, "limits": {"max_prefixes": config.BANS_MAX}, "last_apply": _last_apply(),
+        "sites": _site_rows(live, _read_caddyfile(), state, now, holds),
+        "caddy": caddy,
+        "limits": {"max_prefixes": config.BANS_MAX, "used": sum(by_source.values()), "by_source": by_source},
+        "last_apply": _last_apply(),
     }
 
 

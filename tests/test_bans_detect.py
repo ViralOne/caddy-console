@@ -27,6 +27,8 @@ EXPECTED = {
     "basic_auth_before": ("enforced_pre_handler", ["basic_auth"]),
     "forward_auth_before": ("enforced_pre_handler", ["forward_auth"]),
     "request_header_before": ("enforced_pre_handler", ["request_header"]),
+    "manual_and_crowdsec": ("enforced", []),
+    "crowdsec_only": ("not_imported", []),
     "invoke_before": ("unknown", ["invoke"]),
     "custom_order_first": ("unknown", ["respond"]),
     "not_imported": ("not_imported", []),

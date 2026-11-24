@@ -104,10 +104,13 @@ def classify(h):
     return "unknown", name or "unnamed handler"
 
 
-def _events(route, out, scope) -> None:
+def _events(route, out, scope, shielded=False) -> None:
     """Routes and handlers in execution order, descending into subroutes.
-    `scope` identifies the route list a route belongs to."""
-    out.append(("route", route, scope))
+    `scope` identifies the route list a route belongs to; `shielded` marks a
+    managed ban route (any source) and everything inside it: it only answers
+    403 to clients it bans, so it is never a pre-handler for another source."""
+    shielded = shielded or _is_ban_route(route)
+    out.append(("route", route, scope, shielded))
     for h in route.get("handle") or []:
         if not isinstance(h, dict):
             continue
@@ -115,21 +118,21 @@ def _events(route, out, scope) -> None:
             inner = id(h)
             for r in h.get("routes") or []:
                 if isinstance(r, dict):
-                    _events(r, out, inner)
+                    _events(r, out, inner, shielded)
         else:
-            out.append(("handler", h, scope))
+            out.append(("handler", h, scope, shielded))
 
 
 def _status(route, source, active, label, hosts, server, expected=None) -> SiteStatus:
     events = []
     _events(route, events, id(route))
     s = SiteStatus(label, hosts, server, "not_imported")
-    marker_at = next((i for i, (k, v, _) in enumerate(events) if k == "handler" and _is_marker(v, source.marker)), None)
+    marker_at = next((i for i, (k, v, _, _) in enumerate(events) if k == "handler" and _is_marker(v, source.marker)), None)
     if marker_at is None:
         return s
     scope = events[marker_at][2]
     # Only a sibling route after the marker's own can be this source's ban route.
-    ban_at = next((i for i, (k, v, sc) in enumerate(events)
+    ban_at = next((i for i, (k, v, sc, _) in enumerate(events)
                    if i > marker_at and k == "route" and sc == scope and _is_ban_route(v, expected)), None)
     if ban_at is None:
         if active:
@@ -140,8 +143,8 @@ def _status(route, source, active, label, hosts, server, expected=None) -> SiteS
             s.status = "imported_empty"
         return s
     pre, unknown = [], []
-    for kind, h, _ in events[:ban_at]:
-        if kind != "handler" or _is_marker(h, source.marker):
+    for kind, h, _, shielded in events[:ban_at]:
+        if kind != "handler" or shielded or _is_marker(h, source.marker):
             continue
         verdict, name = classify(h)
         bucket = pre if verdict == "pre" else unknown if verdict == "unknown" else None

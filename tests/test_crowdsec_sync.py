@@ -211,6 +211,15 @@ class FailureTest(SyncCase):
         self.assertEqual(self.step(10), "ok")
         self.assertEqual(self.startups()[-1], "true")
 
+    def test_unexpected_failure_after_a_fetch_forces_a_snapshot_next_poll(self):
+        self.step()
+        self.lapi.add("203.0.113.8")
+        with mock.patch.object(self.sync, "_merge", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                self.step(10)
+        self.assertEqual(self.step(10), "ok")
+        self.assertEqual(self.startups()[-2:], ["false", "true"])
+
     def test_rotated_key_forces_a_snapshot(self):
         self.step(10)
         with mock.patch.object(config, "CROWDSEC_CONSOLE_BOUNCER_KEY", "rotated-key-2"):

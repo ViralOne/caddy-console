@@ -27,7 +27,19 @@ ACTIVE = (
 )
 EMPTY = ("# Managed by Caddy Console. Do not edit; changes are overwritten.\n"
          "vars caddy_console_manual_policy 1\n")
+CS_ACTIVE = (
+    "# Managed by Caddy Console. Do not edit; changes are overwritten.\n"
+    "vars caddy_console_crowdsec_policy 1\n"
+    "@caddy_console_crowdsec_banned {\n"
+    "\tclient_ip 192.0.2.0/24 203.0.113.9\n"
+    "\tnot client_ip private_ranges 100.64.0.0/10 169.254.0.0/16 fc00::/7 fe80::/10\n"
+    "}\n"
+    "handle @caddy_console_crowdsec_banned {\n"
+    "\trespond 403\n"
+    "}\n"
+)
 IMP = f"import {DIR}/active/bans-manual*.caddy"
+IMP_CS = f"import {DIR}/active/bans-crowdsec*.caddy"
 IMP_EMPTY = f"import {DIR}/empty/bans-manual*.caddy"
 G = "{\n\tadmin 0.0.0.0:2019\n}\n"
 HASH = "$2a$14$Zkx19XLiW6VYouLHR5NmfOFU0z2GTNmpkT/5qqR7hx4IjWJPDhjvG"
@@ -52,6 +64,8 @@ LAYOUTS = {
     "invoke_before": site("\t{imp}\n\tinvoke app\n", before="&(app) {\n\trespond \"named\" 200\n}\n"),
     "custom_order_first": site("\t{imp}\n\trespond \"hi\" 200\n", global_block="{\n\tadmin 0.0.0.0:2019\n\torder respond first\n}\n"),
     "empty_policy": site("\t{imp}\n\treverse_proxy 127.0.0.1:9\n", imp=IMP_EMPTY),
+    "manual_and_crowdsec": site("\t{imp}\n\t" + IMP_CS + "\n\treverse_proxy 127.0.0.1:9\n"),
+    "crowdsec_only": site("\t" + IMP_CS + "\n\treverse_proxy 127.0.0.1:9\n"),
     "not_imported": site("\treverse_proxy 127.0.0.1:9\n"),
 }
 
@@ -61,6 +75,8 @@ def main():
         os.makedirs(f"{DIR}/{sub}", exist_ok=True)
         with open(f"{DIR}/{sub}/bans-manual.caddy", "w", encoding="utf-8") as f:
             f.write(body)
+    with open(f"{DIR}/active/bans-crowdsec.caddy", "w", encoding="utf-8") as f:
+        f.write(CS_ACTIVE)
     out = {}
     for name, text in LAYOUTS.items():
         resp = requests.post(f"{API}/adapt", data=text.encode(), timeout=20,
