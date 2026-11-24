@@ -451,7 +451,8 @@ def validate():
         if config.CROWDSEC_URL:
             warnings += bans_scan.bans_warnings(content, bans_render.SOURCES["crowdsec"].path, mgmt,
                                                 label="CrowdSec ban list", short="the CrowdSec ban list",
-                                                after=(manual_path,), reserved=False)
+                                                after=tuple(bans_render.SOURCES[n].path for n in bans_render.AFTER["crowdsec"]),
+                                                reserved=False)
 
     return jsonify({"valid": True,
                     "message": "Caddyfile check passed, but review warnings" if warnings else message,

@@ -18,8 +18,6 @@ _USER_MATCHER = re.compile(r"^@caddy_console_\w*")
 _ROUTE = re.compile(r"^route(\s|\{|$)")
 FIRST_MSG = "put the ban import first in the site block (or first inside its top-level route) so nothing runs before the ban check."
 
-AFTER_MSG = ("put the CrowdSec import first in the site block, or directly after the manual ban import, "
-             "so nothing runs before the ban check.")
 
 
 @dataclass
@@ -164,6 +162,13 @@ def management_hosts(text, server_host=None) -> set:
     return hosts
 
 
+def _after_msg(label, after) -> str:
+    own = label.removesuffix(" ban list")
+    prior = " or ".join(os.path.basename(p).removeprefix("bans-").removesuffix(".caddy") for p in after)
+    return (f"put the {own} import first in the site block, or directly after the {prior} ban import, "
+            "so nothing runs before the ban check.")
+
+
 def bans_warnings(text, path, management=frozenset(), *, label="manual ban list", short="the ban list",
                   after=(), reserved=True) -> list:
     out = []
@@ -182,5 +187,5 @@ def bans_warnings(text, path, management=frozenset(), *, label="manual ban list"
         if st["count"] > 1:
             out.append(f"Line {st['line']}: this site imports the {label} {st['count']} times; keep one import.")
         if not st["first_child"]:
-            out.append(f"Line {st['line']}: {AFTER_MSG if after else FIRST_MSG}")
+            out.append(f"Line {st['line']}: {_after_msg(label, after) if after else FIRST_MSG}")
     return out
