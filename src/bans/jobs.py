@@ -125,8 +125,7 @@ def start_background():
     threading.Thread(target=_loop, args=(stop,), name="bans-expiry", daemon=True).start()
     if config.CLOUDFLARE_RANGES_AUTO_UPDATE:
         threading.Thread(target=_ranges_loop, args=(stop,), name="cloudflare-ranges", daemon=True).start()
-    if config.COUNTRY_POLICY_ENABLED:
-        threading.Thread(target=_country_loop, args=(stop,), name="country-policy", daemon=True).start()
+    threading.Thread(target=_country_loop, args=(stop,), name="country-policy", daemon=True).start()
     if lapi.enabled():
         threading.Thread(target=_sync_loop, args=(stop,), name="bans-sync", daemon=True).start()
     return stop

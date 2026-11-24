@@ -27,7 +27,7 @@ import maxminddb
 import requests
 
 from .bans import countrydata
-from .config import BANS_ENABLED, COUNTRY_POLICY_ENABLED, GEOIP_AUTO_UPDATE, GEOIP_DIR
+from .config import BANS_ENABLED, GEOIP_AUTO_UPDATE, GEOIP_DIR
 from .geoip import ASN_FILE, CITY_FILE, DOWNLOADING_MARKER, VERSION_FILE
 
 log = logging.getLogger(__name__)
@@ -307,7 +307,7 @@ def _loop(directory, stop):
     while True:
         try:
             outcome = update_once(directory)
-            if BANS_ENABLED and COUNTRY_POLICY_ENABLED:
+            if BANS_ENABLED:
                 country_outcome = update_country_once(directory)
                 if country_outcome == "failed":
                     outcome = "failed"

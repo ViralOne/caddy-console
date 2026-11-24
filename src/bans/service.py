@@ -633,11 +633,9 @@ def reset(payload, actor, remote_addr):
 # --- Phase 4: client-IP profile, Cloudflare ranges, country policy ------------------------
 
 def _country_active() -> bool:
-    """Render geo.caddy once country policy is configured (COUNTRY_POLICY_ENABLED
-    or a saved policy) or once it left something behind. BANS_ENABLED=false
+    """Render geo.caddy once a country policy is saved or once it left something behind. BANS_ENABLED=false
     disables it with everything else."""
-    return (config.BANS_ENABLED and (config.COUNTRY_POLICY_ENABLED or country.exists()
-                                     or os.path.exists(render.COUNTRY.path)))
+    return (config.BANS_ENABLED and (country.exists() or os.path.exists(render.COUNTRY.path)))
 
 
 def _refused_error(refused):
@@ -908,7 +906,7 @@ def country_policy_info(country_facts=None, live=_FETCH) -> dict:
     shape = facts["profile"]
     enforcing = country.effective_enabled(policy)
     return {
-        "enabled": policy.enabled, "effective": enforcing, "env_enabled": config.COUNTRY_POLICY_ENABLED,
+        "enabled": policy.enabled, "effective": enforcing, "env_enabled": True,
         "stored": policy.stored, "countries": policy.countries, "corrupt": corrupt,
         "cloudflare_geolocation_confirmed": policy.cloudflare_geolocation_confirmed,
         "shape": shape, "client_ip_mode": prof.mode, "updated_at": policy.updated_at,
@@ -942,7 +940,7 @@ def set_country_policy(payload, actor):
 def country_tick() -> str:
     """Regenerate geo.caddy after a new dataset arrived, only when the selected
     countries' output changes (spec 4.3). Direct policy only; reads local files."""
-    if not (config.BANS_ENABLED and config.COUNTRY_POLICY_ENABLED):
+    if not config.BANS_ENABLED:
         return "disabled"
     policy = country.load_or_default()
     if not country.effective_enabled(policy) or profile.load_or_default().mode != "direct":

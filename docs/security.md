@@ -755,8 +755,8 @@ An allowlist: clients outside the selected countries get `403`. Protected
 addresses (loopback, private and your LAN) and the management session are always
 allowed; Cloudflare's edge ranges are not, so an edge address that reaches the
 policy as the client is judged like anyone else. Security shows the policy as
-healthy only when the running Caddy trusts the selected profile's proxies. Enable it with
-`COUNTRY_POLICY_ENABLED=true`, choose countries in Security and import it per
+healthy only when the running Caddy trusts the selected profile's proxies. Enable it in
+Security (no environment variable), choose countries and import it per
 site with **Country policy: protect this site**:
 
 ```caddyfile
@@ -887,7 +887,6 @@ Recovery never needs port 2019 published.
 | `BANS_NEVER` | empty | Extra protected IPs/CIDRs, comma or space separated. An invalid entry stops startup. |
 | `CLIENT_IP_MODE` | `direct` | Default client-IP profile (`direct`, `cloudflare-proxied`, `cloudflare-tunnel`) until one is saved in Security. |
 | `CLOUDFLARE_RANGES_AUTO_UPDATE` | `true` | Daily refresh of Cloudflare's edge ranges in proxied mode. |
-| `COUNTRY_POLICY_ENABLED` | `false` | Allows the country policy to be enforced. |
 | `COUNTRY_MAX_PREFIXES` | `20000` | Direct country policy prefix cap (1-20000, measured above). |
 | `BANS_SYNC_INTERVAL` | `30` | Minimum seconds between CrowdSec-driven reloads (10-3600). |
 | `CROWDSEC_URL` | empty | LAPI URL; empty disables CrowdSec. The overlay sets `http://crowdsec:8080`. |

@@ -1303,7 +1303,7 @@ rather than unsafe automatic modification.
 | `CADDY_ADMIN_ADDRESS` | `0.0.0.0:2019` | 3 | Admin address used by health checks/recovery; plugin overlays set the fixed internal address |
 | `CLIENT_IP_MODE` | `direct` | 4 | Direct, Cloudflare proxied DNS or Cloudflare Tunnel guidance |
 | `CLOUDFLARE_RANGES_AUTO_UPDATE` | `true` | 4 | Refresh the bundled edge list separately from GeoIP |
-| `COUNTRY_POLICY_ENABLED` | `false` | 4 | Enables generated country enforcement after configuration |
+| `COUNTRY_POLICY_ENABLED` | removed | 4 | Controlled from the UI (Security enable toggle); `BANS_ENABLED` stays the master switch |
 | `COUNTRY_MAX_PREFIXES` | unset until benchmark | 4 | Hard file-mode country prefix cap selected by the Phase 4 performance gate |
 
 Numeric settings have server-side lower and upper bounds. Secret values support

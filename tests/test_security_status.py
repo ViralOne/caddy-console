@@ -67,9 +67,6 @@ class StatusTest(_bans.ApiCase):
         self.addCleanup(service.reset_caches)
         install_dataset()
         self.addCleanup(remove_dataset)
-        p = mock.patch.object(config, "COUNTRY_POLICY_ENABLED", True)
-        p.start()
-        self.addCleanup(p.stop)
         _bans.write_caddyfile(SITE)
 
     def status(self):
@@ -113,8 +110,7 @@ class StatusTest(_bans.ApiCase):
         self.assertTrue(self.status()["country_policy"]["summary"]["healthy"])
 
     def test_no_country_row_while_the_policy_was_never_used(self):
-        with mock.patch.object(config, "COUNTRY_POLICY_ENABLED", False):
-            self.assertNotIn("country", self.status()["sites"][0]["policies"])
+        self.assertNotIn("country", self.status()["sites"][0]["policies"])
 
     def test_profile_block_reports_ranges_age_and_dependencies(self):
         self.put("/api/security/client-ip-profile", {"mode": "cloudflare-proxied"})

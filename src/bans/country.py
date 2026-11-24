@@ -37,7 +37,7 @@ KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF
 MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB
 SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY
 UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW""".split())
-STATUS = {"country_policy_disabled": 409}
+STATUS = {}
 
 
 class CountryError(Exception):
@@ -163,16 +163,13 @@ def from_payload(payload, current: Policy) -> Policy:
         raise CountryError("invalid_request", "cloudflare_geolocation_confirmed must be true or false.")
     if enabled and not codes:
         raise CountryError("country_required", "Select at least one country before enabling the policy.")
-    if enabled and not config.COUNTRY_POLICY_ENABLED:
-        raise CountryError("country_policy_disabled", "Set COUNTRY_POLICY_ENABLED=true to enable country "
-                           "enforcement.", 409)
     return Policy(enabled=enabled, countries=codes, cloudflare_geolocation_confirmed=confirmed,
                   profile=current.profile, dataset=dict(current.dataset), updated_at=current.updated_at,
                   last_rendered_hashes=dict(current.last_rendered_hashes), stored=True)
 
 
 def effective_enabled(p: Policy) -> bool:
-    return p.enabled and config.COUNTRY_POLICY_ENABLED
+    return p.enabled
 
 
 def _tokens(nets) -> list:

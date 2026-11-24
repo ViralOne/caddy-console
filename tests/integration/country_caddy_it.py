@@ -17,7 +17,6 @@ import tests.integration._env as itenv  # noqa: I001  (must precede src imports)
 
 import os
 
-os.environ["COUNTRY_POLICY_ENABLED"] = "true"
 os.environ["CLIENT_IP_MODE"] = "direct"
 
 import json

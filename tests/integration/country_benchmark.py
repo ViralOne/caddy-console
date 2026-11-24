@@ -16,7 +16,6 @@ import tests.integration._env as itenv  # noqa: I001  (must precede src imports)
 
 import os
 
-os.environ["COUNTRY_POLICY_ENABLED"] = "true"
 
 import ipaddress
 import re

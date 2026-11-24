@@ -45,9 +45,6 @@ class RenderTest(unittest.TestCase):
     def setUp(self):
         install_dataset()
         self.addCleanup(remove_dataset)
-        p = mock.patch.object(config, "COUNTRY_POLICY_ENABLED", True)
-        p.start()
-        self.addCleanup(p.stop)
 
     def render(self, policy, mode="direct", peers=(), tokens=BASE.split()):
         return country.render(policy, mode, list(peers), tokens)
@@ -57,12 +54,6 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(data.decode(), HEADER + "# Country policy is off: no matcher or handler is generated.\n"
                          "vars caddy_console_country_policy off\n")
         self.assertEqual(facts["prefixes"]["total"], 0)
-
-    def test_env_flag_off_renders_off_even_for_an_enabled_policy(self):
-        with mock.patch.object(config, "COUNTRY_POLICY_ENABLED", False):
-            data, _ = self.render(country.Policy(enabled=True, countries=["RO"]))
-        self.assertIn("vars caddy_console_country_policy off", data.decode())
-        self.assertNotIn("respond", data.decode())
 
     def test_direct_allows_the_selected_ranges_and_the_protected_set(self):
         data, facts = self.render(country.Policy(enabled=True, countries=["DE", "RO"]),
@@ -113,11 +104,6 @@ class RenderTest(unittest.TestCase):
 
 
 class ValidationTest(unittest.TestCase):
-    def setUp(self):
-        p = mock.patch.object(config, "COUNTRY_POLICY_ENABLED", True)
-        p.start()
-        self.addCleanup(p.stop)
-
     def err(self, payload):
         with self.assertRaises(country.CountryError) as cm:
             country.from_payload(payload, country.Policy())
@@ -140,13 +126,12 @@ class ValidationTest(unittest.TestCase):
         self.assertNotIn("XX", country.ISO)
         self.assertNotIn("T1", country.ISO)
 
-    def test_enabling_needs_a_country_and_the_env_flag(self):
+    def test_enabling_needs_a_country(self):
         self.assertEqual(self.err({"enabled": True, "countries": []}), "country_required")
         self.assertEqual(self.err({"enabled": "yes"}), "invalid_request")
         self.assertEqual(self.err(["x"]), "invalid_request")
-        with mock.patch.object(config, "COUNTRY_POLICY_ENABLED", False):
-            self.assertEqual(self.err({"enabled": True, "countries": ["RO"]}), "country_policy_disabled")
-            self.assertFalse(country.from_payload({"enabled": False, "countries": []}, country.Policy()).enabled)
+        self.assertTrue(country.from_payload({"enabled": True, "countries": ["RO"]}, country.Policy()).enabled)
+        self.assertFalse(country.from_payload({"enabled": False, "countries": []}, country.Policy()).enabled)
 
     def test_state_round_trip_and_corruption(self):
         p = country.Policy(enabled=True, countries=["RO"], stored=True, last_rendered_hashes={"geo.caddy": "sha256:x"})
@@ -178,9 +163,6 @@ class CountryApiTest(_bans.ApiCase):
         self.addCleanup(service.reset_caches)
         install_dataset()
         self.addCleanup(remove_dataset)
-        p = mock.patch.object(config, "COUNTRY_POLICY_ENABLED", True)
-        p.start()
-        self.addCleanup(p.stop)
         _bans.write_caddyfile(SITE)
 
     def put(self, payload, **kw):
@@ -251,13 +233,6 @@ class CountryApiTest(_bans.ApiCase):
         self.assertEqual(read(render.COUNTRY.path), HEADER + "# Country policy is off: no matcher or handler is "
                          "generated.\nvars caddy_console_country_policy off\n")
         self.assertEqual(json.loads(read(country.PATH))["countries"], ["RO"], "the selection is kept")
-
-    def test_env_flag_gates_enforcement(self):
-        with mock.patch.object(config, "COUNTRY_POLICY_ENABLED", False):
-            r = self.put({"enabled": True, "countries": ["RO"]})
-            self.assertEqual((r.status_code, r.get_json()["code"]), (409, "country_policy_disabled"))
-            self.assertEqual(service.expire_tick(), "idle")
-            self.assertFalse(os.path.exists(render.COUNTRY.path))
 
     def test_bans_disabled_means_no_country_files(self):
         with mock.patch.object(config, "BANS_ENABLED", False):
@@ -444,9 +419,10 @@ class CountryApiTest(_bans.ApiCase):
 
 
 class CountryTickJobTest(unittest.TestCase):
-    def test_background_loop_only_starts_with_the_policy_flag(self):
+    def test_tick_is_idle_without_an_enabled_policy(self):
         self.assertEqual(jobs.COUNTRY_TICK_SECONDS, 3600)
-        self.assertEqual(service.country_tick(), "disabled")
+        with mock.patch.object(config, "BANS_ENABLED", False):
+            self.assertEqual(service.country_tick(), "disabled")
 
 
 if __name__ == "__main__":
