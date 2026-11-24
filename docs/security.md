@@ -193,7 +193,7 @@ docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml up -d
 
 Keep the key in the same `.env` as the rest of the stack. The same overlay
 works with `docker-compose.internal.yaml` and `docker-compose.tunnel.yaml`; the
-NAS stack uses `docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml`.
+NAS: use the single file `docker-compose.nas.crowdsec.yaml` instead of `docker-compose.nas.yaml`.
 
 #### Keep the key in a file secret instead
 
@@ -249,12 +249,11 @@ of the shipped file:
 Do not set both forms. On the CrowdSec side the image registers
 `BOUNCER_KEY_caddy_console` from the environment first, so the secret is then
 ignored; on the console side the `_FILE` variable wins over the plain key. Two
-different values leave CrowdSec refusing the console's key. On the NAS, copy
-`docker-compose.crowdsec.nas.yaml` as well: its `crowdsec` service extends the
-shipped overlay, so point its `extends.file` at your copy and make the same
-console change under `caddy-editor`.
-Portainer (NAS, no checkout): paste the single file `docker-compose.nas.crowdsec.portainer.yaml`
-(file sync) or `docker-compose.nas.crowdsec-plugin.portainer.yaml` (plugin); acquisition and parser are inline `configs`.
+different values leave CrowdSec refusing the console's key. On the NAS, make the same
+console change under `caddy-editor` in `docker-compose.nas.crowdsec.yaml`.
+NAS (no checkout needed): pick one file, nothing to combine: `docker-compose.nas.yaml` (base),
+`docker-compose.nas.crowdsec.yaml` (with CrowdSec) or `docker-compose.nas.crowdsec-plugin.yaml` (plugin mode);
+acquisition and parser are inline `configs`.
 The `crowdsec/` directory of this repository must sit next to the Compose
 files: the overlay mounts its acquisition and parser files read-only.
 
@@ -290,9 +289,9 @@ bouncer key". To rotate the key:
 On the NAS stack the files differ and the console service is `caddy-editor`:
 
 ```bash
-docker compose -f docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml exec crowdsec \
+docker compose -f docker-compose.nas.crowdsec.yaml exec crowdsec \
   cscli bouncers delete caddy_console
-docker compose -f docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml up -d \
+docker compose -f docker-compose.nas.crowdsec.yaml up -d \
   --force-recreate crowdsec caddy-editor
 ```
 
@@ -525,14 +524,12 @@ crowdsec/check-plugin-isolation.sh -- -f docker-compose.tunnel.yaml \
   -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml
 ```
 
-The NAS stack has its own files, its console service is `caddy-editor`, and it
+The NAS stack has its own single file, its console service is `caddy-editor`, and it
 uses the Cloudflare image (`CADDY_PLUGIN_IMAGE=ghcr.io/viralone/caddy-crowdsec-cloudflare@sha256:<digest>`):
 
 ```bash
-docker compose -f docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml \
-  -f docker-compose.crowdsec-plugin.nas.yaml up -d
-crowdsec/check-plugin-isolation.sh --console caddy-editor -- -f docker-compose.nas.yaml \
-  -f docker-compose.crowdsec.nas.yaml -f docker-compose.crowdsec-plugin.nas.yaml
+docker compose -f docker-compose.nas.crowdsec-plugin.yaml up -d
+crowdsec/check-plugin-isolation.sh --console caddy-editor -- -f docker-compose.nas.crowdsec-plugin.yaml
 ```
 
 ### The isolation check
@@ -643,8 +640,8 @@ copy `docker-compose.crowdsec-plugin.yaml` (for example to
 The editor then offers only the `{file./run/secrets/crowdsec_plugin_bouncer_key}`
 form of the global app. If the path in `CROWDSEC_PLUGIN_BOUNCER_KEY_FILE`, the
 mount and the Caddyfile placeholder differ, the image stops before Caddy
-starts and names both paths, never the content. On the NAS, copy
-`docker-compose.crowdsec-plugin.nas.yaml` and put the console change under
+starts and names both paths, never the content. On the NAS, edit
+`docker-compose.nas.crowdsec-plugin.yaml` and put the console change under
 `caddy-editor`.
 
 ### Protected addresses
@@ -848,7 +845,7 @@ command and truncate `bans-crowdsec.caddy` instead of (or as well as)
 `caddy-console` also stops CrowdSec file regeneration.
 
 With the plugin overlay, add `-f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml`
-(NAS: `-f docker-compose.crowdsec.nas.yaml -f docker-compose.crowdsec-plugin.nas.yaml`)
+(NAS: use `docker-compose.nas.crowdsec-plugin.yaml` alone)
 to every command. The overlay sets `CADDY_ADMIN_ADDRESS=172.30.250.2:2019` in the
 Caddy container, so the `--address "${CADDY_ADMIN_ADDRESS:-0.0.0.0:2019}"` above
 already uses the fixed admin bind and needs no `-e`:

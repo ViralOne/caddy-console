@@ -7,7 +7,7 @@
 #     -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml
 #
 # Works with the prod, internal and tunnel stacks; the NAS stack uses
-# docker-compose.crowdsec-plugin.nas.yaml. It replaces only the Caddy image,
+# docker-compose.nas.crowdsec-plugin.yaml. It replaces only the Caddy image,
 # puts Caddy on crowdsec-lapi so the plugin can poll LAPI, and pins Caddy to
 # 172.30.250.2 on caddy-admin. Before the first start, the Caddyfile must bind
 # the admin API there and nowhere else:

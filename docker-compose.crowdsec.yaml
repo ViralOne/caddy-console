@@ -3,7 +3,7 @@
 #   docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml up -d
 #
 # Works with the prod, internal, tunnel and dev stacks; the NAS stack uses
-# docker-compose.crowdsec.nas.yaml. Running only a baseline file never starts
+# docker-compose.nas.crowdsec.yaml. Running only a baseline file never starts
 # CrowdSec. CrowdSec reads Caddy's access log read-only and answers only the
 # console on the internal crowdsec-lapi network; Caddy never joins it, so the
 # Caddy admin API stays unreachable from CrowdSec. No port is published.

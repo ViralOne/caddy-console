@@ -20,14 +20,12 @@ for f in docker-compose.prod.yaml docker-compose.tunnel.yaml docker-compose.inte
 done
 
 # Phase 2 gate: the optional overlay is the only change needed to start CrowdSec,
-# and it keeps Caddy off the CrowdSec network. NAS uses its companion file
-# because its console service is named caddy-editor.
+# and it keeps Caddy off the CrowdSec network.
 export CROWDSEC_CONSOLE_BOUNCER_KEY=dummy-check-key
 for combo in "docker-compose.prod.yaml docker-compose.crowdsec.yaml caddy caddy-console" \
              "docker-compose.internal.yaml docker-compose.crowdsec.yaml caddy caddy-console" \
              "docker-compose.tunnel.yaml docker-compose.crowdsec.yaml caddy caddy-console" \
-             "docker-compose.dev.yaml docker-compose.crowdsec.yaml caddy-target caddy-console" \
-             "docker-compose.nas.yaml docker-compose.crowdsec.nas.yaml caddy caddy-editor"; do
+             "docker-compose.dev.yaml docker-compose.crowdsec.yaml caddy-target caddy-console"; do
   read -r base overlay caddy console <<<"$combo"
   docker compose -f "$base" -f "$overlay" config --format json | python3 dev/check-crowdsec-overlay.py "$caddy" "$console" \
     || { echo "$base + $overlay: CrowdSec overlay check failed" >&2; exit 1; }
@@ -41,8 +39,7 @@ export CROWDSEC_PLUGIN_BOUNCER_KEY=dummy-plugin-key
 export CADDY_PLUGIN_IMAGE=ghcr.io/viralone/caddy-crowdsec:sha-0000000
 for combo in "docker-compose.prod.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
              "docker-compose.internal.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
-             "docker-compose.tunnel.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
-             "docker-compose.nas.yaml docker-compose.crowdsec.nas.yaml docker-compose.crowdsec-plugin.nas.yaml caddy caddy-editor crowdsec-cloudflare"; do
+             "docker-compose.tunnel.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec"; do
   read -r base cs plug caddy console variant <<<"$combo"
   image="ghcr.io/viralone/caddy-$variant:sha-0000000"
   out=$(CADDY_PLUGIN_IMAGE="$image" docker compose -f "$base" -f "$cs" -f "$plug" config --format json)
@@ -61,11 +58,11 @@ done
 # The baseline files still render without any plugin variable.
 unset CROWDSEC_PLUGIN_BOUNCER_KEY CADDY_PLUGIN_IMAGE
 
-# Portainer single-file stacks: self-contained (no repo bind mounts), same checks as the overlays.
+# NAS single-file stacks: self-contained (no repo bind mounts), same checks as the overlays.
 export CADDY_CONSOLE_IMAGE=ghcr.io/example/caddy-console:sha-0000000 CROWDSEC_CONSOLE_BOUNCER_KEY=dummy-check-key \
   CROWDSEC_PLUGIN_BOUNCER_KEY=dummy-plugin-key
-for combo in "docker-compose.nas.crowdsec.portainer.yaml crowdsec" \
-             "docker-compose.nas.crowdsec-plugin.portainer.yaml crowdsec-cloudflare"; do
+for combo in "docker-compose.nas.crowdsec.yaml crowdsec" \
+             "docker-compose.nas.crowdsec-plugin.yaml crowdsec-cloudflare"; do
   read -r f variant <<<"$combo"
   image="ghcr.io/viralone/caddy-$variant:sha-0000000"
   out=$(CADDY_PLUGIN_IMAGE="$image" docker compose -f "$f" config --format json 2>/dev/null)

@@ -18,7 +18,7 @@
 - Text from records, LAPI, Caddy or API responses is rendered only as text nodes (Preact text children or `textContent`). No `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `dangerouslySetInnerHTML` in new or touched files.
 - Commits use the already configured git identity. Never run `git config`. One commit per task with the message given in the task.
 - Documentation, fixtures and tests use `example.com` hostnames and documentation addresses only (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`) plus the private Docker subnets named below. Nothing personal.
-- Baseline Compose files (`docker-compose.{prod,internal,tunnel,nas,dev}.yaml`) are not changed. Plugin mode lives only in `docker-compose.crowdsec-plugin.yaml` and its NAS companion `docker-compose.crowdsec-plugin.nas.yaml`; both are used together with the Phase 2 CrowdSec overlay. `dev/check-compose.sh` keeps failing if a baseline file mentions CrowdSec.
+- Baseline Compose files (`docker-compose.{prod,internal,tunnel,nas,dev}.yaml`) are not changed. Plugin mode lives only in `docker-compose.crowdsec-plugin.yaml` and its NAS companion `docker-compose.nas.crowdsec-plugin.yaml`; both are used together with the Phase 2 CrowdSec overlay. `dev/check-compose.sh` keeps failing if a baseline file mentions CrowdSec.
 - CrowdSec port 8080 is never published. CrowdSec and cloudflared never join `caddy-admin`. Caddy joins `crowdsec-lapi` only in plugin mode.
 - Fixed admin address in every plugin variant: Caddy is `172.30.250.2` on `caddy-admin` (subnet `172.30.250.0/29`, `internal: true`), the same address the tunnel stack already uses. Caddyfile bind: `admin 172.30.250.2:2019 { origins caddy:2019 172.30.250.2:2019 }`. `CADDY_ADMIN_ADDRESS=172.30.250.2:2019` is set on both Caddy and the console; the console's `CADDY_API_URL` becomes `http://172.30.250.2:2019`; the Caddy health check uses the same address.
 - Bouncer identities: the console keeps `caddy_console` with `CROWDSEC_CONSOLE_BOUNCER_KEY`; the plugin is `caddy_plugin` with `CROWDSEC_PLUGIN_BOUNCER_KEY` (environment form) or the Docker secret `/run/secrets/crowdsec_plugin_bouncer_key` named by `CROWDSEC_PLUGIN_BOUNCER_KEY_FILE` (file form). The console never receives the plugin key, only the file path. The two keys must differ; the overlay check and the integration test assert it.
@@ -76,7 +76,7 @@ Design decisions that follow from these facts:
 
 **Frontend (modified):** `security-model.js`, `security.js`, `snippet-insert.js`, `panels.js`.
 
-**Compose and checks (new):** `docker-compose.crowdsec-plugin.yaml`, `docker-compose.crowdsec-plugin.nas.yaml`, `dev/check-plugin-overlay.py`, `crowdsec/check-plugin-isolation.sh` (operator deployment check, shipped).
+**Compose and checks (new):** `docker-compose.crowdsec-plugin.yaml`, `docker-compose.nas.crowdsec-plugin.yaml`, `dev/check-plugin-overlay.py`, `crowdsec/check-plugin-isolation.sh` (operator deployment check, shipped).
 
 **Tests (new):** `tests/test_plugin_settings.py`, `tests/test_plugin_policy.py`, `tests/test_plugin_status.py`, `tests/test_plugin_snippets.py`, `tests/fixtures/plugin/{base,env,file}.Caddyfile`, `tests/fixtures/plugin/crowdsec-plugin-protect.caddy`, `tests/fixtures/bans/adapted-plugin-layouts.json` (generated), `tests/integration/make_plugin_fixtures.sh`, `tests/integration/fake_lapi.py`, `tests/integration/plugin_it.py`, `tests/integration/plugin/compose.yaml`, `tests/integration/plugin/compose.file-secret.yaml`, `dev/crowdsec-plugin-it.sh`, `dev/adapt-plugin-snippets.sh`.
 
@@ -3931,13 +3931,13 @@ git commit -m "feat(crowdsec-plugin): Security view plugin health and the CrowdS
 ### Task 9: The plugin Compose overlays, their static checks and the deployment isolation check
 
 **Files:**
-- Create: `docker-compose.crowdsec-plugin.yaml`, `docker-compose.crowdsec-plugin.nas.yaml`
+- Create: `docker-compose.crowdsec-plugin.yaml`, `docker-compose.nas.crowdsec-plugin.yaml`
 - Create: `dev/check-plugin-overlay.py`, `crowdsec/check-plugin-isolation.sh`
 - Modify: `dev/check-crowdsec-overlay.py` (`--plugin`), `dev/check-compose.sh` (Phase 3 gate)
 
 **Interfaces:**
 - Produces:
-  - `docker-compose.crowdsec-plugin.yaml` (services `caddy`, `caddy-console`, `crowdsec`) and `docker-compose.crowdsec-plugin.nas.yaml` (`caddy`, `caddy-editor`, `crowdsec`). Both need `CADDY_PLUGIN_IMAGE` (immutable reference) and `CROWDSEC_PLUGIN_BOUNCER_KEY`, and are used after the Phase 2 overlay: `docker compose -f <base> -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml up -d` (NAS: the two `.nas` files).
+  - `docker-compose.crowdsec-plugin.yaml` (services `caddy`, `caddy-console`, `crowdsec`) and `docker-compose.nas.crowdsec-plugin.yaml` (`caddy`, `caddy-editor`, `crowdsec`). Both need `CADDY_PLUGIN_IMAGE` (immutable reference) and `CROWDSEC_PLUGIN_BOUNCER_KEY`, and are used after the Phase 2 overlay: `docker compose -f <base> -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml up -d` (NAS: the two `.nas` files).
   - `dev/check-plugin-overlay.py CADDY CONSOLE VARIANT < config.json` (exit non-zero with one line per problem).
   - `crowdsec/check-plugin-isolation.sh [--caddy NAME] [--console NAME] [--data-port N] -- <compose -f args>`: exit 0 only when every CrowdSec and cloudflared container is refused on Caddy port 2019 at every Caddy address (including `172.30.250.2`), reaches the data-plane port on each network it shares with Caddy, and the plugin and console keys differ.
 
@@ -4047,7 +4047,7 @@ export CADDY_PLUGIN_IMAGE=ghcr.io/viralone/caddy-crowdsec:sha-0000000
 for combo in "docker-compose.prod.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
              "docker-compose.internal.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
              "docker-compose.tunnel.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
-             "docker-compose.nas.yaml docker-compose.crowdsec.nas.yaml docker-compose.crowdsec-plugin.nas.yaml caddy caddy-editor crowdsec-cloudflare"; do
+             "docker-compose.nas.yaml docker-compose.nas.crowdsec.yaml docker-compose.nas.crowdsec-plugin.yaml caddy caddy-editor crowdsec-cloudflare"; do
   read -r base cs plug caddy console variant <<<"$combo"
   image="ghcr.io/viralone/caddy-$variant:sha-0000000"
   out=$(CADDY_PLUGIN_IMAGE="$image" docker compose -f "$base" -f "$cs" -f "$plug" config --format json)
@@ -4086,7 +4086,7 @@ Create `docker-compose.crowdsec-plugin.yaml`:
 #     -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml
 #
 # Works with the prod, internal and tunnel stacks; the NAS stack uses
-# docker-compose.crowdsec-plugin.nas.yaml. It replaces only the Caddy image,
+# docker-compose.nas.crowdsec-plugin.yaml. It replaces only the Caddy image,
 # puts Caddy on crowdsec-lapi so the plugin can poll LAPI, and pins Caddy to
 # 172.30.250.2 on caddy-admin. Before the first start, the Caddyfile must bind
 # the admin API there and nowhere else:
@@ -4143,7 +4143,7 @@ networks:
     internal: true
 ```
 
-Create `docker-compose.crowdsec-plugin.nas.yaml` with the same comments adapted to the NAS file names, `caddy` using `${CADDY_PLUGIN_IMAGE:?Set CADDY_PLUGIN_IMAGE to ghcr.io/viralone/caddy-crowdsec-cloudflare@sha256:<digest> or :sha-<commit>}` (the NAS stack needs DNS-01; its `CLOUDFLARE_API_TOKEN` stays from the base file), the same `caddy` environment, networks and health check, the console block under `caddy-editor` instead of `caddy-console`, the same `crowdsec` block, and the same top-level `networks`.
+Create `docker-compose.nas.crowdsec-plugin.yaml` with the same comments adapted to the NAS file names, `caddy` using `${CADDY_PLUGIN_IMAGE:?Set CADDY_PLUGIN_IMAGE to ghcr.io/viralone/caddy-crowdsec-cloudflare@sha256:<digest> or :sha-<commit>}` (the NAS stack needs DNS-01; its `CLOUDFLARE_API_TOKEN` stays from the base file), the same `caddy` environment, networks and health check, the console block under `caddy-editor` instead of `caddy-console`, the same `crowdsec` block, and the same top-level `networks`.
 
 - [ ] **Step 4: Write the deployment isolation check**
 
@@ -4233,7 +4233,7 @@ Run: `docker compose -f docker-compose.prod.yaml config >/dev/null` with none of
 - [ ] **Step 6: Commit**
 
 ```bash
-git add docker-compose.crowdsec-plugin.yaml docker-compose.crowdsec-plugin.nas.yaml dev/check-plugin-overlay.py \
+git add docker-compose.crowdsec-plugin.yaml docker-compose.nas.crowdsec-plugin.yaml dev/check-plugin-overlay.py \
   dev/check-crowdsec-overlay.py dev/check-compose.sh crowdsec/check-plugin-isolation.sh
 git commit -m "feat(crowdsec-plugin): optional plugin overlays with a fixed admin bind, static checks and an isolation check"
 ```
@@ -5182,7 +5182,7 @@ Add `## CrowdSec plugin` to `docs/security.md` after the CrowdSec file-sync sect
    crowdsec/check-plugin-isolation.sh -- -f docker-compose.prod.yaml \
      -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml
    ```
-   then in the editor: **CrowdSec plugin: global app**, **CrowdSec plugin: load protected route definition**, Save & Reload; wait until Security shows the definition as current; then **CrowdSec plugin: protect this site** per site (or **Add import in editor** in Security), Save & Reload. Give the internal and tunnel commands and the NAS command (`docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml -f docker-compose.crowdsec-plugin.nas.yaml`, console service `caddy-editor`, `--console caddy-editor` for the check).
+   then in the editor: **CrowdSec plugin: global app**, **CrowdSec plugin: load protected route definition**, Save & Reload; wait until Security shows the definition as current; then **CrowdSec plugin: protect this site** per site (or **Add import in editor** in Security), Save & Reload. Give the internal and tunnel commands and the NAS command (`docker-compose.nas.yaml -f docker-compose.nas.crowdsec.yaml -f docker-compose.nas.crowdsec-plugin.yaml`, console service `caddy-editor`, `--console caddy-editor` for the check).
 5. **The isolation check.** What `crowdsec/check-plugin-isolation.sh` proves (port 2019 refused from every CrowdSec and cloudflared container at every Caddy address and at `172.30.250.2`; the data-plane port answers where they share a network; the two bouncer keys differ), that it needs no published port, and that plugin mode is not started successfully until it passes. Run it after every `up`.
 6. **Two keys.** The plugin is the bouncer `caddy_plugin` with `CROWDSEC_PLUGIN_BOUNCER_KEY`; the console keeps `caddy_console`. They must differ (LAPI stream cursors belong to a bouncer). Rotation: as for the console key, with `cscli bouncers delete caddy_plugin` and `--force-recreate crowdsec caddy`. Never write the key into the Caddyfile: Caddy's `/config/` would show it; the image refuses to start with a literal key.
 7. **Key in a file secret.** Same copy-the-overlay approach as the console's file secret (the shipped overlay requires the environment key): in the copy, replace Caddy's `CROWDSEC_PLUGIN_BOUNCER_KEY` with `CROWDSEC_PLUGIN_BOUNCER_KEY_FILE: /run/secrets/crowdsec_plugin_bouncer_key`, mount the secret at exactly that path on Caddy, give the console the same `CROWDSEC_PLUGIN_BOUNCER_KEY_FILE` (path only), register it on CrowdSec as the secret target `bouncer_key_caddy_plugin` and drop `BOUNCER_KEY_caddy_plugin`. Show the YAML. The editor then offers the `{file./run/secrets/crowdsec_plugin_bouncer_key}` form only. A trailing newline in the file is fine. A path that differs from the mount stops Caddy before launch with both paths named.

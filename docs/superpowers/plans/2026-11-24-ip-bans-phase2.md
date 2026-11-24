@@ -18,7 +18,7 @@
 - Text from records, LAPI or API responses (value, scenario, origin, reason, actor, messages) is rendered only as text nodes (Preact text children or `textContent`). No `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `dangerouslySetInnerHTML` in new or touched files.
 - Commits use the already configured git identity. Never run `git config`. One commit per task with the message given in the task.
 - Documentation and tests use `example.com` hostnames and documentation addresses only (`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `2001:db8::/32`). Nothing personal.
-- Baseline Compose files (`docker-compose.{prod,internal,tunnel,nas,dev}.yaml`) are not changed in behaviour. CrowdSec lives only in `docker-compose.crowdsec.yaml` (and the NAS companion `docker-compose.crowdsec.nas.yaml`, see Task 9). `dev/check-compose.sh` keeps failing if a baseline file mentions CrowdSec.
+- Baseline Compose files (`docker-compose.{prod,internal,tunnel,nas,dev}.yaml`) are not changed in behaviour. CrowdSec lives only in `docker-compose.crowdsec.yaml` (and the NAS companion `docker-compose.nas.crowdsec.yaml`, see Task 9). `dev/check-compose.sh` keeps failing if a baseline file mentions CrowdSec.
 - The CrowdSec image is `crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4` (multi-arch index digest of tag `v1.8.2`, read with `docker buildx imagetools inspect crowdsecurity/crowdsec:v1.8.2`). It publishes no host ports, joins `crowdsec-lapi` (`internal: true`) and `crowdsec-egress` only, never `caddy-admin` or `console-ui`. Caddy never joins `crowdsec-lapi`.
 - CrowdSec environment is exactly `COLLECTIONS: crowdsecurity/caddy`, `PARSERS: crowdsecurity/whitelists`, `DISABLE_ONLINE_API: "true"`, plus `BOUNCER_KEY_caddy_console` (the official image registers a bouncer named `caddy_console` with that key; changing a key later needs `cscli bouncers delete caddy_console` first).
 - The bouncer key (`CROWDSEC_CONSOLE_BOUNCER_KEY`, or the file named by `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE`) is sent only in the `X-Api-Key` header. It never appears in an exception message, log line, audit entry, status file, API response or the UI. Tests assert this.
@@ -56,7 +56,7 @@
 
 **CrowdSec files (new, repository-owned, mounted read-only):** `crowdsec/acquis.d/caddy.yaml`, `crowdsec/parsers/s02-enrich/caddy-console-safe-fields.yaml`.
 
-**Compose (new):** `docker-compose.crowdsec.yaml`, `docker-compose.crowdsec.nas.yaml`.
+**Compose (new):** `docker-compose.crowdsec.yaml`, `docker-compose.nas.crowdsec.yaml`.
 
 **Tests (new):** `tests/_crowdsec.py` (FakeLapi and helpers; not discovered), `tests/test_crowdsec_config.py`, `tests/test_crowdsec_lapi.py`, `tests/test_crowdsec_sources.py`, `tests/test_crowdsec_apply.py`, `tests/test_crowdsec_sync.py`, `tests/test_crowdsec_leader.py`, `tests/test_crowdsec_status.py`; integration `tests/integration/crowdsec_it.py` (not `test_*`, never discovered).
 
@@ -3438,14 +3438,14 @@ git commit -m "feat(security): CrowdSec health, read-only decisions and per-sour
 ### Task 9: The optional CrowdSec Compose overlay and its CrowdSec files
 
 **Files:**
-- Create: `docker-compose.crowdsec.yaml`, `docker-compose.crowdsec.nas.yaml`
+- Create: `docker-compose.crowdsec.yaml`, `docker-compose.nas.crowdsec.yaml`
 - Create: `crowdsec/acquis.d/caddy.yaml`, `crowdsec/parsers/s02-enrich/caddy-console-safe-fields.yaml`
 - Create: `dev/check-crowdsec-overlay.py`
 - Modify: `dev/check-compose.sh`, `dev/run.sh` (`down -v --remove-orphans`)
 
 **Interfaces:**
 - Consumes: the console settings from Task 1 (`CROWDSEC_URL`, key, origins, intervals).
-- Produces: services `crowdsec` (image pinned by digest, no ports, networks `crowdsec-lapi` + `crowdsec-egress`, named volumes `crowdsec-config:/etc/crowdsec` and `crowdsec-data:/var/lib/crowdsec/data`, `caddy-logs` read-only) and the console attachment (`CROWDSEC_URL=http://crowdsec:8080`, network `crowdsec-lapi`). The NAS stack's console service is `caddy-editor`, so it uses `docker-compose.crowdsec.nas.yaml`, which `extends` the same `crowdsec` service. The parser maps two top-level log fields, `user_agent` and `auth_challenge`, which the Task 7 `crowdsec-log-fields` snippet writes.
+- Produces: services `crowdsec` (image pinned by digest, no ports, networks `crowdsec-lapi` + `crowdsec-egress`, named volumes `crowdsec-config:/etc/crowdsec` and `crowdsec-data:/var/lib/crowdsec/data`, `caddy-logs` read-only) and the console attachment (`CROWDSEC_URL=http://crowdsec:8080`, network `crowdsec-lapi`). The NAS stack's console service is `caddy-editor`, so it uses `docker-compose.nas.crowdsec.yaml`, which `extends` the same `crowdsec` service. The parser maps two top-level log fields, `user_agent` and `auth_challenge`, which the Task 7 `crowdsec-log-fields` snippet writes.
 
 - [ ] **Step 1: Write the failing check**
 
@@ -3518,7 +3518,7 @@ for combo in "docker-compose.prod.yaml docker-compose.crowdsec.yaml caddy caddy-
              "docker-compose.internal.yaml docker-compose.crowdsec.yaml caddy caddy-console" \
              "docker-compose.tunnel.yaml docker-compose.crowdsec.yaml caddy caddy-console" \
              "docker-compose.dev.yaml docker-compose.crowdsec.yaml caddy-target caddy-console" \
-             "docker-compose.nas.yaml docker-compose.crowdsec.nas.yaml caddy caddy-editor"; do
+             "docker-compose.nas.yaml docker-compose.nas.crowdsec.yaml caddy caddy-editor"; do
   read -r base overlay caddy console <<<"$combo"
   docker compose -f "$base" -f "$overlay" config --format json | python3 dev/check-crowdsec-overlay.py "$caddy" "$console" \
     || { echo "$base + $overlay: CrowdSec overlay check failed" >&2; exit 1; }
@@ -3584,7 +3584,7 @@ statics:
 #   docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml up -d
 #
 # Works with the prod, internal, tunnel and dev stacks; the NAS stack uses
-# docker-compose.crowdsec.nas.yaml. Running only a baseline file never starts
+# docker-compose.nas.crowdsec.yaml. Running only a baseline file never starts
 # CrowdSec. CrowdSec reads Caddy's access log read-only and answers only the
 # console on the internal crowdsec-lapi network; Caddy never joins it, so the
 # Caddy admin API stays unreachable from CrowdSec. No port is published.
@@ -3644,13 +3644,13 @@ volumes:
   caddy-logs:
 ```
 
-`docker-compose.crowdsec.nas.yaml`:
+`docker-compose.nas.crowdsec.yaml`:
 
 ```yaml
 # The CrowdSec add-on for docker-compose.nas.yaml, whose console service is
 # named caddy-editor (docs/security.md#crowdsec-file-sync):
 #
-#   docker compose -f docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml up -d
+#   docker compose -f docker-compose.nas.yaml -f docker-compose.nas.crowdsec.yaml up -d
 services:
   crowdsec:
     extends:
@@ -3708,7 +3708,7 @@ docker compose -f docker-compose.dev.yaml up -d caddy-console
 - [ ] **Step 7: Commit**
 
 ```bash
-git add docker-compose.crowdsec.yaml docker-compose.crowdsec.nas.yaml crowdsec/ dev/check-crowdsec-overlay.py \
+git add docker-compose.crowdsec.yaml docker-compose.nas.crowdsec.yaml crowdsec/ dev/check-crowdsec-overlay.py \
   dev/check-compose.sh dev/run.sh
 git commit -m "feat(crowdsec): optional pinned CrowdSec overlay with read-only log acquisition and safe-field parser"
 ```
@@ -4137,7 +4137,7 @@ file secrets, give the console `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE` instead, and
 CrowdSec a Docker secret named `bouncer_key_caddy_console` with the same value
 (the official image registers a bouncer from either form). The same overlay
 works with `docker-compose.internal.yaml` and `docker-compose.tunnel.yaml`; the
-NAS stack uses `docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml`.
+NAS stack uses `docker-compose.nas.yaml -f docker-compose.nas.crowdsec.yaml`.
 The `crowdsec/` directory of this repository must sit next to the Compose
 files: the overlay mounts its acquisition and parser files read-only.
 
@@ -4271,7 +4271,7 @@ git commit -m "test(crowdsec): overlay integration in CI and CrowdSec file-sync 
 4. **Coalescing.** The leader polls every `CROWDSEC_POLL_INTERVAL` and reconciles at most once per `BANS_SYNC_INTERVAL`, every interval, whether or not a delta arrived. A no-op reconcile writes nothing. As a result a Reset of CrowdSec records is undone within the interval, not only at the next snapshot.
 5. **Auth failure.** After a 401/403 the leader stops delta polling and retries a `startup=true` poll every 60 s, so a fixed key is picked up without a restart. A changed key (env or `_FILE`) counts as "authentication refreshed".
 6. **Shared health.** The leader writes `BACKUP_DIR/bans-crowdsec-sync.json` (0600) after every poll; any worker serves it. It counts as stale after 3 polls plus one sync interval.
-7. **NAS.** Its console service is `caddy-editor`, so `docker-compose.crowdsec.nas.yaml` `extends` the overlay's `crowdsec` service. Baseline files are untouched.
+7. **NAS.** Its console service is `caddy-editor`, so `docker-compose.nas.crowdsec.yaml` `extends` the overlay's `crowdsec` service. Baseline files are untouched.
 8. **Log fields.** The "explicit authentication failure signal" is the late `log_append auth_challenge {http.response.header.Www-Authenticate}`. The parser marks `sub_type=auth_fail` on a 401 with a `Basic` challenge, the rule `crowdsecurity/caddy-logs` applies to the header the filter deletes. The User-Agent is logged as sent; the helper is copy-only so it never displaces the first-child ban import.
 9. **Image.** `crowdsecurity/crowdsec:v1.8.2` pinned by its multi-arch index digest.
 10. **Configuration errors.** An invalid `CROWDSEC_URL` or `CROWDSEC_ORIGINS` (empty included) refuses startup; a missing or unreadable key is a health state. The query uses the spec's `scopes=Ip,Range`.

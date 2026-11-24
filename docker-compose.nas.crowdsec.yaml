@@ -1,15 +1,14 @@
-# Portainer stack: NAS + CrowdSec PLUGIN mode in ONE self-contained file (no repo
-# checkout; acquisition and parser are inline `configs`). Paste into Portainer.
-# Env vars: CADDY_PLUGIN_IMAGE, CADDY_CONSOLE_IMAGE, CROWDSEC_CONSOLE_BOUNCER_KEY,
-# CROWDSEC_PLUGIN_BOUNCER_KEY (two different keys), plus the NAS vars (CLOUDFLARE_*,
-# AUTH_MODE, SECRET_KEY, SERVER_URL, ...). Optional: CROWDSEC_MACHINE_ID/_PASSWORD.
-# The Caddyfile must bind the admin API to 172.30.250.2:2019 (docs/security.md#crowdsec-plugin).
-# Take the stack down once (no -v) if caddy-admin exists without this subnet.
-# UI unban (once): docker exec <crowdsec> cscli machines add caddy_console --password '<pw>' -f /dev/null
-#   then set CROWDSEC_MACHINE_ID=caddy_console and CROWDSEC_MACHINE_PASSWORD=<pw>.
+# NAS + CrowdSec (file sync) in ONE self-contained file (no repo
+# checkout; acquisition and parser are inline `configs`). Can be pasted as a single stack.
+# Env vars: CADDY_CONSOLE_IMAGE (e.g. ghcr.io/viralone/caddy-console:pr-14),
+# CROWDSEC_CONSOLE_BOUNCER_KEY (python -c "import secrets; print(secrets.token_hex(32))"),
+# plus the NAS vars (CLOUDFLARE_*, AUTH_MODE, SECRET_KEY, SERVER_URL, ...).
+# Optional: CROWDSEC_MACHINE_ID/_PASSWORD, CROWDSEC_ORIGINS, CROWDSEC_POLL_INTERVAL.
+# UI unban (once): docker exec <crowdsec> cscli machines add caddy-console-writer --password '<pw>' -f /dev/null
+#   then set CROWDSEC_MACHINE_ID=caddy-console-writer and CROWDSEC_MACHINE_PASSWORD=<pw>.
 services:
   caddy:
-    image: ${CADDY_PLUGIN_IMAGE:?Set CADDY_PLUGIN_IMAGE to ghcr.io/viralone/caddy-crowdsec-cloudflare@sha256:<digest> or :sha-<commit>}
+    image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine
     restart: unless-stopped
     read_only: true
     cap_drop:
@@ -24,11 +23,6 @@ services:
 
     environment:
       CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN}"
-      CADDY_ADMIN_ADDRESS: 172.30.250.2:2019
-      CADDY_ADMIN_SUBNET: 172.30.250.0/29
-      # A key of its own, never the console's.
-      CROWDSEC_PLUGIN_BOUNCER_KEY: ${CROWDSEC_PLUGIN_BOUNCER_KEY:?Set CROWDSEC_PLUGIN_BOUNCER_KEY, different from CROWDSEC_CONSOLE_BOUNCER_KEY}
-      CROWDSEC_PLUGIN_BOUNCER_KEY_FILE: ""
 
     ports:
       - "80:80"
@@ -44,13 +38,11 @@ services:
       - caddy-logs:/var/log/caddy
 
     networks:
-      caddy-public: {}
-      caddy-admin:
-        ipv4_address: 172.30.250.2
-      crowdsec-lapi: {}
+      - caddy-public
+      - caddy-admin
 
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://172.30.250.2:2019/config/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -82,9 +74,7 @@ services:
       ALLOWED_EMAILS: "${ALLOWED_EMAILS}"
       SESSION_TIMEOUT_HOURS: "8"
       SESSION_COOKIE_SECURE: "true"
-      CADDY_API_URL: "http://172.30.250.2:2019"
-      CADDY_ADMIN_ADDRESS: 172.30.250.2:2019
-      CROWDSEC_PLUGIN_BOUNCER_KEY_FILE: ""
+      CADDY_API_URL: "http://caddy:2019"
       CADDYFILE_PATH: "/etc/caddy/Caddyfile"
       CADDY_LOG_FILE: "/var/log/caddy/access.log"
       BACKUP_DIR: "/backups"
@@ -165,8 +155,6 @@ services:
     # Reviewed tag plus its immutable multi-arch index digest.
     image: crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4
     restart: unless-stopped
-    cap_drop:
-      - ALL
     security_opt:
       - no-new-privileges:true
     pids_limit: 256
@@ -175,7 +163,6 @@ services:
       PARSERS: crowdsecurity/whitelists
       DISABLE_ONLINE_API: "true"
       BOUNCER_KEY_caddy_console: ${CROWDSEC_CONSOLE_BOUNCER_KEY:?Set CROWDSEC_CONSOLE_BOUNCER_KEY}
-      BOUNCER_KEY_caddy_plugin: ${CROWDSEC_PLUGIN_BOUNCER_KEY:?Set CROWDSEC_PLUGIN_BOUNCER_KEY}
     volumes:
       - crowdsec-config:/etc/crowdsec
       - crowdsec-data:/var/lib/crowdsec/data
@@ -236,10 +223,6 @@ networks:
   caddy-public:
   caddy-admin:
     internal: true
-    ipam:
-      config:
-        - subnet: 172.30.250.0/29
-          ip_range: 172.30.250.4/30
   console-ui:
   crowdsec-lapi:
     internal: true
