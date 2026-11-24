@@ -22,6 +22,11 @@ from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
 UNAVAILABLE_TTL = 30.0
+# Unavailable for a reason only an operator fixes (mount, permission, path):
+# the background tick reuses the cached result this long instead of writing a
+# probe and POSTing /adapt every tick. The Security view keeps UNAVAILABLE_TTL,
+# so a fixed mount shows up as soon as someone looks.
+BACKGROUND_UNAVAILABLE_TTL = AVAILABLE_TTL
 RESET_SOURCES = ("manual", "crowdsec", "country", "cloudflare")
 RECOVERY_ACTIONS = ("use_candidate", "use_previous", "restore_backup")
 PROBE_VAR = "caddy_console_probe"
@@ -149,11 +154,22 @@ def _probe() -> Availability:
                         "path in the Caddy container (read-only is enough).")
 
 
-def availability(force=False) -> Availability:
+def _ttl(result, background) -> float:
+    if result.ok:
+        return AVAILABLE_TTL
+    if background and result.code != "caddy_unreachable":
+        return BACKGROUND_UNAVAILABLE_TTL
+    return UNAVAILABLE_TTL
+
+
+def availability(force=False, background=False) -> Availability:
+    """background: the expiry tick, which tolerates an older configuration
+    failure (see BACKGROUND_UNAVAILABLE_TTL). An unreachable Caddy is still
+    re-checked on the short cache, so expiry resumes soon after it returns."""
     now = time.monotonic()
     with _lock:
         hit = _cache.get("availability")
-        if hit and not force and now - hit[1] < (AVAILABLE_TTL if hit[0].ok else UNAVAILABLE_TTL):
+        if hit and not force and now - hit[1] < _ttl(hit[0], background):
             return hit[0]
     result = _path_problem()
     if result is None:
@@ -583,7 +599,7 @@ def status(remote_addr) -> dict:
 # --- expiry (spec 1.5 'The expiry cleanup job') -------------------------------------------
 
 def expire_tick(now=None) -> str:
-    if not availability().ok:
+    if not availability(background=True).ok:
         return "unavailable"
     with caddyfile_lock():
         if txn.resolve_pending() is not None:

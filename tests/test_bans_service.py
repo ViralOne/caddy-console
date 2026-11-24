@@ -381,6 +381,36 @@ class AvailabilityTest(ServiceCase):
         self.assertTrue(service.availability(force=True).ok)
         self.assertEqual([n for n in os.listdir(env.BANS_DIR) if "probe" in n], [])
 
+    def test_expiry_tick_reuses_a_cached_configuration_failure(self):
+        # An install whose Caddy cannot see BANS_DIR must not POST /adapt every
+        # tick; the Security view still re-probes on its usual 30 s cache.
+        clock = [1000.0]
+        with mock.patch.object(service.time, "monotonic", lambda: clock[0]):
+            self.caddy.hide_imports = True
+            self.assertEqual(service.expire_tick(), "unavailable")
+            adapts = lambda: sum(1 for c in self.caddy.calls if c[0] == "adapt")
+            self.assertEqual(adapts(), 1)
+            for _ in range(8):                       # 4 minutes of 30 s ticks
+                clock[0] += 30
+                self.assertEqual(service.expire_tick(), "unavailable")
+            self.assertEqual(adapts(), 1)
+            clock[0] += 60                           # past AVAILABLE_TTL: probe again
+            service.expire_tick()
+            self.assertEqual(adapts(), 2)
+            clock[0] += 31
+            self.caddy.hide_imports = False
+            self.assertTrue(service.status("127.0.0.1")["available"])   # the view re-probes
+            self.assertEqual(adapts(), 3)
+
+    def test_expiry_tick_reprobes_an_unreachable_caddy_on_the_short_cache(self):
+        clock = [1000.0]
+        with mock.patch.object(service.time, "monotonic", lambda: clock[0]):
+            self.caddy.down = True
+            self.assertEqual(service.expire_tick(), "unavailable")
+            self.caddy.down = False
+            clock[0] += service.UNAVAILABLE_TTL + 1
+            self.assertEqual(service.expire_tick(), "idle")
+
     def test_probe_is_hidden_and_never_a_caddy_file(self):
         seen = []
         real = self.caddy.adapt_text

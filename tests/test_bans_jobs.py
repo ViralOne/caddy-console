@@ -65,6 +65,31 @@ class JobsTest(unittest.TestCase):
                     with self.assertNoLogs(jobs.log, "WARNING"):
                         jobs._loop(stop)
 
+    def run_ticks(self, results):
+        """Run _loop over a sequence of tick results, returning its log records."""
+        stop, pending = threading.Event(), list(results)
+
+        def tick():
+            if len(pending) == 1:
+                stop.set()
+            return pending.pop(0)
+        with mock.patch.object(service, "expire_tick", tick), mock.patch.object(jobs, "TICK_SECONDS", 0):
+            with self.assertLogs(jobs.log, "DEBUG") as cm:
+                jobs.log.debug("start")
+                jobs._loop(stop)
+        return [(r.levelname, r.getMessage()) for r in cm.records[1:]]
+
+    def test_loop_logs_a_stuck_result_once_until_it_changes(self):
+        logs = self.run_ticks(["unavailable"] * 5 + ["capacity_exceeded"] * 3 + ["idle"] * 3
+                              + ["unavailable", "applied", "idle"])
+        self.assertEqual([lvl for lvl, _ in logs], ["WARNING", "WARNING", "INFO", "WARNING", "INFO"])
+        self.assertIn("unavailable", logs[0][1])
+        self.assertIn("capacity_exceeded", logs[1][1])
+        self.assertIn("completes again", logs[2][1])
+
+    def test_loop_logs_nothing_while_idle(self):
+        self.assertEqual(self.run_ticks(["idle", "applied", "idle"]), [])
+
     def test_gunicorn_starts_jobs_in_workers_not_the_master(self):
         spec = importlib.util.spec_from_file_location("gconf", os.path.join(ROOT, "gunicorn.conf.py"))
         module = importlib.util.module_from_spec(spec)
