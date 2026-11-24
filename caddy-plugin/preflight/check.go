@@ -17,6 +17,10 @@ const envPlaceholder = "{env.CROWDSEC_PLUGIN_BOUNCER_KEY}"
 // Same rule as src/bans/plugin.py parse_key_file(): absolute, plain segments only.
 var keyPath = regexp.MustCompile(`^/(?:[A-Za-z0-9_][A-Za-z0-9._-]*/)*[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 
+// A value that is exactly one placeholder and nothing else; only such a value
+// is ever echoed. Same rule as src/bans/plugin.py _PLACEHOLDER.
+var placeholder = regexp.MustCompile(`^\{(?:env|file)\.[A-Za-z0-9_./-]{1,255}\}$`)
+
 // Env is what the preflight reads from the container environment. KeySet
 // says whether CROWDSEC_PLUGIN_BOUNCER_KEY is non-empty; the value is never read.
 type Env struct {
@@ -196,7 +200,7 @@ func checkKey(env Env, cfg adaptedConfig, stat func(string) (fs.FileInfo, error)
 		}
 		return nil
 	}
-	if strings.HasPrefix(got, "{env.") || strings.HasPrefix(got, "{file.") {
+	if placeholder.MatchString(got) {
 		return fmt.Errorf("the crowdsec api_key is %s, but this container expects %s", got, want)
 	}
 	return fmt.Errorf("the crowdsec api_key is written into the Caddyfile, where anyone who can read Caddy's "+

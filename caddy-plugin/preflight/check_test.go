@@ -147,6 +147,13 @@ func TestLiteralKeyIsRefusedWithoutEchoingIt(t *testing.T) {
 	mustRefuse(t, Check(envMode(), cfg(fixed(), secret), docker, mounted), "written into the Caddyfile")
 }
 
+func TestPlaceholderMixedWithALiteralIsNotEchoed(t *testing.T) {
+	for _, mixed := range []string{"{env.X}" + secret, secret + "{env.X}", "{env.X} " + secret + "}", "{file./k}{env.Y}" + secret} {
+		mustRefuse(t, Check(envMode(), cfg(fixed(), mixed), docker, mounted), "written into the Caddyfile")
+	}
+	mustRefuse(t, Check(envMode(), cfg(fixed(), "{env.OTHER_KEY}"), docker, mounted), "is {env.OTHER_KEY}, but")
+}
+
 func TestKeyFileMismatchIsRefused(t *testing.T) {
 	mustRefuse(t, Check(fileMode(), cfg(fixed(), "{file./run/secrets/other}"), docker, mounted),
 		"{file./run/secrets/other}")
