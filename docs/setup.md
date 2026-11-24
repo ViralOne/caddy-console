@@ -449,7 +449,10 @@ lines nothing changes: no facet, no extra fields.
 Ban an IP or range from the **Security** view or the Explore IP popover; stock
 Caddy enforces it on the sites that import the managed file. Setup, the
 protected ranges, capacity and host recovery are in
-[docs/security.md](security.md). No extra service is required.
+[docs/security.md](security.md). No extra service is required. For automatic
+bans from CrowdSec, add the optional overlay described in
+[CrowdSec file sync](security.md#crowdsec-file-sync-optional); the quick start
+above needs nothing from it.
 
 ## Environment variables
 
@@ -481,6 +484,11 @@ protected ranges, capacity and host recovery are in
 | `BANS_DIR` | no | `/etc/caddy/console` | Generated Caddy files; inside the Caddyfile directory |
 | `BANS_MAX` | no | `10000` | Maximum prefixes rendered into Caddy |
 | `BANS_NEVER` | no | empty | Extra protected IPs/CIDRs, comma or space separated; invalid entry stops startup |
+| `BANS_SYNC_INTERVAL` | no | `30` | Minimum seconds between CrowdSec-driven reloads (10-3600). |
+| `CROWDSEC_URL` | no | empty | LAPI URL; empty disables CrowdSec. The overlay sets `http://crowdsec:8080`. |
+| `CROWDSEC_CONSOLE_BOUNCER_KEY` | no | empty | Read-only bouncer key used only by the console. `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE` reads it from a mounted file instead. |
+| `CROWDSEC_ORIGINS` | no | `crowdsec,cscli` | LAPI origins synced and shown. |
+| `CROWDSEC_POLL_INTERVAL` | no | `10` | Seconds between decision-stream polls (5-300). |
 | `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
 | `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
 

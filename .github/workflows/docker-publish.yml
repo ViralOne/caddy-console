@@ -70,6 +70,9 @@ jobs:
       - name: Stock Caddy integration (IP bans)
         run: ./dev/bans-it.sh
 
+      - name: CrowdSec overlay integration (file sync)
+        run: ./dev/crowdsec-it.sh
+
       - name: Logs on failure
         if: failure()
         run: docker compose -f docker-compose.dev.yaml logs --tail 200

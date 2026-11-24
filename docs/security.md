@@ -2,9 +2,11 @@
 
 Caddy Console can block clients by IP address or CIDR range on the sites you
 choose. This page covers manual file mode, which works with the stock
-`caddy:2.11.9-alpine` image and needs no extra service. CrowdSec, Cloudflare
-trust profiles and country policy are later additions and are not part of
-this release.
+`caddy:2.11.9-alpine` image and needs no extra service. CrowdSec file sync is
+an optional overlay, described in
+[CrowdSec file sync (optional)](#crowdsec-file-sync-optional). Cloudflare trust
+profiles and country policy are later additions and are not part of this
+release.
 
 ## How it works
 
@@ -154,6 +156,10 @@ All four sizes are within budget; the released default is capped at 10,000,
 the size the design targets. Raise `BANS_MAX` (up to 100,000) only after
 measuring your own host with `tests/integration/bans_benchmark.py`.
 
+`BANS_MAX` counts the manual and CrowdSec files together. A ban, an expiry or a
+CrowdSec sync that would exceed it is refused as a whole; nothing is dropped to
+fit.
+
 ## States
 
 | State | What it means | What to do |
@@ -166,6 +172,149 @@ measuring your own host with `tests/integration/bans_benchmark.py`.
 
 An unreadable `bans.json` is never replaced with an empty list; a bounded copy
 is kept in `BACKUP_DIR` as `bans.json.quarantine-*`.
+
+<a id="crowdsec-file-sync"></a>
+
+## CrowdSec file sync (optional)
+
+An optional CrowdSec container reads Caddy's access log and decides which
+clients to ban. The console polls CrowdSec's Local API (LAPI) as a read-only
+bouncer and renders the active decisions into
+`BANS_DIR/bans-crowdsec.caddy`, through the same journaled transaction as
+manual bans. Sites opt in separately, so one site can use manual bans only,
+CrowdSec only, or both.
+
+### Start it
+
+```bash
+export CROWDSEC_CONSOLE_BOUNCER_KEY="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml up -d
+```
+
+Keep the key in the same `.env` as the rest of the stack. On a platform with
+file secrets, give the console `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE` instead, and
+CrowdSec a Docker secret named `bouncer_key_caddy_console` with the same value
+(the official image registers a bouncer from either form). The same overlay
+works with `docker-compose.internal.yaml` and `docker-compose.tunnel.yaml`; the
+NAS stack uses `docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml`.
+The `crowdsec/` directory of this repository must sit next to the Compose
+files: the overlay mounts its acquisition and parser files read-only.
+
+The CrowdSec container publishes no port, mounts the log volume read-only and
+shares only the internal `crowdsec-lapi` network with the console (plus an
+egress network for Hub downloads). Caddy never joins that network, so CrowdSec
+cannot reach the Caddy admin API. Community enrollment is off
+(`DISABLE_ONLINE_API=true`).
+
+### Change the bouncer key
+
+CrowdSec registers the bouncer `caddy_console` with your key only on the first
+start of its configuration volume (`crowdsec-config`). Changing
+`CROWDSEC_CONSOLE_BOUNCER_KEY` later is not enough: CrowdSec keeps accepting the
+old key and refuses the new one, and Security shows "CrowdSec refused the
+bouncer key". To rotate the key:
+
+1. Put the new key in `.env` (or the mounted key file and the Docker secret).
+2. Delete the registered bouncer:
+
+   ```bash
+   docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml exec crowdsec \
+     cscli bouncers delete caddy_console
+   ```
+
+3. Recreate both containers so they read the new key; CrowdSec registers it again:
+
+   ```bash
+   docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml up -d \
+     --force-recreate crowdsec caddy-console
+   ```
+
+The console retries a refused key every 60 seconds, so it picks up the new
+registration without another restart. The last synced list stays enforced
+meanwhile.
+
+### Protect a site
+
+In the editor use **CrowdSec bans: protect this site**, or **Add import in
+editor** in Security. It goes directly after the manual import:
+
+```caddyfile
+example.com {
+	import /etc/caddy/console/bans-manual*.caddy
+	import /etc/caddy/console/bans-crowdsec*.caddy
+
+	handle {
+		reverse_proxy app:8080
+	}
+}
+```
+
+### Log fields for detection
+
+The console's log filter deletes request and response headers. CrowdSec's Caddy
+parser still sees the client address, method, path and status, so path probes
+and 404 bursts are detected. For the bad User-Agent and Basic auth brute-force
+scenarios, add the **CrowdSec: log fields for detection** snippet to each logged
+site, below the ban imports:
+
+```caddyfile
+log_append <user_agent {http.request.header.User-Agent}
+log_append auth_challenge {http.response.header.Www-Authenticate}
+```
+
+These two top-level fields are all the repository's parser
+(`crowdsec/parsers/s02-enrich/caddy-console-safe-fields.yaml`) needs. Cookie,
+Authorization and API-key headers and bodies are never logged.
+
+### Check that parsing works
+
+```bash
+docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml exec crowdsec \
+  cscli explain --file /var/log/caddy/access.log --type caddy -v
+```
+
+Look for `evt.Meta.source_ip`, `http_path`, `http_verb` and `http_status`. The
+`source_ip` must be the visitor's address, for example `203.0.113.60`, not a
+Docker or Cloudflare address; if it is not, fix `trusted_proxies` first (see
+[Which address is banned](#which-address-is-banned)). CrowdSec's parser uses
+Caddy's resolved `client_ip`, the same address a ban matches.
+
+### Origins and capacity
+
+`CROWDSEC_ORIGINS` defaults to `crowdsec,cscli`: CrowdSec's own detections and
+decisions you add with `cscli`. CAPI and list origins can hold tens of thousands
+of decisions; stock Caddy file mode has a finite matcher budget (`BANS_MAX`,
+shared with manual bans), so add them only deliberately. If the selected origins
+would exceed `BANS_MAX`, the last applied CrowdSec file stays enforced,
+automatic apply pauses and Security shows the counts by origin.
+
+### How sync behaves
+
+- One console worker leads the sync (a lock in `BACKUP_DIR`); if it exits,
+  another takes over within one poll interval and starts with a full snapshot.
+- The first poll, and the first after any error, asks for the full list
+  (`startup=true`); later polls fetch changes. Files are rewritten and Caddy is
+  reloaded at most once per `BANS_SYNC_INTERVAL` and only when the file changes,
+  so a new decision is normally enforced within 60 seconds.
+- Each decision is stored separately; deleting one does not unban an address
+  another decision still covers. Only `ban` decisions with scope Ip or Range are
+  used. Protected addresses (see above) are ignored and shown as such.
+- If CrowdSec is unreachable, refuses the key or sends an unusable response, the
+  last synced list stays enforced and Security shows the time of the last
+  success.
+
+### Removing a decision
+
+CrowdSec decisions are read-only in the console. Security shows a copyable
+command for each one; run it inside the CrowdSec container:
+
+```bash
+docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml exec crowdsec \
+  cscli decisions delete --id 42
+```
+
+**Reset CrowdSec decisions** in Security only clears the stored copy; decisions
+that are still active in CrowdSec return within `BANS_SYNC_INTERVAL`.
 
 ## Host recovery
 
@@ -180,6 +329,11 @@ docker compose -f docker-compose.prod.yaml exec caddy sh -c \
    --address "${CADDY_ADMIN_ADDRESS:-0.0.0.0:2019}"'
 docker compose -f docker-compose.prod.yaml start caddy-console
 ```
+
+With the CrowdSec overlay, add `-f docker-compose.crowdsec.yaml` to every
+command and truncate `bans-crowdsec.caddy` instead of (or as well as)
+`bans-manual.caddy` when a CrowdSec decision caused the lockout. Stopping
+`caddy-console` also stops CrowdSec file regeneration.
 
 | Stack | Compose file | Host directory | Admin address for `--address` |
 |---|---|---|---|
@@ -214,3 +368,8 @@ Recovery never needs port 2019 published.
 | `BANS_DIR` | `/etc/caddy/console` | Directory for generated Caddy files, inside the Caddyfile directory. |
 | `BANS_MAX` | `10000` | Maximum prefixes rendered into Caddy (measured above). |
 | `BANS_NEVER` | empty | Extra protected IPs/CIDRs, comma or space separated. An invalid entry stops startup. |
+| `BANS_SYNC_INTERVAL` | `30` | Minimum seconds between CrowdSec-driven reloads (10-3600). |
+| `CROWDSEC_URL` | empty | LAPI URL; empty disables CrowdSec. The overlay sets `http://crowdsec:8080`. |
+| `CROWDSEC_CONSOLE_BOUNCER_KEY` | empty | Read-only bouncer key used only by the console. `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE` reads it from a mounted file instead. |
+| `CROWDSEC_ORIGINS` | `crowdsec,cscli` | LAPI origins synced and shown. |
+| `CROWDSEC_POLL_INTERVAL` | `10` | Seconds between decision-stream polls (5-300). |

@@ -69,6 +69,14 @@ the dev stack (CI runs it too):
 It loads its own Caddyfile from `dev/run/itest/` and restores the dev one when
 it finishes.
 
+The CrowdSec overlay has its own suite:
+
+```bash
+./dev/crowdsec-it.sh   # dev stack + docker-compose.crowdsec.yaml, runs tests/integration/crowdsec_it.py
+```
+
+It needs network access to the CrowdSec Hub and generates its own bouncer key.
+
 ## Front-end build
 
 App code is plain ES modules loaded straight by the browser — **no build step**,

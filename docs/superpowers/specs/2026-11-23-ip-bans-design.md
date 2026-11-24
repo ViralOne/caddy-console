@@ -605,6 +605,13 @@ The add-on therefore ships a small local parser and a Caddy logging helper that:
 - maps those explicit fields into CrowdSec metadata expected by the selected
   scenarios.
 
+Accepted amendment (Phase 2): the User-Agent is logged as sent through
+`log_append <user_agent {http.request.header.User-Agent}`, and the authentication
+failure is inferred from the response's `Www-Authenticate` header
+(`log_append auth_challenge {http.response.header.Www-Authenticate}`, a `Basic`
+challenge on a 401), because a normalized field is not expressible with stock
+`log_append`. Cookie, Authorization and bodies are still never logged.
+
 The exact placeholders and parser are validated against the running Caddy 2.11.9
 build and CrowdSec image. Setup includes:
 
