@@ -1241,12 +1241,20 @@ def _site_rows(live, text, state, now, holds) -> list:
             expected = detect.expand_tokens(protected_for(state or store.State()).exclusion_tokens())
         detected["plugin"] = detect.plugin_site_statuses(live, expected_exclusions=expected)
     plugin_after = tuple(render.SOURCES[n].path for n in render.SOURCES)
+    if _country_rows_wanted(live):
+        names.append("country")
+        if live is not None:
+            detected["country"] = detect.country_site_statuses(
+                live, expected_shape=None if "country" in holds else _country_expected_shape())
+    country_after = tuple(render.SOURCES[n].path for n in render.COUNTRY_AFTER if n in render.SOURCES)
 
     def policy(name, status, block, mgmt, found=None):
         imp = None
         if block is not None:
             imp = (scan.block_import_state(text, block, None, after=plugin_after, snippet=render.PLUGIN.snippet)
                    if name == "plugin" else
+                   scan.block_import_state(text, block, render.COUNTRY.path, after=country_after)
+                   if name == "country" else
                    scan.block_import_state(text, block, sources[name].path, after=after.get(name, ())))
         return {"status": _management_status(status, imp) if mgmt else status,
                 "pre_handlers": found.pre_handlers if found else [], "detail": found.detail if found else "",
@@ -1275,6 +1283,19 @@ def _site_rows(live, text, state, now, holds) -> list:
         rows.append({"label": b.hosts[0] if b.hosts else b.addresses[0], "hosts": b.hosts,
                      "source": "main", "line": b.start, **policies["manual"], "policies": policies})
     return rows
+
+
+def _country_rows_wanted(live) -> bool:
+    return _country_active() or (live is not None and bool(detect.country_shapes(live)))
+
+
+def _country_expected_shape():
+    """The marker value the current settings render, or None while the policy
+    cannot be rendered (the live value is then not compared)."""
+    policy, _, _, facts, error, _ = _country_facts()
+    if not country.effective_enabled(policy):
+        return "off"
+    return None if error is not None or facts is None else facts["profile"]
 
 
 def _plugin_rows_wanted(live) -> bool:
@@ -1394,15 +1415,31 @@ def _profile_status(live, holds, text) -> dict:
         data = fsio.read_bytes(path)
         if data is not None:
             deps.append({"file": os.path.basename(path), "hash": fsio.sha256_tag(data)[7:19]})
+    info["ranges"]["age_seconds"] = _age_seconds(info["ranges"].get("fetched_at"))
     return {**info, "active": _profile_active(), "hold": holds.get("cloudflare"), "dependencies": deps,
             "imported": scan.mentions_import(text, render.PROFILE.path),
             "live": _live_trust(live, prof) if live is not None else None}
 
 
+def _age_seconds(stamp):
+    try:
+        return max(0, int((store.utc_now() - store.parse_iso(stamp)).total_seconds()))
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
 def _country_status(live, holds) -> dict:
     info = country_policy_info()
-    return {**info, "active": _country_active(), "hold": holds.get("country"),
-            "live_shapes": detect.country_shapes(live) if live is not None else None}
+    shapes = detect.country_shapes(live) if live is not None else None
+    # Healthy needs the rendered file, the confirmation (Cloudflare) and, when
+    # Caddy answers, the same shape running live.
+    live_ok = None if shapes is None else bool(shapes) and set(shapes) == {info["shape"] or "off"}
+    prefixes = info["prefixes"] if isinstance(info["prefixes"], dict) else {}
+    summary = {"mode": info["shape"], "countries": info["countries"], "prefixes": prefixes,
+               "cap": info["limits"]["max"], "warn": info["limits"]["warn"], "warnings": info["warnings"],
+               "healthy": bool(info["healthy"] and live_ok is not False), "live_ok": live_ok}
+    return {**info, "active": _country_active(), "hold": holds.get("country"), "live_shapes": shapes,
+            "summary": summary}
 
 
 def status(remote_addr) -> dict:
