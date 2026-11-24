@@ -18,6 +18,8 @@ URLS = {"v4": "https://www.cloudflare.com/ips-v4", "v6": "https://www.cloudflare
 MAX_BYTES = 16 * 1024            # each list is well under 1 KiB
 MAX_ENTRIES = 64                 # per family
 WIDEST = {4: 8, 6: 12}           # no edge range is wider than this
+NEW_WIDEST = {4: 12, 6: 29}     # a prefix not in the previous list may not be wider than this
+MAX_GROWTH = 2.0                # of the previous address space a new list may cover
 MIN_SHARED = 0.5                 # of the previous address space a new list must still cover
 
 
@@ -57,8 +59,10 @@ def _size(nets) -> int:
 
 def plausible(old: dict, new: dict):
     """None if `new` may replace `old`, else why not. Each family must keep at
-    least MIN_SHARED of the previous address space: a refresh that drops most
-    of the edge is a broken or hostile response, not a range update."""
+    least MIN_SHARED of the previous address space, may not add a prefix wider
+    than NEW_WIDEST and may not grow beyond MAX_GROWTH times the old space: a
+    refresh that drops most of the edge or widens the trusted set is a broken
+    or hostile response, not a range update."""
     for family in ("v4", "v6"):
         before = [ipaddress.ip_network(x) for x in old.get(family) or ()]
         after = [ipaddress.ip_network(x) for x in new.get(family) or ()]
@@ -71,6 +75,12 @@ def plausible(old: dict, new: dict):
             for b in after:
                 if a.overlaps(b):
                     shared += min(a.num_addresses, b.num_addresses)
+        old_set = set(before)
+        for b in after:
+            if b not in old_set and b.prefixlen < NEW_WIDEST[b.version]:
+                return f"the {family} list adds {b}, wider than /{NEW_WIDEST[b.version]}"
+        if _size(after) > MAX_GROWTH * _size(before):
+            return f"the {family} list grows to more than {MAX_GROWTH:g}x the previous address space"
         if shared < MIN_SHARED * _size(before):
             return f"the {family} list keeps less than {int(MIN_SHARED * 100)}% of the previous ranges"
     return None

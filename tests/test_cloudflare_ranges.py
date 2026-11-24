@@ -70,6 +70,19 @@ class ParseTest(unittest.TestCase):
         grown = {"v4": old["v4"] + ["198.51.100.0/24"], "v6": old["v6"]}
         self.assertIsNone(cfranges.plausible(old, grown))
 
+    def test_implausible_growth_is_refused(self):
+        old = cfranges.bundled()
+        wide4 = {"v4": old["v4"] + ["8.0.0.0/11"], "v6": old["v6"]}
+        self.assertIn("wider than /12", cfranges.plausible(old, wide4))
+        wide6 = {"v4": old["v4"], "v6": old["v6"] + ["2001:4800::/28"]}
+        self.assertIn("wider than /29", cfranges.plausible(old, wide6))
+        edge = {"v4": old["v4"] + ["8.0.0.0/12"], "v6": old["v6"] + ["2001:4800::/29"]}
+        self.assertIsNone(cfranges.plausible(old, edge), "/12 and /29 are the widest accepted")
+        many = {"v4": old["v4"] + [f"{o}.0.0.0/13" for o in range(20, 32)], "v6": old["v6"]}
+        self.assertIn("grows", cfranges.plausible(old, many))
+        many6 = {"v4": old["v4"], "v6": old["v6"] + ["2001:4800::/29", "2001:5800::/29", "2001:6800::/29"]}
+        self.assertIn("grows", cfranges.plausible(old, many6))
+
 
 class RefreshTest(_bans.ApiCase):
     def setUp(self):
@@ -136,7 +149,8 @@ class RefreshTest(_bans.ApiCase):
         before = fsio.read_bytes(render.PROFILE.path)
         for session in (FakeSession(v4=""), FakeSession(status=503), FakeSession(v4="not a network\n"),
                         FakeSession(v4="173.245.48.0/20\n"), FakeSession(v6=b"\xff" * 10),
-                        FakeSession(v4="198.18.0.0/24\n" * 2000)):
+                        FakeSession(v4="198.18.0.0/24\n" * 2000),
+                        FakeSession(v4=V4 + "8.0.0.0/11\n")):
             with self.subTest(session=session.bodies):
                 body, status = self.refresh(session)
                 self.assertEqual((status, body["code"]), (502, "ranges_refused"))
