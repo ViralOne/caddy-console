@@ -5,6 +5,8 @@ load state -> build every candidate in memory -> txn.apply_locked().
 availability() takes the lock for its probe, so it is never called while the
 lock is held (flock is per fd, not re-entrant).
 """
+import collections
+import dataclasses
 import ipaddress
 import json
 import logging
@@ -13,6 +15,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 from .. import audit, config
 from ..geoip import geoip
@@ -263,28 +266,67 @@ def _after_commit(corrupt) -> None:
         store.clear_error()
 
 
-def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt=False, force_reload=False,
-              affects=("manual",)):
-    """mutate(state, now, version) edits state in place and returns a Mutation,
-    or raises BanError. Everything between load and apply runs under the lock.
-    The mutation's audit events travel in the transaction journal, so txn
-    writes them exactly when (and if) the change commits."""
-    avail = availability()
+@dataclass
+class _Plan:
+    """What a locked step wants committed. `context` is handed back to the caller."""
+    changes: list
+    actor: str
+    source: str
+    audit_events: list
+    force_reload: bool = False
+    context: object = None
+
+
+@dataclass(frozen=True)
+class _Refused:
+    """A gate of the shared write path refused before anything was written."""
+    gate: str                       # unavailable | degraded | corrupt
+    message: str
+    reason: object = None
+
+
+def _locked_transaction(prepare, *, background=False, allow_corrupt=False):
+    """The one write path (module docstring): availability() ->
+    caddyfile_lock() -> txn.resolve_pending() -> store.load() -> prepare() ->
+    txn.apply_locked() -> _after_commit(), all between load and apply under the lock.
+
+    prepare(state, corrupt) edits state in place and returns a _Plan to commit,
+    or any other value to stop without writing. corrupt is the StateCorrupt
+    replaced by an empty state (allow_corrupt only), else None. Returns
+    (refused, value, outcome): a _Refused or None, what prepare returned, and
+    the txn Outcome (None when nothing was applied)."""
+    avail = availability(background=background)
     if not avail.ok:
-        return _error("bans_unavailable", avail.message, 503, reason=avail.code)
+        return _Refused("unavailable", avail.message, avail.code), None, None
     with caddyfile_lock():
         pending = txn.resolve_pending()
         if pending is not None:
-            return _error("state_degraded", pending.message, 503, recovery=True)
+            return _Refused("degraded", pending.message), None, None
         corrupt = None
         try:
             state = store.load()
         except store.StateCorrupt as e:
             store.quarantine(e.raw, str(e))
             if not allow_corrupt:
-                return _error("state_degraded", f"{e}. The last generated policy stays enforced; "
-                              "open Security to recover.", 503, recovery=True)
+                return _Refused("corrupt", str(e)), None, None
             corrupt, state = e, store.State()
+        plan = prepare(state, corrupt)
+        if not isinstance(plan, _Plan):
+            return None, plan, None
+        outcome = txn.apply_locked(plan.changes, actor=plan.actor, source=plan.source,
+                                   audit_events=plan.audit_events, force_reload=plan.force_reload)
+        if outcome.ok:
+            _after_commit(corrupt)
+    return None, plan, outcome
+
+
+def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt=False, force_reload=False,
+              affects=("manual",)):
+    """mutate(state, now, version) edits state in place and returns a Mutation,
+    or raises BanError. Everything between load and apply runs under the lock.
+    The mutation's audit events travel in the transaction journal, so txn
+    writes them exactly when (and if) the change commits."""
+    def prepare(state, corrupt):
         version = _corrupt_version(corrupt) if corrupt else state.version
         holds = {} if corrupt else {k: v for k, v in _holds(state).items() if k not in force}
         now = store.utc_now()
@@ -303,10 +345,20 @@ def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt
             return _error("capacity_exceeded", f"This would render {e.count} prefixes ({parts}); the limit "
                           f"(BANS_MAX) is {e.limit}. Remove or merge bans first.", 409, count=e.count,
                           limit=e.limit, by_source=e.by_source)
-        outcome = txn.apply_locked(changes, actor=actor, source=source,
-                                   audit_events=_expired_events(expired) + result.audit, force_reload=force_reload)
-        if outcome.ok:
-            _after_commit(corrupt)
+        return _Plan(changes, actor, source, _expired_events(expired) + result.audit,
+                     force_reload=force_reload, context=(result, holds))
+
+    refused, plan, outcome = _locked_transaction(prepare, allow_corrupt=allow_corrupt)
+    if refused is not None:
+        if refused.gate == "unavailable":
+            return _error("bans_unavailable", refused.message, 503, reason=refused.reason)
+        if refused.gate == "corrupt":
+            return _error("state_degraded", f"{refused.message}. The last generated policy stays enforced; "
+                          "open Security to recover.", 503, recovery=True)
+        return _error("state_degraded", refused.message, 503, recovery=True)
+    if outcome is None:
+        return plan                         # an error response from prepare
+    result, holds = plan.context
     body = {**_outcome_body(outcome), **result.body}
     if outcome.ok and set(holds) & set(affects):
         body["enforcement"] = "held"
@@ -421,6 +473,152 @@ def reset(payload, actor, remote_addr):
         return Mutation(body, 200, [("bans_reset", f"{source}: removed {len(removed)} records")])
     return _transact(actor, _verified_client(remote_addr), mutate, force=(source,), allow_corrupt=True,
                      source="reset", affects=(source,))
+
+
+# --- CrowdSec file sync (spec 2.4-2.6) ---------------------------------------------------
+
+REFRESH_TOLERANCE = timedelta(minutes=2)
+PROTECTED_SAMPLE_MAX = 10
+COUNTS_TEXT_MAX = 12
+_SYNC_OK = ("applied", "stored", "unchanged")
+
+
+@dataclass
+class SyncApply:
+    code: str
+    message: str = ""
+    added: int = 0
+    removed: int = 0
+    active: int = 0
+    protected: dict = field(default_factory=dict)
+    protected_sample: list = field(default_factory=list)
+    by_origin: dict = field(default_factory=dict)
+    capacity: object = None
+
+    @property
+    def ok(self) -> bool:
+        return self.code in _SYNC_OK
+
+
+def _counts_text(counts) -> str:
+    """A bounded "name count, ..." summary for audit details and messages."""
+    items = sorted((str(k)[:40], v) for k, v in counts.items() if v)
+    text = ", ".join(f"{k} {v}" for k, v in items[:COUNTS_TEXT_MAX])
+    if len(items) > COUNTS_TEXT_MAX:
+        text += f", and {len(items) - COUNTS_TEXT_MAX} more"
+    return text or "none"
+
+
+def _reconcile_crowdsec(state, wanted) -> tuple:
+    """Replace the crowdsec records with `wanted` (decision id -> Accepted).
+    A record whose decision, value and expiry (within REFRESH_TOLERANCE) are
+    unchanged is kept as it is, so a repeated snapshot changes no byte."""
+    old = {r.source_id: r for r in state.records if r.source == "crowdsec"}
+    keep, added = [], 0
+    for did, a in wanted.items():
+        r = old.get(did)
+        if (r is not None and r.value == addr.token(a.net) and r.expires_at
+                and abs(store.parse_iso(r.expires_at) - a.expires_at) <= REFRESH_TOLERANCE):
+            keep.append(r)
+            continue
+        added += r is None
+        keep.append(store.new_crowdsec_record(did, a.net, a.origin, a.scenario, a.fetched_at, a.expires_at))
+    removed = sum(1 for did in old if did not in wanted)
+    keep.sort(key=lambda r: int(r.source_id))
+    state.records = [r for r in state.records if r.source != "crowdsec"] + keep
+    return keep, added, removed
+
+
+def _total_counts(records, now) -> dict:
+    """Every prefix rendered into stock Caddy, whatever its origin: the sync
+    gate (spec 2.5). Manual changes use render.capacity_counts instead."""
+    return {name: len(render.effective_prefixes(records, now, name)) for name in ("manual", "crowdsec")}
+
+
+def apply_crowdsec(desired, *, snapshot=False, ignored=None, now=None) -> SyncApply:
+    """Make the stored crowdsec records equal the sync leader's accepted
+    decisions and render bans-crowdsec.caddy through the Phase 1 transaction.
+    Called only by the sync leader, with decisions already fetched: never
+    while caddyfile_lock() is held and never with an LAPI request in flight.
+
+    Only the crowdsec source is pruned and rendered: manual records, the
+    management registry and bans-manual.caddy belong to the manual path and
+    expire_tick (spec 2.4). Every decision gets the manual checks (canonical
+    value, width, protected overlap). Every failure keeps the last loaded
+    policy (spec 2.6): a corrupt state, a pending journal, a held file or a
+    capacity overflow returns before any write."""
+    ignored = collections.Counter(ignored or {})
+
+    def prepare(state, corrupt):
+        at = now or store.utc_now()
+        holds = _holds(state)
+        if "crowdsec" in holds:
+            return SyncApply("held", "bans-crowdsec.caddy differs from the stored state (for example after host "
+                             "recovery). CrowdSec sync is paused for that file until you Re-apply it in Security.")
+        expired = store.prune_expired(state, at, sources=["crowdsec"])
+        prot = protected_for(state)
+        wanted, prot_counts, sample = {}, collections.Counter(), []
+        for a in desired:
+            if a.expires_at <= at:
+                ignored["expired"] += 1
+                continue
+            try:
+                net = addr.canonical(addr.token(a.net))
+                addr.check_width(net)
+            except addr.AddressError as e:
+                ignored["too_wide" if e.code == "range_too_wide" else "invalid_value"] += 1
+                continue
+            category = prot.overlap(net)
+            if category:
+                prot_counts[category] += 1
+                if len(sample) < PROTECTED_SAMPLE_MAX:
+                    sample.append({"value": addr.token(net), "category": category,
+                                   "scenario": a.scenario, "origin": a.origin})
+                continue
+            wanted[a.decision_id] = dataclasses.replace(a, net=net)
+        keep, added, removed = _reconcile_crowdsec(state, wanted)
+        result = SyncApply("unchanged", added=added, removed=removed, active=len(keep),
+                           protected=dict(prot_counts), protected_sample=sample,
+                           by_origin=dict(collections.Counter(r.origin for r in keep)))
+        try:
+            render.check_capacity(_total_counts(state.records, at), config.BANS_MAX)
+            # The manual policy is never regenerated here: treat it as held.
+            changes = _candidates(state, prot, {**holds, "manual": "sync"}, at)
+        except render.CapacityError as e:
+            result.code = "capacity_exceeded"
+            result.capacity = {"count": e.count, "limit": e.limit, "by_source": e.by_source}
+            result.message = (f"CrowdSec decisions would render {e.count} prefixes in total "
+                              f"({_counts_text(e.by_source)}; CrowdSec by origin: {_counts_text(result.by_origin)}); "
+                              f"the limit (BANS_MAX) is {e.limit}. The last applied CrowdSec policy stays enforced "
+                              "and automatic apply is paused. Restrict CROWDSEC_ORIGINS, raise BANS_MAX after "
+                              "measuring (docs/security.md#capacity), or use plugin mode once it is available.")
+            return result
+        events = _expired_events(expired)
+        all_ignored = ignored + collections.Counter({f"protected:{k}": v for k, v in prot_counts.items()})
+        if snapshot:
+            events.append(("crowdsec_snapshot", f"{len(keep)} active, {added} added, {removed} removed; "
+                           f"ignored: {_counts_text(all_ignored)}"))
+        elif added or removed:
+            events.append(("crowdsec_sync", f"{len(keep)} active, {added} added, {removed} removed"))
+        return _Plan(changes, "system", "crowdsec", events, context=result)
+
+    refused, value, outcome = _locked_transaction(prepare, background=True)
+    if refused is not None:
+        if refused.gate == "corrupt":
+            return SyncApply("corrupt", f"{refused.message}. CrowdSec sync is paused until the ban state is "
+                             "recovered in Security.")
+        return SyncApply(refused.gate, refused.message)
+    if outcome is None:
+        return value                        # held or capacity_exceeded: nothing was written
+    result = value.context
+    if not outcome.ok:
+        result.code = outcome.code or "apply_failed"
+    elif outcome.reload_status == "applied":
+        result.code = "applied"
+    elif outcome.enforcement != "unchanged":
+        result.code = "stored"
+    result.message = outcome.message
+    return result
 
 
 # --- reads ------------------------------------------------------------------------------
