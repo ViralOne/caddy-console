@@ -1,6 +1,7 @@
 """CrowdSec decision-stream synchronizer and its leader lock (spec 2.4, 2.6).
 
 Exactly one process leads: it holds a non-blocking flock on
+LOCK_DIR/bans-sync.lock (container-local, src/locks.py) and, best effort, on
 BACKUP_DIR/bans-sync.lock for as long as it lives, polls LAPI and applies the
 result through service.apply_crowdsec(). Every gunicorn worker runs a sync
 thread that retries the lock once per poll interval, so a dead leader is
@@ -8,6 +9,9 @@ replaced within one interval, and a new leader always starts with
 startup=true. flock locks belong to an open file description, so two workers
 (or two Leadership objects in one process) never both hold it, and the kernel
 releases it when the leader exits.
+
+A leader that finds another leader's status write after its own steps down
+and logs an error (Synchronizer.second_leader, jobs._sync_loop).
 
 Lock order: bans-sync.lock, then caddyfile_lock() inside apply_crowdsec().
 Nothing takes bans-sync.lock while holding caddyfile_lock(), and fetch_stream()
@@ -17,27 +21,41 @@ import collections
 import fcntl
 import logging
 import os
+import socket
 import time
+import uuid
 
-from .. import audit, config
+from .. import audit, config, locks
 from ..config import BACKUP_DIR
 from . import lapi, store, syncstate
 
 LOCK_PATH = os.path.join(BACKUP_DIR, "bans-sync.lock")
 AUTH_RETRY_SECONDS = 60
+STALE_POLLS = 3                                  # as service.STALE_POLLS
 log = logging.getLogger(__name__)
 _APPLY_STATES = {"capacity_exceeded": "capacity_exceeded", "held": "held",
                  "corrupt": "degraded", "degraded": "degraded", "unavailable": "degraded"}
 
 
 class Leadership:
-    def __init__(self, path=None):
-        self.path, self.fd = path or LOCK_PATH, None
+    """The container-local lock (config.LOCK_DIR) decides leadership: flock
+    on a bind-mounted BACKUP_DIR can let two workers both hold it. The shared
+    BACKUP_DIR lock is then tried too, as best-effort exclusion of a second
+    container on the same volume: held elsewhere means "not the leader"."""
+
+    def __init__(self, path=None, local_dir=None):
+        self.path, self.local_dir = path or LOCK_PATH, local_dir
+        self.fd = self.shared_fd = None
+
+    def _local(self) -> str:
+        if self.local_dir:
+            return os.path.join(self.local_dir, "bans-sync.lock")
+        return locks.local_path("bans-sync.lock")
 
     def try_acquire(self) -> bool:
         if self.fd is not None:
             return True
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        fd = os.open(self._local(), os.O_CREAT | os.O_RDWR, 0o600)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -46,13 +64,32 @@ class Leadership:
         except OSError:
             os.close(fd)
             raise
-        self.fd = fd
+        shared_fd, held_elsewhere = locks.shared_flock(self.path, blocking=False)
+        if held_elsewhere:
+            os.close(fd)
+            return False
+        self.fd, self.shared_fd = fd, shared_fd
         return True
 
     def release(self) -> None:
-        if self.fd is not None:
-            os.close(self.fd)
-            self.fd = None
+        for name in ("shared_fd", "fd"):
+            fd = getattr(self, name)
+            if fd is not None:
+                os.close(fd)
+                setattr(self, name, None)
+
+
+def foreign_leader_live(nonce) -> bool:
+    """Is a leader other than `nonce` still writing the status file (within
+    the window after which Security calls the report stale)?"""
+    doc = syncstate.read()
+    if doc is None or doc.get("leader_nonce") in (None, nonce):
+        return False
+    try:
+        age = (store.utc_now() - store.parse_iso(doc["updated_at"])).total_seconds()
+    except (KeyError, TypeError, ValueError):
+        return False
+    return age <= STALE_POLLS * config.CROWDSEC_POLL_INTERVAL + config.BANS_SYNC_INTERVAL
 
 
 def _audit(action, detail) -> None:
@@ -85,6 +122,8 @@ class Synchronizer:
         self.pending_apply = False                # the accepted set changed since the last successful apply
         self.applied = {}                         # _fingerprint() of the last successful apply
         self.times = dict.fromkeys(("last_poll_at", "last_success_at", "last_snapshot_at", "last_apply_at"))
+        self.nonce = uuid.uuid4().hex             # tells this leader's status writes from another's
+        self._written = False
 
     def _set(self, kind, state, message="") -> None:
         before = getattr(self, kind + "_state")
@@ -187,12 +226,21 @@ class Synchronizer:
         else:
             self._set("apply", _APPLY_STATES.get(result.code, "failed"), result.message)
 
+    def second_leader(self) -> bool:
+        """Has another leader written the status file since this one did?
+        Only one leader writes it, so that means the locks did not exclude."""
+        if not self._written:
+            return False
+        doc = syncstate.read()
+        return doc is not None and doc.get("leader_nonce") not in (None, self.nonce)
+
     def _write(self) -> None:
         result = self.last_result
         ignored = dict(self.ignored)
         if result is not None:
             ignored.update({f"protected:{k}": v for k, v in result.protected.items()})
-        doc = {"version": syncstate.VERSION, "leader_pid": os.getpid(), "updated_at": store.iso(self._wall()),
+        doc = {"version": syncstate.VERSION, "leader_pid": os.getpid(),
+               "leader_host": socket.gethostname(), "leader_nonce": self.nonce, "updated_at": store.iso(self._wall()),
                "lapi_state": self.lapi_state, "lapi_message": self.lapi_message,
                "apply_state": self.apply_state, "apply_message": self.apply_message, **self.times,
                "decisions": len(self.desired),
@@ -203,5 +251,6 @@ class Synchronizer:
                "pending_apply": self.pending_apply}
         try:
             syncstate.write(doc)
+            self._written = True
         except OSError as e:
             log.warning("IP bans: could not write the CrowdSec status file: %s", e)

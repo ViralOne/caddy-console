@@ -1,4 +1,3 @@
-import fcntl
 import hashlib
 import json
 import logging
@@ -7,14 +6,14 @@ import re
 import shutil
 import stat
 import tempfile
-from contextlib import contextmanager
+import threading
 from datetime import datetime
 from urllib.parse import urlparse
 
 import requests as http_client
 from flask import Blueprint, jsonify, render_template, request, session
 
-from .. import config
+from .. import config, locks
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
 from ..bans import lapi as bans_lapi, render as bans_render, scan as bans_scan, txn as bans_txn
@@ -51,43 +50,29 @@ def _current_file_version() -> str:
 
 # --- Caddyfile write lock ---------------------------------------------------------
 #
-# Save requests can land on different gunicorn workers, so a threading.Lock is not
-# enough: the version check and the write have to happen under a file lock or two
-# editors can both pass the check and both write.
-
+# Save requests can land on different gunicorn workers and threads, so the
+# version check and the write have to happen under one lock or two editors can
+# both pass the check and both write. src/locks.py: a threading.Lock, then a
+# container-local flock (decides), then the BACKUP_DIR flock (best effort
+# across containers; on some bind mounts it does not exclude).
 
 
 class CaddyfileLockError(RuntimeError):
-    """The required cross-process mutation lock is unavailable."""
+    """The required mutation lock is unavailable."""
+
+
 _LOCK_PATH = os.path.join(BACKUP_DIR, ".lock")
+_THREAD_LOCK = threading.Lock()
 
 
-@contextmanager
 def caddyfile_lock():
-    """Cross-process lock for every Caddyfile mutation.
+    """Lock for every Caddyfile mutation. Not re-entrant: never nest it.
 
     Correctness depends on this lock spanning the disk write, Caddy reload and
-    any rollback. If it cannot be created or acquired, fail closed instead of
-    degrading to a process-local lock that cannot protect multiple workers.
+    any rollback. If the container-local lock cannot be created or acquired,
+    fail closed.
     """
-    try:
-        fd = os.open(_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
-    except OSError as e:
-        raise CaddyfileLockError(f"Cannot open Caddyfile lock {_LOCK_PATH}: {e}") from e
-    locked = False
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            locked = True
-        except OSError as e:
-            raise CaddyfileLockError(f"Cannot acquire Caddyfile lock {_LOCK_PATH}: {e}") from e
-        yield
-    finally:
-        try:
-            if locked:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
+    return locks.mutation_lock("caddyfile.lock", _LOCK_PATH, _THREAD_LOCK, CaddyfileLockError)
 
 
 def ensure_caddyfile_lock_available() -> None:

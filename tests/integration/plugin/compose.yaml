@@ -68,10 +68,9 @@ services:
       CROWDSEC_POLL_INTERVAL: "5"
       BANS_SYNC_INTERVAL: "10"
       FAKE_LAPI_CONTROL: ${IT_CONTROL:?}
-      # One worker: on Docker Desktop (virtiofs) two processes can hold flock on
-      # the same bind-mounted BACKUP_DIR file through different mount views, so
-      # both would lead CrowdSec sync. Leadership has its own unit tests.
-      GUNICORN_WORKERS: "1"
+      # Two workers on a bind-mounted BACKUP_DIR: leadership and mutations are
+      # decided by the container-local lock (src/locks.py).
+      GUNICORN_WORKERS: "2"
     volumes:
       - ../../../dev/run/plugin-it:/etc/caddy
       - ../../../dev/run/plugin-it-backups:/backups

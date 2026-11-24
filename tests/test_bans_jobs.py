@@ -95,9 +95,11 @@ class JobsTest(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         self.assertNotIn("bans", inspect.getsource(module.when_ready))
-        with mock.patch("src.bans.jobs.start_background") as start:
+        with mock.patch("src.bans.jobs.start_background") as start, \
+                mock.patch("src.locks.self_test") as self_test:
             module.post_worker_init(object())
         start.assert_called_once_with()
+        self_test.assert_called_once_with(config.BACKUP_DIR)     # the lock self-test runs first, per worker
 
 
 if __name__ == "__main__":

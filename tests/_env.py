@@ -14,6 +14,7 @@ AUDIT_LOG = os.path.join(BACKUP_DIR, "audit.log")
 LOG_FILE = os.path.join(ROOT, "access.log")
 GEOIP_DIR = os.path.join(ROOT, "geoip")
 BANS_DIR = os.path.join(ROOT, "console")
+LOCK_DIR = os.path.join(ROOT, "locks")
 
 os.environ.update({
     "BACKUP_DIR": BACKUP_DIR,
@@ -35,4 +36,5 @@ os.environ.update({
     "BANS_ENABLED": "true",
     "BANS_DIR": BANS_DIR,
     "BANS_NEVER": "",
+    "LOCK_DIR": LOCK_DIR,
 })

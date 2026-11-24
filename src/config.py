@@ -7,6 +7,12 @@ APP_VERSION = "0.7.0"
 
 CADDYFILE = os.environ.get("CADDYFILE_PATH", "/etc/caddy/Caddyfile")
 BACKUP_DIR = os.environ.get("BACKUP_DIR", "/backups")
+# Container-local lock files (the console's private tmpfs /tmp, shared by every
+# gunicorn worker and `docker compose exec` tool in the container). They decide
+# mutation and sync-leader exclusion; the BACKUP_DIR locks are best-effort
+# cross-container protection only, because flock on a bind mount (Docker
+# Desktop virtiofs, NFS, SMB, FUSE) does not always exclude (src/locks.py).
+LOCK_DIR = os.environ.get("LOCK_DIR", "/tmp/caddy-console-locks")
 AUDIT_LOG = os.environ.get("AUDIT_LOG", "/backups/audit.log")
 ALLOWED_DOMAIN = os.environ.get("ALLOWED_DOMAIN", "")
 ALLOWED_EMAILS = [

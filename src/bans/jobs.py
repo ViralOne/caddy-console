@@ -46,14 +46,27 @@ def _loop(stop) -> None:
 
 def _sync_loop(stop) -> None:
     from . import sync
-    leader, synchronizer, crashed = sync.Leadership(), None, None
+    leader, synchronizer, crashed, stood_down = sync.Leadership(), None, None, None
     while True:
         try:
-            if leader.try_acquire():
+            if stood_down and sync.foreign_leader_live(stood_down):
+                pass                                 # the other leader still reports: stay a follower
+            elif leader.try_acquire():
+                stood_down = None
                 if synchronizer is None:
                     synchronizer = sync.Synchronizer()
                     log.info("IP bans: worker %d leads CrowdSec sync", os.getpid())
-                synchronizer.step()
+                if synchronizer.second_leader():
+                    # The locks did not exclude (for example two containers on
+                    # one BACKUP_DIR whose flock does not work). Two leaders
+                    # would flap bans, so this one yields while the other reports.
+                    log.error("IP bans: a second CrowdSec sync leader wrote the status file; worker %d steps "
+                              "down until that leader stops reporting. Check that BACKUP_DIR is a local "
+                              "filesystem and that only one console container uses it.", os.getpid())
+                    leader.release()
+                    synchronizer, stood_down = None, synchronizer.nonce
+                else:
+                    synchronizer.step()
             if crashed is not None:
                 log.info("IP bans: CrowdSec sync steps complete again")
             crashed = None
