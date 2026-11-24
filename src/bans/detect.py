@@ -24,7 +24,35 @@ def _is_marker(node, marker) -> bool:
     return isinstance(node, dict) and node.get("handler") == "vars" and str(node.get(marker, "")) == "1"
 
 
+COUNTRY_MARKER = "caddy_console_country_policy"
+COUNTRY_SHAPES = ("off", "direct", "cloudflare")
+
+
+def _is_country_marker(node) -> bool:
+    return (isinstance(node, dict) and node.get("handler") == "vars"
+            and str(node.get(COUNTRY_MARKER, "")) in COUNTRY_SHAPES)
+
+
+def country_shapes(config) -> list:
+    """Every country policy shape (off, direct, cloudflare) a live config's
+    vars handlers carry. The marker's value is the shape, not "1", and
+    matcher names do not survive adaptation, so this is how the live config
+    shows which shape Caddy loaded."""
+    found, stack = [], [config]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if _is_country_marker(node):
+                found.append(str(node[COUNTRY_MARKER]))
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
 def marker_present(config, marker) -> bool:
+    if marker == COUNTRY_MARKER:
+        return bool(country_shapes(config))
     stack = [config]
     while stack:
         node = stack.pop()

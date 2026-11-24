@@ -117,3 +117,10 @@ CADDY_ADMIN_ADDRESS = os.environ.get("CADDY_ADMIN_ADDRESS", "").strip() or "0.0.
 CLIENT_IP_MODE = os.environ.get("CLIENT_IP_MODE", "direct").strip().lower() or "direct"
 CLOUDFLARE_RANGES_AUTO_UPDATE = os.environ.get(
     "CLOUDFLARE_RANGES_AUTO_UPDATE", "true").lower() not in ("0", "false", "no")
+
+# Phase 4 country allowlist (docs/security.md, spec 4.3). Off until configured.
+# PROVISIONAL cap: 20000 is a placeholder until the Phase 4 benchmark measures
+# adaptation time, reload memory and request latency; the warning threshold
+# (10000) lives in src/bans/country.py.
+COUNTRY_POLICY_ENABLED = os.environ.get("COUNTRY_POLICY_ENABLED", "false").lower() in ("1", "true", "yes")
+COUNTRY_MAX_PREFIXES = bounded_int("COUNTRY_MAX_PREFIXES", 20000, 1, 200000)

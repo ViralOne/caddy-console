@@ -86,6 +86,23 @@ def _ranges_loop(stop) -> None:
             return
 
 
+COUNTRY_TICK_SECONDS = 3600
+
+
+def _country_loop(stop) -> None:
+    """Regenerate geo.caddy after a new country dataset (spec 4.3)."""
+    from . import service
+    while True:
+        try:
+            result = service.country_tick()
+            if result not in ("disabled", "not_needed", "current", "applied"):
+                log.warning("IP bans: country policy refresh did not complete (%s); the last good file stays", result)
+        except Exception:  # noqa: BLE001 - the thread must survive anything
+            log.exception("IP bans: country policy refresh crashed")
+        if stop.wait(COUNTRY_TICK_SECONDS):
+            return
+
+
 def start_background():
     global _started
     if _started or not config.BANS_ENABLED:
@@ -95,6 +112,8 @@ def start_background():
     threading.Thread(target=_loop, args=(stop,), name="bans-expiry", daemon=True).start()
     if config.CLOUDFLARE_RANGES_AUTO_UPDATE:
         threading.Thread(target=_ranges_loop, args=(stop,), name="cloudflare-ranges", daemon=True).start()
+    if config.COUNTRY_POLICY_ENABLED:
+        threading.Thread(target=_country_loop, args=(stop,), name="country-policy", daemon=True).start()
     if lapi.enabled():
         threading.Thread(target=_sync_loop, args=(stop,), name="bans-sync", daemon=True).start()
     return stop

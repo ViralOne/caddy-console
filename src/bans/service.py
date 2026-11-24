@@ -24,7 +24,7 @@ import requests as http_client
 from .. import audit, config
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
-from . import addr, cfranges, detect, fsio, lapi, plugin, pluginpolicy, profile, protected, render, scan, store, syncstate, txn
+from . import addr, cfranges, country, countrydata, detect, fsio, lapi, plugin, pluginpolicy, profile, protected, render, scan, store, syncstate, txn
 from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
@@ -273,6 +273,14 @@ def _holds(state) -> dict:
         hold = _file_hold(recorded, render.PROFILE.path)
         if hold:
             out["cloudflare"] = hold
+    if _country_active():
+        try:
+            recorded = country.load().last_rendered_hashes.get(render.COUNTRY.filename) if country.exists() else None
+        except country.Corrupt:
+            recorded = "corrupt"
+        hold = _file_hold(recorded, render.COUNTRY.path)
+        if hold:
+            out["country"] = hold
     return out
 
 
@@ -313,7 +321,25 @@ def _route_detail(data: bytes) -> str:
     return f"{len(line.split()) - 2} protected ranges, {fsio.sha256_tag(data)[7:19]}"
 
 
-def _aux_changes(prot, holds, prof=None, with_profile=False) -> list:
+def _country_changes(policy, prof, prot, strict) -> list:
+    """geo.caddy and country-policy.json for `policy` under the profile `prof`.
+    strict (an explicit country change) raises country.CountryError; otherwise
+    a policy that cannot be rendered now (dataset missing, over the cap, no
+    Cloudflare peer) leaves the last good file in place."""
+    try:
+        data, facts = country.render(policy, prof.mode, prof.peers(), prot.exclusion_tokens())
+    except country.CountryError:
+        if strict:
+            raise
+        return []
+    policy = dataclasses.replace(
+        policy, profile=prof.mode, dataset={"month": facts["month"], "prefixes": facts["prefixes"]},
+        last_rendered_hashes={**policy.last_rendered_hashes, render.COUNTRY.filename: fsio.sha256_tag(data)})
+    return [txn.Change(render.COUNTRY.path, "policy", data, marker=render.COUNTRY.marker),
+            txn.Change(country.PATH, "state", country.dumps(policy), owns=(render.COUNTRY.filename,))]
+
+
+def _aux_changes(prot, holds, prof=None, with_profile=False, country_candidate=None) -> list:
     """Policies that hold no ban records but repeat the protected set or the
     profile: the plugin route and the trusted proxies file. Each is included
     whenever it is active, so one transaction always carries every dependent
@@ -324,6 +350,9 @@ def _aux_changes(prot, holds, prof=None, with_profile=False) -> list:
         changes += _plugin_changes(prot)
     if (with_profile or _profile_active()) and "cloudflare" not in holds:
         changes += _profile_changes(prof)
+    if (country_candidate is not None or _country_active()) and "country" not in holds:
+        changes += _country_changes(country_candidate if country_candidate is not None else country.load_or_default(),
+                                    prof, prot, strict=country_candidate is not None)
     return changes
 
 
@@ -332,7 +361,7 @@ def _bans_present(state) -> bool:
             or any(os.path.exists(src.path) for src in render.active_sources(state).values()))
 
 
-def _candidates(state, prot, holds, now, *, prof=None, bans=True, with_profile=False) -> list:
+def _candidates(state, prot, holds, now, *, prof=None, bans=True, with_profile=False, country_candidate=None) -> list:
     """Every active source's candidate policy (held ones excepted) plus the
     state that embeds their hashes, then the record-less policies. Held
     sources still count toward BANS_MAX: their file stays loaded in Caddy.
@@ -354,7 +383,7 @@ def _candidates(state, prot, holds, now, *, prof=None, bans=True, with_profile=F
             changes.append(txn.Change(src.path, "policy", data, marker=src.marker))
             owns.append(src.filename)
         changes.append(txn.Change(store.STATE_PATH, "state", store.dumps(state), owns=tuple(owns)))
-    return changes + _aux_changes(prot, holds, prof, with_profile)
+    return changes + _aux_changes(prot, holds, prof, with_profile, country_candidate)
 
 
 def _corrupt_version(e) -> str:
@@ -605,7 +634,11 @@ def reset(payload, actor, remote_addr):
 # --- Phase 4: client-IP profile, Cloudflare ranges, country policy ------------------------
 
 def _country_active() -> bool:
-    return False
+    """Render geo.caddy once country policy is configured (COUNTRY_POLICY_ENABLED
+    or a saved policy) or once it left something behind. BANS_ENABLED=false
+    disables it with everything else."""
+    return (config.BANS_ENABLED and (config.COUNTRY_POLICY_ENABLED or country.exists()
+                                     or os.path.exists(render.COUNTRY.path)))
 
 
 def _refused_error(refused):
@@ -618,7 +651,7 @@ def _refused_error(refused):
 
 
 def _policy_transaction(actor, source, events, *, prof=None, check=None, force=(), background=False,
-                        allow_corrupt=False):
+                        allow_corrupt=False, country_candidate=None):
     """A profile, range or country change: the candidate profile (and the
     country candidate, see _country_override) expanded through every dependent
     file, committed by one journal under caddyfile_lock() (spec 4.2).
@@ -634,7 +667,10 @@ def _policy_transaction(actor, source, events, *, prof=None, check=None, force=(
         try:
             # A corrupt bans.json is never rewritten here: the operator recovers it.
             changes = _candidates(state, prot, holds, store.utc_now(), prof=candidate,
-                                  bans=corrupt is None and _bans_present(state), with_profile=prof is not None)
+                                  bans=corrupt is None and _bans_present(state), with_profile=prof is not None,
+                                  country_candidate=country_candidate)
+        except country.CountryError as e:
+            return _error(e.code, str(e), e.status, **e.extra)
         except render.CapacityError as e:
             return _error("capacity_exceeded", f"The ban files would render {e.count} prefixes; the limit "
                           f"(BANS_MAX) is {e.limit}. Remove bans first.", 409, count=e.count, limit=e.limit)
@@ -807,7 +843,85 @@ def ranges_tick(session=None) -> str:
 
 
 def _reset_country(actor):
-    return _error("source_not_enabled", "The country policy is not in use.", 400)
+    return _policy_transaction(actor, "reset", [("bans_reset", "country: policy off")],
+                               country_candidate=country.Policy(stored=True), force=("country",), allow_corrupt=True)
+
+
+def _country_facts():
+    """(policy, corrupt, data, facts, error, prof): the stored policy rendered
+    against the current profile and protected set, without writing anything."""
+    corrupt = None
+    try:
+        policy = country.load()
+    except country.Corrupt as e:
+        policy, corrupt = country.Policy(), str(e)
+    prof = profile.load_or_default()
+    try:
+        state = store.load()
+    except store.StateCorrupt:
+        state = store.State()
+    try:
+        data, facts = country.render(policy, prof.mode, prof.peers(), protected_for(state, prof=prof).exclusion_tokens())
+        return policy, corrupt, data, facts, None, prof
+    except country.CountryError as e:
+        return policy, corrupt, None, None, e, prof
+
+
+def country_policy_info() -> dict:
+    policy, corrupt, data, facts, error, prof = _country_facts()
+    on_disk = fsio.read_bytes(render.COUNTRY.path)
+    current = data is not None and on_disk == data
+    facts = facts or {"profile": None, "prefixes": policy.dataset.get("prefixes") or {}, "month": None, "warnings": []}
+    shape = facts["profile"]
+    enforcing = country.effective_enabled(policy)
+    return {
+        "enabled": policy.enabled, "effective": enforcing, "env_enabled": config.COUNTRY_POLICY_ENABLED,
+        "stored": policy.stored, "countries": policy.countries, "corrupt": corrupt,
+        "cloudflare_geolocation_confirmed": policy.cloudflare_geolocation_confirmed,
+        "shape": shape, "client_ip_mode": prof.mode, "updated_at": policy.updated_at,
+        "iso_codes": sorted(country.ISO), "special_codes": list(country.SPECIAL),
+        "prefixes": facts["prefixes"], "limits": {"max": country.max_prefixes(), "warn": country.warn_prefixes(),
+                                                  "provisional": True},
+        "dataset": {**countrydata.info(), "used_month": facts["month"]},
+        "warnings": facts["warnings"], "error": ({"code": error.code, "message": str(error)} if error else None),
+        "file": render.COUNTRY.path, "import_line": render.COUNTRY.import_line,
+        "present": on_disk is not None, "current": current,
+        "hash": fsio.sha256_tag(on_disk)[7:19] if on_disk is not None else None,
+        "healthy": bool(enforcing and current and error is None and (shape != "cloudflare"
+                                                                      or policy.cloudflare_geolocation_confirmed)),
+    }
+
+
+def set_country_policy(payload, actor):
+    """PUT /api/security/country-policy: validate the codes and render the
+    candidate (cap, dataset, Cloudflare peers) before anything is written; a
+    refused candidate leaves geo.caddy and country-policy.json untouched."""
+    try:
+        candidate = country.from_payload(payload, country.load_or_default())
+    except country.CountryError as e:
+        return _error(e.code, str(e), e.status)
+    candidate.updated_at = store.iso(store.utc_now())
+    detail = f"enabled={str(candidate.enabled).lower()} countries={' '.join(candidate.countries)}"
+    return _policy_transaction(actor, "country", [("country_policy_changed", detail)], country_candidate=candidate,
+                               force=("country",))
+
+
+def country_tick() -> str:
+    """Regenerate geo.caddy after a new dataset arrived, only when the selected
+    countries' output changes (spec 4.3). Direct policy only; reads local files."""
+    if not (config.BANS_ENABLED and config.COUNTRY_POLICY_ENABLED):
+        return "disabled"
+    policy = country.load_or_default()
+    if not country.effective_enabled(policy) or profile.load_or_default().mode != "direct":
+        return "not_needed"
+    _, _, data, _, error, _ = _country_facts()
+    if error is not None:
+        return error.code
+    if data == fsio.read_bytes(render.COUNTRY.path):
+        return "current"
+    body, _ = _policy_transaction("system", "country-data", [("country_policy_rendered", "dataset update")],
+                                  country_candidate=policy, background=True)
+    return "applied" if body.get("ok") else str(body.get("code") or "failed")
 
 
 def _live_trust(live, prof) -> list:
@@ -1277,6 +1391,12 @@ def _profile_status(live, holds, text) -> dict:
             "live": _live_trust(live, prof) if live is not None else None}
 
 
+def _country_status(live, holds) -> dict:
+    info = country_policy_info()
+    return {**info, "active": _country_active(), "hold": holds.get("country"),
+            "live_shapes": detect.country_shapes(live) if live is not None else None}
+
+
 def status(remote_addr) -> dict:
     avail = availability()
     info = recovery_info()
@@ -1315,6 +1435,7 @@ def status(remote_addr) -> dict:
         "sites": _site_rows(live, text, state, now, holds),
         "plugin": _plugin_status(live, state, holds, text),
         "client_ip_profile": _profile_status(live, holds, text),
+        "country_policy": _country_status(live, holds),
         "caddy": caddy,
         "limits": {"max_prefixes": config.BANS_MAX, "used": sum(by_source.values()), "by_source": by_source},
         "last_apply": _last_apply(),
@@ -1348,6 +1469,8 @@ def expire_tick(now=None) -> str:
             events = [("plugin_route_rendered", _route_detail(c.data)) for c in changes if c.path == render.PLUGIN.path]
             events += [("client_ip_profile_rendered", profile.load_or_default().mode)
                        for c in changes if c.path == render.PROFILE.path]
+            events += [("country_policy_rendered", "shape follows the client-IP profile")
+                       for c in changes if c.path == render.COUNTRY.path]
             source = "plugin" if any(c.path == render.PLUGIN.path for c in changes) else "profile"
             outcome = txn.apply_locked(changes, actor="system", source=source, audit_events=events)
             return "applied" if outcome.ok else outcome.code

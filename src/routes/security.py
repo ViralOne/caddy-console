@@ -92,3 +92,15 @@ def cloudflare_ranges_refresh():
 @login_required
 def client_ip_profile_put():
     return _reply(service.set_client_ip_profile(_payload(), _actor()))
+
+
+@security_bp.route("/api/security/country-policy", methods=["GET"])
+@login_required
+def country_policy_get():
+    return jsonify(service.country_policy_info())
+
+
+@security_bp.route("/api/security/country-policy", methods=["PUT"])
+@login_required
+def country_policy_put():
+    return _reply(service.set_country_policy(_payload(), _actor()))
