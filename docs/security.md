@@ -161,14 +161,22 @@ docker compose -f docker-compose.prod.yaml start caddy-console
 |---|---|---|---|
 | Production | `docker-compose.prod.yaml` | `/opt/caddy` | `0.0.0.0:2019` |
 | Internal | `docker-compose.internal.yaml` | `/opt/caddy` | `0.0.0.0:2019` |
-| Tunnel | `docker-compose.tunnel.yaml` | `/opt/caddy` | `172.30.250.2:2019` (the fixed `admin` bind, listed in its `origins`) |
+| Tunnel | `docker-compose.tunnel.yaml` | `/opt/caddy` | `172.30.250.2:2019` (the fixed `admin` bind, listed in its `origins`); add `-e CADDY_ADMIN_ADDRESS=172.30.250.2:2019` to the `exec` |
 | NAS | `docker-compose.nas.yaml` | `/volume2/docker/caddy/caddy` | `0.0.0.0:2019` |
 
 A wildcard `admin 0.0.0.0:2019` only accepts its own listen address as the
 CLI's origin, so `localhost:2019` and `127.0.0.1:2019` are rejected with 403.
 A fixed bind such as the tunnel stack's needs an `origins` list that includes
-that address (`admin 172.30.250.2:2019 { origins caddy:2019 172.30.250.2:2019 }`);
-set `CADDY_ADMIN_ADDRESS` to it.
+that address (`admin 172.30.250.2:2019 { origins caddy:2019 172.30.250.2:2019 }`),
+and the command must be given it explicitly. `CADDY_ADMIN_ADDRESS` is not a
+Compose setting; it is only read by the `sh -c` above. The wildcard-bound stacks
+need no `-e`, because the default is already `0.0.0.0:2019`. For the tunnel stack:
+
+```bash
+docker compose -f docker-compose.tunnel.yaml exec -e CADDY_ADMIN_ADDRESS=172.30.250.2:2019 caddy sh -c \
+  'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
+   --address "${CADDY_ADMIN_ADDRESS:-0.0.0.0:2019}"'
+```
 
 When the console starts again, Security shows **Policy differs from state**.
 Remove or correct the record that caused the lockout, then use **Re-apply**.

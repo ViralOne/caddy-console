@@ -36,9 +36,6 @@ class BansConfigTest(unittest.TestCase):
             self.assertEqual(config.bounded_int("X_TEST", 5, 1, 10), 5)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class BansMaxDocumentedTest(unittest.TestCase):
     def test_default_matches_docs_security(self):
@@ -48,3 +45,7 @@ class BansMaxDocumentedTest(unittest.TestCase):
         m = re.search(r"\| `BANS_MAX` \| `(\d+)` \|", text)
         self.assertIsNotNone(m, "docs/security.md has no BANS_MAX row")
         self.assertEqual(config.BANS_MAX, int(m.group(1)))
+
+
+if __name__ == "__main__":
+    unittest.main()

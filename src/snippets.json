@@ -68,7 +68,7 @@
   {
     "id": "manual-bans-recovery",
     "name": "Manual bans: host recovery",
-    "description": "Shell commands to clear manual bans from the host if you lock yourself out. With a fixed admin bind, set CADDY_ADMIN_ADDRESS to that address; it must be in the bind's origins list. Copy only.",
+    "description": "Shell commands to clear manual bans from the host if you lock yourself out. With a fixed admin bind (tunnel stack), add -e CADDY_ADMIN_ADDRESS=<ip>:2019 to the exec command; that address must be in the bind's origins list. Wildcard-bound stacks need no -e. Copy only.",
     "phase": "manual",
     "scope": "host",
     "insert": "copy-only",
