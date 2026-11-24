@@ -100,7 +100,7 @@ export function insertSiteFirst(s, cursorLine) {
 export async function insertBanImportAtLine(siteLine) {
   let data;
   try { data = await loadSnippetData(); }
-  catch (e) { snippetData = null; toast(`Could not load snippets: ${e.message}`, { kind: 'error' }); return false; }
+  catch (e) { toast(`Could not load snippets: ${e.message}`, { kind: 'error' }); return false; }
   const s = data.snippets.find(x => x.id === 'manual-bans-site');
   if (!s) return false;
   if (!Number.isInteger(siteLine)) {
