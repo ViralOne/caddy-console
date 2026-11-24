@@ -97,6 +97,40 @@ def mutation_lock(name: str, shared: str, thread_lock: threading.Lock, error=Loc
             os.close(fd)                       # closing the last fd releases the flock
 
 
+@contextmanager
+def try_lock(name: str, shared: str, thread_lock: threading.Lock):
+    """Non-blocking exclusive lock in the same order as mutation_lock (thread
+    lock, LOCK_DIR/<name>, best-effort shared BACKUP_DIR file). Yields True
+    when held, False when someone else holds any of them. Raises LockUnavailable
+    when the container-local lock cannot be created (fail closed)."""
+    if not thread_lock.acquire(blocking=False):
+        yield False
+        return
+    try:
+        try:
+            fd = _open(local_path(name))
+        except OSError as e:
+            raise LockUnavailable(f"Cannot open lock {os.path.join(config.LOCK_DIR, name)}: {e}") from e
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                yield False
+                return
+            except OSError as e:
+                raise LockUnavailable(f"Cannot acquire lock {name}: {e}") from e
+            shared_fd, held_elsewhere = shared_flock(shared, blocking=False)
+            try:
+                yield not held_elsewhere
+            finally:
+                if shared_fd is not None:
+                    os.close(shared_fd)
+        finally:
+            os.close(fd)
+    finally:
+        thread_lock.release()
+
+
 def self_test(directory: str) -> bool:
     """Does flock in `directory` exclude between two open file descriptions
     (which is what two processes have)? Logs a clear warning when it does not.

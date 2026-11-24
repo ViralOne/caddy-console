@@ -7,7 +7,6 @@ lock is held (flock is per fd, not re-entrant).
 """
 import collections
 import dataclasses
-import fcntl
 import ipaddress
 import json
 import logging
@@ -21,7 +20,7 @@ from datetime import timedelta
 
 import requests as http_client
 
-from .. import audit, config
+from .. import audit, config, locks
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
 from . import addr, cfranges, country, countrydata, detect, fsio, lapi, plugin, pluginpolicy, profile, protected, render, scan, store, syncstate, txn
@@ -753,6 +752,8 @@ def set_client_ip_profile(payload, actor):
 
 RANGES_CHECK_PATH = os.path.join(config.BACKUP_DIR, "cloudflare-ranges-check.json")
 RANGES_LOCK_PATH = os.path.join(config.BACKUP_DIR, "cloudflare-ranges.lock")
+RANGES_LOCK_NAME = "cloudflare-ranges.lock"
+_ranges_thread_lock = threading.Lock()
 RANGES_CHECK_INTERVAL = 24 * 3600
 RANGES_RETRY_INTERVAL = 3600
 RANGES_MANUAL_INTERVAL = 60          # POST /api/security/cloudflare-ranges/refresh
@@ -849,10 +850,10 @@ def ranges_tick(session=None) -> str:
         return "not_needed"
     if not ranges_due():
         return "current"
-    with open(RANGES_LOCK_PATH, "a") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+    # Container-local lock first, then the best-effort BACKUP_DIR one (src/locks.py);
+    # caddyfile_lock() is taken only later, inside the refresh, never around the fetch.
+    with locks.try_lock(RANGES_LOCK_NAME, RANGES_LOCK_PATH, _ranges_thread_lock) as held:
+        if not held:
             return "busy"
         if not ranges_due():
             return "current"

@@ -103,6 +103,51 @@ class CaddyfileLockTest(unittest.TestCase):
                     pass
 
 
+class TryLockTest(unittest.TestCase):
+    def setUp(self):
+        self.shared = os.path.join(tempfile.mkdtemp(), "x.lock")
+        p = mock.patch.object(config, "LOCK_DIR", tempfile.mkdtemp())
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_one_holder_at_a_time_through_the_container_local_lock(self):
+        mine = threading.Lock()
+        with locks.try_lock("x.lock", self.shared, mine) as held:
+            self.assertTrue(held)
+            with locks.try_lock("x.lock", self.shared, threading.Lock()) as other:
+                self.assertFalse(other, "another worker/thread in this container")
+            with locks.try_lock("x.lock", self.shared, mine) as again:
+                self.assertFalse(again, "same process, thread lock")
+        with locks.try_lock("x.lock", self.shared, threading.Lock()) as held:
+            self.assertTrue(held, "released on exit")
+
+    def test_a_shared_holder_in_another_container_means_busy(self):
+        fd = os.open(self.shared, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        self.addCleanup(os.close, fd)
+        with locks.try_lock("x.lock", self.shared, threading.Lock()) as held:
+            self.assertFalse(held)
+        with locks.try_lock("x.lock", self.shared, threading.Lock()) as held:
+            self.assertFalse(held)
+
+    def test_an_unusable_lock_dir_fails_closed(self):
+        with mock.patch.object(locks.os, "makedirs", side_effect=OSError("read-only")):
+            with self.assertRaises(locks.LockUnavailable):
+                with locks.try_lock("x.lock", self.shared, threading.Lock()):
+                    pass
+
+    def test_the_ranges_tick_is_busy_while_another_worker_holds_the_lock(self):
+        from src.bans import service
+        with mock.patch.object(config, "BANS_ENABLED", True), \
+                mock.patch.object(config, "CLOUDFLARE_RANGES_AUTO_UPDATE", True), \
+                mock.patch.object(service, "ranges_due", lambda: True), \
+                mock.patch.object(service.profile, "load_or_default",
+                                  lambda: mock.Mock(mode="cloudflare-proxied")), \
+                mock.patch.object(service, "RANGES_LOCK_PATH", self.shared):
+            with locks.try_lock(service.RANGES_LOCK_NAME, self.shared, threading.Lock()):
+                self.assertEqual(service.ranges_tick(), "busy")
+
+
 class SelfTestTest(unittest.TestCase):
     def test_a_local_dir_excludes(self):
         self.assertTrue(locks.self_test(tempfile.mkdtemp()))
