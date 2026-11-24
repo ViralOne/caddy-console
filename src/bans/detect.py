@@ -217,21 +217,26 @@ def _plugin_status(route, label, hosts, server, expected=None) -> SiteStatus:
     events = []
     _events(route, events, id(route))
     s = SiteStatus(label, hosts, server, "not_imported")
-    at = next((i for i, (k, v, _, _) in enumerate(events) if k == "handler" and v.get("handler") == "crowdsec"), None)
-    if at is None:
+    found = [i for i, (k, v, _, _) in enumerate(events) if k == "handler" and v.get("handler") == "crowdsec"]
+    if not found:
         return s
-    handler = events[at][1]
-    # _events records each route before its handlers, so the owner is earlier.
-    owner_at = max(i for i, (k, v, _, _) in enumerate(events[:at])
-                   if k == "route" and any(h is handler for h in v.get("handle") or []))
-    owner = events[owner_at][1]
-    ranges = _protect_ranges(owner)
-    if ranges is None or not _nets(REQUIRED_PROTECTED) <= ranges:
-        s.status, s.detail = "plugin_unprotected", PLUGIN_UNPROTECTED
-        return s
-    if expected is not None and ranges != expected:
+    # Every crowdsec handler in the site must sit behind the protected matcher:
+    # one bare handler (say in a nested handle) blocks protected clients.
+    owners = []
+    for at in found:
+        handler = events[at][1]
+        # _events records each route before its handlers, so the owner is earlier.
+        owner_at = max(i for i, (k, v, _, _) in enumerate(events[:at])
+                       if k == "route" and any(h is handler for h in v.get("handle") or []))
+        ranges = _protect_ranges(events[owner_at][1])
+        if ranges is None or not _nets(REQUIRED_PROTECTED) <= ranges:
+            s.status, s.detail = "plugin_unprotected", PLUGIN_UNPROTECTED
+            return s
+        owners.append((owner_at, ranges))
+    if expected is not None and any(ranges != expected for _, ranges in owners):
         s.status, s.detail = "unknown", PLUGIN_OUTDATED
         return s
+    owner_at = owners[0][0]
     pre, unknown = [], []
     for kind, h, _, shielded in events[:owner_at]:
         if kind != "handler" or shielded:

@@ -45,6 +45,19 @@ class DetectTest(unittest.TestCase):
         self.assertEqual(s.status, "plugin_unprotected")
         self.assertIn("import protect_crowdsec", s.detail)
 
+    def test_a_later_bare_handler_makes_the_site_unprotected(self):
+        later = copy.deepcopy(FX["plugin_only"])
+        site = later["apps"]["http"]["servers"]["srv0"]["routes"][0]
+        inner = site["handle"][0]["routes"]
+        inner.append({"handle": [{"handler": "subroute", "routes": [{"handle": [{"handler": "crowdsec"}]}]}]})
+        s = detect.plugin_site_statuses(later, expected_exclusions=CURRENT)[0]
+        self.assertEqual(s.status, "plugin_unprotected")
+        flat = copy.deepcopy(FX["plugin_only"])
+        flat["apps"]["http"]["servers"]["srv0"]["routes"][0]["handle"][0]["routes"].append(
+            {"handle": [{"handler": "crowdsec"}]})
+        self.assertEqual(detect.plugin_site_statuses(flat, expected_exclusions=CURRENT)[0].status,
+                         "plugin_unprotected")
+
     def test_a_global_app_without_a_site_handler_is_not_enforcement(self):
         self.assertIn("crowdsec", FX["app_without_handler"]["apps"])
         self.assertEqual(plugin_status("app_without_handler").status, "not_imported")
