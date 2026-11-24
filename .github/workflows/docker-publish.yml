@@ -75,7 +75,15 @@ jobs:
 
       - name: Logs on failure
         if: failure()
-        run: docker compose -f docker-compose.dev.yaml logs --tail 200
+        # The overlay file needs a bouncer key to render; any value does for
+        # reading logs. crowdsec-it.sh also prints the crowdsec and console
+        # logs itself before it removes the crowdsec container.
+        env:
+          CROWDSEC_CONSOLE_BOUNCER_KEY: logs-only-placeholder
+        run: |
+          docker compose -f docker-compose.dev.yaml logs --tail 200
+          docker compose -f docker-compose.dev.yaml -f docker-compose.crowdsec.yaml \
+            logs --tail 200 crowdsec caddy-console || true
 
       - name: Stop the dev stack
         if: always()
