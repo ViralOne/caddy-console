@@ -191,12 +191,68 @@ export CROWDSEC_CONSOLE_BOUNCER_KEY="$(python -c 'import secrets; print(secrets.
 docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml up -d
 ```
 
-Keep the key in the same `.env` as the rest of the stack. On a platform with
-file secrets, give the console `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE` instead, and
-CrowdSec a Docker secret named `bouncer_key_caddy_console` with the same value
-(the official image registers a bouncer from either form). The same overlay
+Keep the key in the same `.env` as the rest of the stack. The same overlay
 works with `docker-compose.internal.yaml` and `docker-compose.tunnel.yaml`; the
 NAS stack uses `docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml`.
+
+#### Keep the key in a file secret instead
+
+The shipped overlay requires `CROWDSEC_CONSOLE_BOUNCER_KEY`: both services read
+it with `${CROWDSEC_CONSOLE_BOUNCER_KEY:?...}`, and Compose checks that before
+any later `-f` file can override it, so adding a secret on top of the shipped
+overlay fails at `docker compose up`. To use a file secret, copy the overlay
+(for example to `docker-compose.crowdsec.local.yaml`) and use the copy instead
+of the shipped file:
+
+1. Write the key to a file the console user (UID 10001) can read, and keep it
+   out of Git:
+
+   ```bash
+   mkdir -p secrets
+   python -c 'import secrets; print(secrets.token_hex(32))' > secrets/crowdsec_bouncer_key
+   chmod 0444 secrets/crowdsec_bouncer_key
+   ```
+
+2. In the copy, delete the `BOUNCER_KEY_caddy_console` line from `crowdsec`,
+   replace `CROWDSEC_CONSOLE_BOUNCER_KEY` on the console with
+   `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE`, and add the secret:
+
+   ```yaml
+   services:
+     crowdsec:
+       # environment: as shipped, without BOUNCER_KEY_caddy_console
+       secrets:
+         # The official image registers a bouncer for every
+         # /run/secrets/bouncer_key_<name>: this one is "caddy_console".
+         - source: crowdsec_bouncer_key
+           target: bouncer_key_caddy_console
+
+     caddy-console:
+       environment:
+         CROWDSEC_URL: http://crowdsec:8080
+         CROWDSEC_CONSOLE_BOUNCER_KEY_FILE: /run/secrets/crowdsec_bouncer_key
+         # CROWDSEC_ORIGINS, CROWDSEC_POLL_INTERVAL, BANS_SYNC_INTERVAL as shipped
+       secrets:
+         - crowdsec_bouncer_key
+
+   secrets:
+     crowdsec_bouncer_key:
+       file: ./secrets/crowdsec_bouncer_key
+   ```
+
+3. Start it with the copy:
+
+   ```bash
+   docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.local.yaml up -d
+   ```
+
+Do not set both forms. On the CrowdSec side the image registers
+`BOUNCER_KEY_caddy_console` from the environment first, so the secret is then
+ignored; on the console side the `_FILE` variable wins over the plain key. Two
+different values leave CrowdSec refusing the console's key. On the NAS, copy
+`docker-compose.crowdsec.nas.yaml` as well: its `crowdsec` service extends the
+shipped overlay, so point its `extends.file` at your copy and make the same
+console change under `caddy-editor`.
 The `crowdsec/` directory of this repository must sit next to the Compose
 files: the overlay mounts its acquisition and parser files read-only.
 
@@ -214,7 +270,7 @@ start of its configuration volume (`crowdsec-config`). Changing
 old key and refuses the new one, and Security shows "CrowdSec refused the
 bouncer key". To rotate the key:
 
-1. Put the new key in `.env` (or the mounted key file and the Docker secret).
+1. Put the new key in `.env` (or in the secret file, if you use one).
 2. Delete the registered bouncer:
 
    ```bash
@@ -228,6 +284,18 @@ bouncer key". To rotate the key:
    docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml up -d \
      --force-recreate crowdsec caddy-console
    ```
+
+On the NAS stack the files differ and the console service is `caddy-editor`:
+
+```bash
+docker compose -f docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml exec crowdsec \
+  cscli bouncers delete caddy_console
+docker compose -f docker-compose.nas.yaml -f docker-compose.crowdsec.nas.yaml up -d \
+  --force-recreate crowdsec caddy-editor
+```
+
+If you use a copied overlay with a file secret (above), use your copy in these
+commands instead.
 
 The console retries a refused key every 60 seconds, so it picks up the new
 registration without another restart. The last synced list stays enforced
