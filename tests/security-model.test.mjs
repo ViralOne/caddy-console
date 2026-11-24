@@ -223,4 +223,19 @@ check('a site is unknown, not "not loaded", while Caddy is unreachable', () => {
   assert.deepEqual(M.siteActions({ status: 'caddy_unreachable', source: 'main', import: { present: true } }), []);
   assert.deepEqual(M.siteActions({ status: 'caddy_unreachable', source: 'main', import: { present: false } }), ['insert', 'copy']);
 });
+console.log('\n--- Phase 2 follow-ups ---');
+check('synced decisions that are not applied yet read as applying, not active', () => {
+  const pending = { ...CS_OK, sync: { ...CS_OK.sync, decisions: 1, pending_apply: true } };
+  const s = M.crowdsecState(pending, NOW);
+  assert.equal(s.title, '1 decision synced, applying…');
+  assert.equal(s.tone, 'ok');
+  assert.match(s.detail, /within BANS_SYNC_INTERVAL/);
+  assert.equal(M.crowdsecState({ ...CS_OK, sync: { ...CS_OK.sync, pending_apply: false } }, NOW).title, '3 active decisions synced');
+  // Older reports have no field: unchanged wording.
+  assert.equal(M.crowdsecState(CS_OK, NOW).title, '3 active decisions synced');
+  // An apply problem still wins over "applying".
+  const cap = { ...pending, sync: { ...pending.sync, apply_state: 'capacity_exceeded', apply_message: 'too many' } };
+  assert.equal(M.crowdsecState(cap, NOW).title, 'Over capacity: automatic apply paused');
+});
+
 console.log(`\n${passed} passed`);

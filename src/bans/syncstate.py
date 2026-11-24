@@ -16,7 +16,8 @@ MAX_BYTES = 256 * 1024
 VERSION = 1
 FIELDS = ("version", "leader_pid", "updated_at", "lapi_state", "lapi_message", "apply_state", "apply_message",
           "last_poll_at", "last_success_at", "last_snapshot_at", "last_apply_at", "decisions", "by_origin",
-          "ignored", "protected_sample", "capacity", "origins", "poll_interval", "sync_interval")
+          "ignored", "protected_sample", "capacity", "origins", "poll_interval", "sync_interval",
+          "pending_apply")
 
 
 def write(doc) -> None:

@@ -118,9 +118,14 @@ export function crowdsecState(src, now = Date.now()) {
   const [applyTitle, applyTone] = APPLY_STATES[s.apply_state] || APPLY_STATES.failed;
   const tone = TONE_RANK[applyTone] > TONE_RANK[lapiTone] ? applyTone : lapiTone;
   const n = Number(s.decisions) || 0;
-  const title = s.lapi_state !== 'ok' ? lapiTitle : (applyTitle || `${n} active ${n === 1 ? 'decision' : 'decisions'} synced`);
+  const noun = n === 1 ? 'decision' : 'decisions';
+  const applying = s.pending_apply === true && s.apply_state === 'ok';
+  const synced = applying ? `${n} ${noun} synced, applying…` : `${n} active ${noun} synced`;
+  const title = s.lapi_state !== 'ok' ? lapiTitle : (applyTitle || synced);
   const last = s.last_success_at ? `Last successful poll ${relativeTime(s.last_success_at, now)}.` : '';
-  const detail = [s.lapi_state !== 'ok' ? s.lapi_message : '', s.apply_state !== 'ok' ? s.apply_message : '', last]
+  const wait = applying && s.lapi_state === 'ok'
+    ? `New decisions are written to the CrowdSec file within BANS_SYNC_INTERVAL (${Number(s.sync_interval) || 30} s).` : '';
+  const detail = [s.lapi_state !== 'ok' ? s.lapi_message : '', s.apply_state !== 'ok' ? s.apply_message : '', wait, last]
     .filter(Boolean).join(' ');
   return { tone, title, detail };
 }

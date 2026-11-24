@@ -62,6 +62,13 @@ def _audit(action, detail) -> None:
         log.warning("IP bans: could not write audit event %s: %s", action, e)
 
 
+def _fingerprint(desired) -> dict:
+    """What the Security view shows of the accepted set: id -> value. New
+    fetch times on a repeated snapshot are not a change."""
+    from . import addr
+    return {did: addr.token(a.net) for did, a in desired.items()}
+
+
 class Synchronizer:
     def __init__(self, *, monotonic=time.monotonic, wall=store.utc_now):
         self._mono, self._wall = monotonic, wall
@@ -75,6 +82,8 @@ class Synchronizer:
         self.last_attempt = None                  # monotonic seconds
         self.last_apply = None
         self.last_result = None
+        self.pending_apply = False                # the accepted set changed since the last successful apply
+        self.applied = {}                         # _fingerprint() of the last successful apply
         self.times = dict.fromkeys(("last_poll_at", "last_success_at", "last_snapshot_at", "last_apply_at"))
 
     def _set(self, kind, state, message="") -> None:
@@ -139,6 +148,8 @@ class Synchronizer:
                 self.times["last_snapshot_at"] = store.iso(fetched_at)
                 self.snapshot_audit = True
             self._set("lapi", "ok")
+            self.pending_apply = _fingerprint(self.desired) != self.applied
+            self._write()                 # before the apply: a slow reload never ages the report
             self._maybe_apply(now_m)
         self._write()
         return self.lapi_state
@@ -170,6 +181,8 @@ class Synchronizer:
         self.times["last_apply_at"] = store.iso(self._wall())
         if result.ok:
             self.snapshot_audit = False
+            self.applied = _fingerprint(self.desired)
+            self.pending_apply = False
             self._set("apply", "ok")
         else:
             self._set("apply", _APPLY_STATES.get(result.code, "failed"), result.message)
@@ -186,7 +199,8 @@ class Synchronizer:
                "by_origin": dict(collections.Counter(a.origin for a in self.desired.values())),
                "ignored": ignored, "protected_sample": result.protected_sample if result else [],
                "capacity": result.capacity if result else None, "origins": list(lapi.origins()),
-               "poll_interval": config.CROWDSEC_POLL_INTERVAL, "sync_interval": config.BANS_SYNC_INTERVAL}
+               "poll_interval": config.CROWDSEC_POLL_INTERVAL, "sync_interval": config.BANS_SYNC_INTERVAL,
+               "pending_apply": self.pending_apply}
         try:
             syncstate.write(doc)
         except OSError as e:

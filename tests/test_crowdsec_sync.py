@@ -7,11 +7,13 @@ Run with:  uv run --frozen python -m unittest tests.test_crowdsec_sync -v
 import fcntl
 import logging
 import os
+import threading
 import unittest
 from datetime import timedelta
 from unittest import mock
 
 import tests._env as env
+import requests
 from tests import _bans, _crowdsec
 
 from src import audit, config
@@ -290,6 +292,57 @@ class FailureTest(SyncCase):
             self.lapi.add("203.0.113.8")
             for _ in range(3):
                 self.assertEqual(self.step(30), "ok")
+
+
+
+class SlowLapiStatusTest(SyncCase):
+    def test_a_hung_lapi_is_reported_unreachable_not_stale(self):
+        # (b) The poll ends at the derived deadline and writes "unreachable";
+        # the Security view reads a fresh report, not a stale one.
+        release = threading.Event()
+        self.addCleanup(release.set)
+        real_get = requests.get
+
+        def hang(url, **kw):
+            if url.startswith(_crowdsec.URL):
+                release.wait(10)
+            return real_get(url, **kw)
+        with mock.patch.object(requests, "get", hang), mock.patch.object(lapi, "read_deadline", lambda: 0.2):
+            self.assertEqual(self.step(), "unreachable")
+        doc = syncstate.read()
+        self.assertEqual(doc["lapi_state"], "unreachable")
+        self.assertFalse(service._crowdsec_status(store.utc_now())["stale"])
+
+    def test_the_report_is_written_before_the_coalesced_apply(self):
+        # (b) and (d): after a successful merge the report says the new
+        # decision is pending, even while the apply that follows is slow.
+        seen = []
+        real_apply = service.apply_crowdsec
+
+        def slow_apply(*a, **kw):
+            seen.append(syncstate.read())
+            return real_apply(*a, **kw)
+        self.lapi.add("203.0.113.40")
+        with mock.patch.object(service, "apply_crowdsec", slow_apply):
+            self.step()
+        self.assertEqual(seen[0]["decisions"], 1)
+        self.assertIs(seen[0]["pending_apply"], True)
+        self.assertIs(syncstate.read()["pending_apply"], False)
+
+    def test_pending_apply_follows_changes_between_coalesced_applies(self):
+        # (d) A delta between applies leaves pending_apply true until the next
+        # apply; an unchanged repeated snapshot does not set it.
+        self.step()                                        # snapshot + first apply
+        self.assertIs(syncstate.read()["pending_apply"], False)
+        self.lapi.add("203.0.113.41")
+        self.step(config.CROWDSEC_POLL_INTERVAL)           # inside BANS_SYNC_INTERVAL: no apply
+        doc = syncstate.read()
+        self.assertEqual((doc["decisions"], doc["pending_apply"]), (1, True))
+        self.step(config.BANS_SYNC_INTERVAL)
+        self.assertIs(syncstate.read()["pending_apply"], False)
+        self.sync.need_snapshot = True                     # the same decisions again
+        self.step(config.CROWDSEC_POLL_INTERVAL)
+        self.assertIs(syncstate.read()["pending_apply"], False)
 
 
 if __name__ == "__main__":

@@ -162,12 +162,22 @@ SCOPES = "Ip,Range"
 TIMEOUT = (3.05, 15)
 # TIMEOUT bounds each socket read, not the whole exchange: a peer that sends
 # one byte every few seconds would otherwise hold the sync leader (and its
-# flock) forever. A poll that takes longer than this in total is an outage.
-READ_DEADLINE = 60
+# flock) forever. A poll that takes longer than read_deadline() in total is an
+# outage. The deadline stays inside the Security view's staleness window
+# (service.STALE_POLLS x poll + sync): the longest gap between two status
+# writes is one poll wait plus one fetch, so a slow LAPI reads "unreachable",
+# never "out of date".
+READ_DEADLINE_MAX = 60
+DEADLINE_MARGIN = 5
 USER_AGENT = f"caddy-console/{config.APP_VERSION}"  # exactly name/version, as CrowdSec's api_key.go expects
 MAX_BYTES = 32 * 1024 * 1024
 MAX_DECISIONS = 200000
 IGNORE_REASONS = ("not_ban", "scope", "origin", "expired", "invalid_value", "too_wide")
+
+
+def read_deadline() -> float:
+    return float(min(READ_DEADLINE_MAX,
+                     2 * config.CROWDSEC_POLL_INTERVAL + config.BANS_SYNC_INTERVAL - DEADLINE_MARGIN))
 
 
 class LapiUnavailable(Exception):
@@ -219,19 +229,23 @@ def _read_bounded(resp, aborted) -> bytes:
             if size > MAX_BYTES:
                 raise LapiMalformed("the response is larger than 32 MiB")
             chunks.append(chunk)
-    except http_client.RequestException as e:
+    except LapiMalformed:
+        raise
+    except Exception as e:                  # noqa: BLE001 - any read failure is an outage, named by type only
         raise LapiUnavailable(f"reading the response failed ({type(e).__name__})") from None
     return b"".join(chunks)
 
 
 def _request(url, params, headers, box, aborted) -> None:
     """The blocking part of one poll, run on a worker thread so the caller's
-    wait is bounded by READ_DEADLINE whatever the peer does."""
+    wait is bounded by read_deadline() whatever the peer does. Every outcome
+    lands in box as "body" or "error"; messages name exception types only."""
     try:
         resp = http_client.get(url, params=params, headers=headers, timeout=TIMEOUT,
                                stream=True, allow_redirects=False)
-    except http_client.RequestException as e:
-        box["error"] = LapiUnavailable(type(e).__name__)
+    except Exception as e:                  # noqa: BLE001 - RequestException or anything else
+        box["error"] = LapiUnavailable(type(e).__name__ if isinstance(e, http_client.RequestException)
+                                       else f"the request failed ({type(e).__name__})")
         return
     box["resp"] = resp
     try:
@@ -242,16 +256,23 @@ def _request(url, params, headers, box, aborted) -> None:
         if resp.status_code != 200:
             raise LapiUnavailable(f"HTTP {resp.status_code}")
         box["body"] = _read_bounded(resp, aborted)
-    except Exception as e:                  # handed to the caller, which owns the error policy
+    except (LapiAuthError, LapiUnavailable, LapiMalformed) as e:
         box["error"] = e
+    except Exception as e:                  # noqa: BLE001
+        box["error"] = LapiUnavailable(f"the request failed ({type(e).__name__})")
     finally:
-        resp.close()
+        try:
+            resp.close()                    # only ever here: the read holding the buffer lock has returned
+        except Exception:                   # noqa: BLE001
+            pass
 
 
 def _abort(resp) -> None:
     """Wake a read that is blocked on the socket: shutdown() interrupts a recv
-    in another thread, close() alone may not. Best effort over requests'
-    and urllib3's internals; a stray thread is still bounded by _inflight."""
+    in another thread. Never close() here: BufferedReader.close() takes the
+    lock the blocked read holds, so it would block this (the caller's) thread
+    past the deadline. The worker closes the response once its read returns;
+    when no socket is found, the stray thread is still bounded by _inflight."""
     paths = (("raw", "_connection", "sock"), ("raw", "_fp", "fp", "raw", "_sock"))
     for path in paths:
         obj = resp
@@ -262,10 +283,6 @@ def _abort(resp) -> None:
                 obj.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-    try:
-        resp.close()
-    except Exception:
-        pass
 
 
 # At most one request in flight: a peer that never lets a request finish costs
@@ -276,7 +293,7 @@ _inflight = threading.Lock()
 def fetch_stream(base_url, key, *, startup: bool, origins) -> Stream:
     """One poll. Raises LapiUnavailable, LapiAuthError or LapiMalformed; the
     messages name only exception types and status codes, never the key. Takes
-    at most READ_DEADLINE seconds: a slow peer is an outage, so the sync keeps
+    at most read_deadline() seconds: a slow peer is an outage, so the sync keeps
     enforcing, reports it and re-snapshots once LAPI answers in time again."""
     params = {"startup": "true" if startup else "false", "scopes": SCOPES, "origins": ",".join(origins)}
     headers = {"X-Api-Key": key, "Accept": "application/json", "User-Agent": USER_AGENT}
@@ -295,15 +312,18 @@ def fetch_stream(base_url, key, *, startup: bool, origins) -> Stream:
     except RuntimeError:
         _inflight.release()
         raise LapiUnavailable("cannot start the request thread") from None
-    worker.join(READ_DEADLINE)
+    deadline = read_deadline()
+    worker.join(deadline)
     if worker.is_alive():
         aborted.set()
         resp = box.get("resp")
         if resp is not None:
             _abort(resp)
-        raise LapiUnavailable(f"the response took too long (over {READ_DEADLINE} s)")
+        raise LapiUnavailable(f"the response took too long (over {deadline:g} s)")
     if "error" in box:
         raise box["error"]
+    if "body" not in box:
+        raise LapiUnavailable("the request ended without a response")
     return parse_stream(box["body"])
 
 

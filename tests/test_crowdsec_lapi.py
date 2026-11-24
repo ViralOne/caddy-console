@@ -101,33 +101,39 @@ class FetchTest(unittest.TestCase):
         self.assertTrue(all(c["allow_redirects"] is False for c in self.lapi.calls))
 
     def test_slow_drip_body_hits_the_total_deadline(self):
-        # One byte, then a read that blocks until the watchdog closes the response:
-        # no single blocking call may outlast the deadline.
+        # One byte, then a read that blocks until the watchdog shuts the socket
+        # down: no single blocking call may outlast the deadline.
+        class Sock:
+            def __init__(self, woken):
+                self.woken = woken
+
+            def shutdown(self, how):
+                self.woken.set()
+
         class Drip(_crowdsec.FakeStreamResponse):
             def __init__(self):
                 super().__init__()
                 self.woken = threading.Event()
+                self.raw = type("Raw", (), {})()
+                self.raw._connection = type("Conn", (), {})()
+                self.raw._connection.sock = Sock(self.woken)
 
             def iter_content(self, chunk_size=1):
                 yield b" "
                 if not self.woken.wait(10):
                     return
-                raise requests.ConnectionError("closed by the watchdog")
-
-            def close(self):
-                super().close()
-                self.woken.set()
+                raise requests.ConnectionError("shut down by the watchdog")
 
         resp = Drip()
         self.lapi.mode, self.lapi.response = "response", resp
         started = time.monotonic()
-        with mock.patch.object(lapi, "READ_DEADLINE", 0.3), self.assertRaises(lapi.LapiUnavailable) as cm:
+        with mock.patch.object(lapi, "read_deadline", lambda: 0.3), self.assertRaises(lapi.LapiUnavailable) as cm:
             lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
         self.assertLess(time.monotonic() - started, 2)
         self.assertIn("took too long", str(cm.exception))
         self.assertNotIn(_crowdsec.KEY, str(cm.exception))
-        self.assertTrue(resp.closed)
-        self.assertTrue(_worker_gone(), "the request thread must end once the response is closed")
+        self.assertTrue(_worker_gone(), "the request thread must end once the socket is shut down")
+        self.assertTrue(resp.closed, "the worker closes the response after its read returns")
 
     def test_hung_request_is_bounded_and_never_piles_up_threads(self):
         release = threading.Event()
@@ -137,7 +143,7 @@ class FetchTest(unittest.TestCase):
         def hang(url, **kw):
             release.wait(10)
             return real_get(url, **kw)
-        with mock.patch.object(requests, "get", hang), mock.patch.object(lapi, "READ_DEADLINE", 0.2):
+        with mock.patch.object(requests, "get", hang), mock.patch.object(lapi, "read_deadline", lambda: 0.2):
             with self.assertRaisesRegex(lapi.LapiUnavailable, "took too long"):
                 lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
             with self.assertRaisesRegex(lapi.LapiUnavailable, "previous request has not finished"):
@@ -160,6 +166,76 @@ class FetchTest(unittest.TestCase):
         self.lapi.mode, self.lapi.raw = "raw", b" " * 64
         with mock.patch.object(lapi, "MAX_BYTES", 32), self.assertRaises(lapi.LapiMalformed):
             lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
+
+    def test_deadline_returns_even_when_the_socket_cannot_be_found(self):
+        # (a) No private attribute path leads to a socket, and close() blocks
+        # like BufferedReader.close() does while another thread is in read().
+        # The caller must still return at the deadline and never call close().
+        release = threading.Event()
+        self.addCleanup(release.set)
+        closed_by = []
+
+        class Stuck(_crowdsec.FakeStreamResponse):
+            def iter_content(self, chunk_size=1):
+                yield b" "
+                release.wait(10)
+                raise requests.ConnectionError("released")
+
+            def close(self):
+                closed_by.append(threading.current_thread().name)
+                release.wait(10)
+                super().close()
+
+        self.lapi.mode, self.lapi.response = "response", Stuck()
+        started = time.monotonic()
+        with mock.patch.object(lapi, "read_deadline", lambda: 0.3):
+            with self.assertRaisesRegex(lapi.LapiUnavailable, "took too long"):
+                lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
+        self.assertLess(time.monotonic() - started, 2)
+        self.assertNotIn(threading.current_thread().name, closed_by)
+        release.set()
+        self.assertTrue(_worker_gone())
+        self.assertEqual(closed_by, ["crowdsec-lapi-request"])
+
+    def test_unexpected_exceptions_in_the_worker_are_unavailable(self):
+        # (c) Not a RequestException: before the response, and while reading it.
+        def boom(url, **kw):
+            raise ValueError(f"bad url with {kw['headers']['X-Api-Key']}")
+        with mock.patch.object(requests, "get", boom):
+            with self.assertRaises(lapi.LapiUnavailable) as cm:
+                lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
+        self.assertEqual(str(cm.exception), "the request failed (ValueError)")
+
+        class Odd(_crowdsec.FakeStreamResponse):
+            def iter_content(self, chunk_size=1):
+                raise RuntimeError("urllib3 internals changed " + _crowdsec.KEY)
+                yield b""
+        self.lapi.mode, self.lapi.response = "response", Odd()
+        with self.assertRaises(lapi.LapiUnavailable) as cm:
+            lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
+        self.assertEqual(str(cm.exception), "reading the response failed (RuntimeError)")
+        self.assertNotIn(_crowdsec.KEY, str(cm.exception))
+        self.assertTrue(self.lapi.response.closed)
+
+
+class DeadlineWindowTest(unittest.TestCase):
+    def test_read_deadline_stays_inside_the_staleness_window(self):
+        # (b) The longest gap between status writes is one poll wait plus one
+        # fetch; it must stay below service's stale limit for every bound.
+        from src.bans import service
+        for poll in (5, 10, 60, 300):
+            for sync in (10, 30, 600, 3600):
+                with mock.patch.object(config, "CROWDSEC_POLL_INTERVAL", poll), \
+                        mock.patch.object(config, "BANS_SYNC_INTERVAL", sync):
+                    deadline = lapi.read_deadline()
+                    limit = service.STALE_POLLS * poll + sync
+                    self.assertLessEqual(deadline, lapi.READ_DEADLINE_MAX)
+                    self.assertLessEqual(poll + deadline + lapi.DEADLINE_MARGIN, limit, (poll, sync))
+                    self.assertGreaterEqual(deadline, 10, (poll, sync))
+        with mock.patch.object(config, "CROWDSEC_POLL_INTERVAL", 5), mock.patch.object(config, "BANS_SYNC_INTERVAL", 10):
+            self.assertEqual(lapi.read_deadline(), 15)
+        with mock.patch.object(config, "CROWDSEC_POLL_INTERVAL", 10), mock.patch.object(config, "BANS_SYNC_INTERVAL", 30):
+            self.assertEqual(lapi.read_deadline(), 45)
 
 
 class RealSocketDeadlineTest(unittest.TestCase):
@@ -186,7 +262,7 @@ class RealSocketDeadlineTest(unittest.TestCase):
         threading.Thread(target=drip, daemon=True).start()
         url = "http://127.0.0.1:%d" % server.getsockname()[1]
         started = time.monotonic()
-        with mock.patch.object(lapi, "READ_DEADLINE", 0.5), self.assertRaisesRegex(lapi.LapiUnavailable, "took too long"):
+        with mock.patch.object(lapi, "read_deadline", lambda: 0.5), self.assertRaisesRegex(lapi.LapiUnavailable, "took too long"):
             lapi.fetch_stream(url, _crowdsec.KEY, startup=True, origins=ORIGINS)
         self.assertLess(time.monotonic() - started, 3)
         self.assertTrue(_worker_gone(), "shutting the socket down must end the blocked read")
