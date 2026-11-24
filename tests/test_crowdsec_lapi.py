@@ -10,6 +10,7 @@ from unittest import mock
 import tests._env  # noqa: F401
 from tests import _bans, _crowdsec
 
+from src import config
 from src.bans import addr, lapi
 
 NOW = datetime(2026, 11, 24, 12, 0, 0, tzinfo=timezone.utc)
@@ -66,6 +67,57 @@ class FetchTest(unittest.TestCase):
     def test_origins_are_sent_in_operator_case(self):
         lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=("CAPI", "cscli"))
         self.assertEqual(self.lapi.calls[0]["params"]["origins"], "CAPI,cscli")
+
+    def test_user_agent_names_the_console_and_its_version(self):
+        # CrowdSec (pkg/apiserver/middlewares/v1/api_key.go) splits the UA on "/"
+        # and warns on every request unless it gets exactly name/version.
+        lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
+        ua = self.lapi.calls[0]["headers"]["User-Agent"]
+        self.assertEqual(ua, f"caddy-console/{config.APP_VERSION}")
+        self.assertEqual(len(ua.split("/")), 2)
+        self.assertNotIn(_crowdsec.KEY, ua)
+
+    def test_redirect_is_refused_as_unavailable(self):
+        self.lapi.mode = "status"
+        for status in (301, 302, 307, 308):
+            self.lapi.status = status
+            with self.subTest(status=status), self.assertRaises(lapi.LapiUnavailable) as cm:
+                lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
+            self.assertEqual(str(cm.exception), f"HTTP {status}")
+        self.assertTrue(all(c["allow_redirects"] is False for c in self.lapi.calls))
+
+    def test_slow_drip_response_hits_the_total_deadline(self):
+        clock = iter(range(0, 10 ** 6, 7))         # every read takes 7 s of monotonic time
+
+        class Drip(_crowdsec.FakeStreamResponse):
+            def iter_content(self, chunk_size=1):
+                for _ in range(1000):              # finite, so a missing deadline fails instead of hanging
+                    yield b" "
+
+        resp = Drip()
+        self.lapi.mode, self.lapi.response = "response", resp
+        with mock.patch.object(lapi, "_clock", lambda: next(clock), create=True), \
+                self.assertRaises(lapi.LapiUnavailable) as cm:
+            lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
+        self.assertIn("took too long", str(cm.exception))
+        self.assertNotIn(_crowdsec.KEY, str(cm.exception))
+        self.assertTrue(resp.closed)
+        self.assertGreater(lapi.READ_DEADLINE, lapi.TIMEOUT[1])
+
+    def test_response_within_the_deadline_is_read_whole(self):
+        clock = iter(range(0, 10 ** 6, 1))
+        self.lapi.add("203.0.113.7")
+        with mock.patch.object(lapi, "_clock", lambda: next(clock), create=True):
+            stream = lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=True, origins=ORIGINS)
+        self.assertEqual([x.value for x in stream.new], ["203.0.113.7"])
+
+    def test_non_ban_decision_in_a_stream_is_parsed_then_ignored(self):
+        self.lapi.add("203.0.113.7")
+        self.lapi.add("203.0.113.8", type="captcha")
+        stream = lapi.fetch_stream(_crowdsec.URL, _crowdsec.KEY, startup=False, origins=ORIGINS)
+        self.assertEqual([x.type for x in stream.new], ["ban", "captcha"])
+        results = [lapi.classify(x, ORIGINS, NOW)[1] for x in stream.new]
+        self.assertEqual(results, [None, "not_ban"])
 
     def test_oversized_response_is_malformed(self):
         self.lapi.mode, self.lapi.raw = "raw", b" " * 64

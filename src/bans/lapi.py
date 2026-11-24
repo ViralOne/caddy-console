@@ -6,6 +6,7 @@ log line, the status file, an audit entry or an API response.
 """
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -158,6 +159,11 @@ def parse_go_duration(text) -> float:
 STREAM_PATH = "/v1/decisions/stream"
 SCOPES = "Ip,Range"
 TIMEOUT = (3.05, 15)
+# TIMEOUT bounds each socket read, not the whole body: a peer that sends one
+# byte every few seconds would otherwise hold the sync leader (and its flock)
+# forever. Past this many seconds of reading, the poll counts as an outage.
+READ_DEADLINE = 60
+USER_AGENT = f"caddy-console/{config.APP_VERSION}"  # exactly name/version, as CrowdSec's api_key.go expects
 MAX_BYTES = 32 * 1024 * 1024
 MAX_DECISIONS = 200000
 IGNORE_REASONS = ("not_ban", "scope", "origin", "expired", "invalid_value", "too_wide")
@@ -202,10 +208,16 @@ class Accepted:
     expires_at: object
 
 
+_clock = time.monotonic
+
+
 def _read_bounded(resp) -> bytes:
     chunks, size = [], 0
+    deadline = _clock() + READ_DEADLINE
     try:
         for chunk in resp.iter_content(65536):
+            if _clock() > deadline:
+                raise LapiUnavailable(f"the response took too long (over {READ_DEADLINE} s)")
             size += len(chunk)
             if size > MAX_BYTES:
                 raise LapiMalformed("the response is larger than 32 MiB")
@@ -219,7 +231,7 @@ def fetch_stream(base_url, key, *, startup: bool, origins) -> Stream:
     """One poll. Raises LapiUnavailable, LapiAuthError or LapiMalformed; the
     messages name only exception types and status codes, never the key."""
     params = {"startup": "true" if startup else "false", "scopes": SCOPES, "origins": ",".join(origins)}
-    headers = {"X-Api-Key": key, "Accept": "application/json", "User-Agent": "caddy-console"}
+    headers = {"X-Api-Key": key, "Accept": "application/json", "User-Agent": USER_AGENT}
     try:
         resp = http_client.get(base_url + STREAM_PATH, params=params, headers=headers, timeout=TIMEOUT,
                                stream=True, allow_redirects=False)

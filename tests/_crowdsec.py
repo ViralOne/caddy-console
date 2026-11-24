@@ -48,9 +48,10 @@ class FakeLapi:
     def __init__(self):
         self.current = {}                    # id -> decision dict, the active set
         self.new_since, self.deleted_since = [], []
-        self.mode = "ok"                     # ok | down | status | raw
+        self.mode = "ok"                     # ok | down | status | raw | response
         self.status = 200
         self.raw = b""
+        self.response = None                 # returned as is in "response" mode
         self.calls = []
         self._seq = 100
 
@@ -83,13 +84,16 @@ class FakeLapi:
             return self._prev(url, params=params, headers=headers, timeout=timeout, **kw)
         self.calls.append({"path": url[len(URL):], "params": dict(params or {}),
                            "key": (headers or {}).get("X-Api-Key"), "stream": kw.get("stream"),
-                           "allow_redirects": kw.get("allow_redirects"), "timeout": timeout})
+                           "allow_redirects": kw.get("allow_redirects"), "timeout": timeout,
+                           "headers": dict(headers or {})})
         if self.mode == "down":
             raise requests.ConnectionError("fake lapi is down")
         if self.mode == "status":
             return FakeStreamResponse(self.status, b'{"message":"access forbidden"}')
         if self.mode == "raw":
             return FakeStreamResponse(200, self.raw)
+        if self.mode == "response":
+            return self.response
         return FakeStreamResponse(200, self._body((params or {}).get("startup") == "true"))
 
     def install(self, test):
