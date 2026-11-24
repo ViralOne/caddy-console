@@ -83,8 +83,14 @@ def _never_sent(exc) -> bool:
 
 
 def load(text: str) -> LoadResult:
-    """POST the unchanged on-disk Caddyfile. Only a connect timeout proves the
-    request never reached Caddy; any other transport error is ambiguous."""
+    """POST the unchanged on-disk Caddyfile.
+
+    "failed" means the request provably never reached Caddy: a connect timeout,
+    a refused connection or a name that does not resolve (see _never_sent).
+    "unknown" means it may have been sent and the outcome is ambiguous: a read
+    timeout, a reset or abort mid-request, or any other transport error.
+    "rejected" is a non-2xx answer (Caddy keeps its running config); "applied"
+    is a 2xx answer, still to be verified against /config/ by the caller."""
     try:
         resp = http_client.post(f"{CADDY_API_URL}/load", data=text.encode("utf-8"),
                                 headers={"Content-Type": "text/caddyfile"}, timeout=LOAD_TIMEOUT)
