@@ -18,7 +18,7 @@ from .. import config
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
 from ..bans import lapi as bans_lapi, render as bans_render, scan as bans_scan, txn as bans_txn
-from ..bans import plugin as bans_plugin, protected as bans_protected
+from ..bans import plugin as bans_plugin, profile as bans_profile, protected as bans_protected
 from ..caddy_api import get_servers, invalidate_servers_cache
 from ..config import (
     APP_VERSION,
@@ -454,6 +454,14 @@ def validate():
                                                 label="CrowdSec ban list", short="the CrowdSec ban list",
                                                 after=tuple(bans_render.SOURCES[n].path for n in bans_render.AFTER["crowdsec"]),
                                                 reserved=False)
+        try:
+            prof = bans_profile.load()
+        except bans_profile.Corrupt:
+            prof = bans_profile.default()
+        warnings += bans_scan.trust_warnings(content, prof.mode, prof.tunnel_only)
+        warnings += bans_scan.bans_warnings(content, bans_render.COUNTRY.path, mgmt, label="country policy",
+                                            short="the country policy", reserved=False,
+                                            after=tuple(bans_render.SOURCES[n].path for n in bans_render.COUNTRY_AFTER))
         if "crowdsec" in content.lower():
             warnings += bans_scan.plugin_warnings(
                 content, bans_render.PLUGIN.path, mgmt, placeholder=bans_plugin.api_key_placeholder(),

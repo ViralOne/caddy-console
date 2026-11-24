@@ -41,6 +41,12 @@ SOURCES = {
 }
 # Import order between sources: the CrowdSec import goes after the manual import.
 AFTER = {"crowdsec": ("manual",)}
+# Phase 4 policies. Not ban sources: they hold no records. The country policy
+# has a site import and a vars marker like a source (spec 4.3); the trusted
+# proxies file is a global `servers` body, which cannot carry a marker.
+COUNTRY = PolicySource("country", "geo.caddy", "caddy_console_country_policy", "caddy_console_country_denied")
+PROFILE = PolicySource("cloudflare", "cloudflare-trusted-proxies.caddy", None, None)
+COUNTRY_AFTER = ("manual", "crowdsec")
 # CrowdSec origins that count as "local" for manual-ban priority (spec 2.5).
 LOCAL_ORIGINS = ("crowdsec", "cscli")
 

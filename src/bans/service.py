@@ -21,7 +21,7 @@ from datetime import timedelta
 from .. import audit, config
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
-from . import addr, detect, fsio, lapi, plugin, pluginpolicy, protected, render, scan, store, syncstate, txn
+from . import addr, cfranges, detect, fsio, lapi, plugin, pluginpolicy, profile, protected, render, scan, store, syncstate, txn
 from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
@@ -100,6 +100,10 @@ def init_config() -> None:
         plugin.parse_key_file(config.CROWDSEC_PLUGIN_BOUNCER_KEY_FILE)
         plugin.parse_admin_address(config.CADDY_ADMIN_ADDRESS)
     except plugin.ConfigError as e:
+        raise RuntimeError(str(e)) from e
+    try:
+        profile.parse_mode(config.CLIENT_IP_MODE)
+    except profile.ConfigError as e:
         raise RuntimeError(str(e)) from e
 
 
@@ -211,12 +215,38 @@ def _verified_client(remote_addr):
     return ip
 
 
-def protected_for(state, client=None):
+def protected_for(state, client=None, prof=None):
+    """prof: the profile a transaction is about to commit; default the stored one.
+    Proxied mode adds the Cloudflare edge to the protected set (spec 4.1)."""
     management = store.management_networks(state)
     if client is not None:
         management.append(ipaddress.ip_network(client))
+    prof = prof if prof is not None else profile.load_or_default()
     return protected.build(never=never_networks(), management=management,
-                           docker=protected.read_docker_networks())
+                           docker=protected.read_docker_networks(), profile=prof.protected_networks())
+
+
+def _profile_active() -> bool:
+    """Render cloudflare-trusted-proxies.caddy once a Cloudflare profile is
+    configured, or once one left something behind. Direct mode by default
+    writes nothing, so it stays independent of Cloudflare."""
+    return (config.BANS_ENABLED and (profile.parse_mode(config.CLIENT_IP_MODE) != "direct" or profile.exists()
+                                     or os.path.exists(render.PROFILE.path)))
+
+
+def _profile_changes(prof) -> list:
+    data = profile.render(prof)
+    prof = dataclasses.replace(prof, last_rendered_hashes={**prof.last_rendered_hashes,
+                                                           render.PROFILE.filename: fsio.sha256_tag(data)})
+    return [txn.Change(render.PROFILE.path, "policy", data, marker=None),
+            txn.Change(profile.PATH, "state", profile.dumps(prof), owns=(render.PROFILE.filename,))]
+
+
+def _file_hold(recorded, path):
+    actual = fsio.sha256_tag(fsio.read_bytes(path))
+    if recorded != actual and not (recorded is None and actual is None):
+        return "missing" if actual is None else "differs"
+    return None
 
 
 def _holds(state) -> dict:
@@ -229,10 +259,17 @@ def _holds(state) -> dict:
         if recorded != actual:
             out[name] = "missing" if actual is None else "differs"
     if _plugin_active():
-        recorded = pluginpolicy.recorded_hash()
-        actual = fsio.sha256_tag(fsio.read_bytes(render.PLUGIN.path))
-        if recorded != actual and not (recorded is None and actual is None):
-            out["plugin"] = "missing" if actual is None else "differs"
+        hold = _file_hold(pluginpolicy.recorded_hash(), render.PLUGIN.path)
+        if hold:
+            out["plugin"] = hold
+    if _profile_active():
+        try:
+            recorded = profile.load().last_rendered_hashes.get(render.PROFILE.filename) if profile.exists() else None
+        except profile.Corrupt:
+            recorded = "corrupt"
+        hold = _file_hold(recorded, render.PROFILE.path)
+        if hold:
+            out["cloudflare"] = hold
     return out
 
 
@@ -260,8 +297,12 @@ def plugin_route_current(state) -> bool:
     return fsio.read_bytes(render.PLUGIN.path) == want
 
 
+AUX_FILES = {"plugin": render.PLUGIN.filename, "cloudflare": render.PROFILE.filename,
+             "country": render.COUNTRY.filename}
+
+
 def _policy_filename(name) -> str:
-    return render.PLUGIN.filename if name == "plugin" else render.SOURCES[name].filename
+    return AUX_FILES.get(name) or render.SOURCES[name].filename
 
 
 def _route_detail(data: bytes) -> str:
@@ -269,27 +310,48 @@ def _route_detail(data: bytes) -> str:
     return f"{len(line.split()) - 2} protected ranges, {fsio.sha256_tag(data)[7:19]}"
 
 
-def _candidates(state, prot, holds, now) -> list:
-    """Every active source's candidate policy (held ones excepted) plus the
-    state that embeds their hashes. Held sources still count toward BANS_MAX:
-    their file stays loaded in Caddy. Non-local CrowdSec origins do not count
-    here, so they never block a manual change (spec 2.5); the CrowdSec sync
-    checks the whole total itself before it stores anything."""
-    sources = render.active_sources(state)
-    render.check_capacity(render.capacity_counts(state.records, now), config.BANS_MAX)
-    changes, owns = [], []
-    for name, src in sources.items():
-        if name in holds:
-            continue
-        data = render.render_policy(src, render.effective_prefixes(state.records, now, name),
-                                    prot.exclusion_tokens())
-        state.last_rendered_hashes[src.filename] = fsio.sha256_tag(data)
-        changes.append(txn.Change(src.path, "policy", data, marker=src.marker))
-        owns.append(src.filename)
+def _aux_changes(prot, holds, prof=None, with_profile=False) -> list:
+    """Policies that hold no ban records but repeat the protected set or the
+    profile: the plugin route and the trusted proxies file. Each is included
+    whenever it is active, so one transaction always carries every dependent
+    file (spec 4.2); unchanged bytes are dropped by txn.apply_locked."""
+    prof = prof if prof is not None else profile.load_or_default()
+    changes = []
     if _plugin_active() and "plugin" not in holds:
         changes += _plugin_changes(prot)
-    changes.append(txn.Change(store.STATE_PATH, "state", store.dumps(state), owns=tuple(owns)))
+    if (with_profile or _profile_active()) and "cloudflare" not in holds:
+        changes += _profile_changes(prof)
     return changes
+
+
+def _bans_present(state) -> bool:
+    return (state.raw is not None or bool(state.records)
+            or any(os.path.exists(src.path) for src in render.active_sources(state).values()))
+
+
+def _candidates(state, prot, holds, now, *, prof=None, bans=True, with_profile=False) -> list:
+    """Every active source's candidate policy (held ones excepted) plus the
+    state that embeds their hashes, then the record-less policies. Held
+    sources still count toward BANS_MAX: their file stays loaded in Caddy.
+    Non-local CrowdSec origins do not count here, so they never block a manual
+    change (spec 2.5); the CrowdSec sync checks the whole total itself before
+    it stores anything. bans=False (a profile or country change on an install
+    that never stored a ban) renders only the record-less policies."""
+    changes = []
+    if bans:
+        sources = render.active_sources(state)
+        render.check_capacity(render.capacity_counts(state.records, now), config.BANS_MAX)
+        owns = []
+        for name, src in sources.items():
+            if name in holds:
+                continue
+            data = render.render_policy(src, render.effective_prefixes(state.records, now, name),
+                                        prot.exclusion_tokens())
+            state.last_rendered_hashes[src.filename] = fsio.sha256_tag(data)
+            changes.append(txn.Change(src.path, "policy", data, marker=src.marker))
+            owns.append(src.filename)
+        changes.append(txn.Change(store.STATE_PATH, "state", store.dumps(state), owns=tuple(owns)))
+    return changes + _aux_changes(prot, holds, prof, with_profile)
 
 
 def _corrupt_version(e) -> str:
@@ -480,13 +542,17 @@ def remove_ban(record_id, actor, remote_addr):
     return _transact(actor, _verified_client(remote_addr), mutate)
 
 
+def _aux_active(name) -> bool:
+    return {"plugin": _plugin_active, "cloudflare": _profile_active, "country": _country_active}[name]()
+
+
 def reapply(payload, actor, remote_addr):
     source = payload.get("source", "manual") if isinstance(payload, dict) else None
-    if source not in render.SOURCES and source != "plugin":
+    if source not in render.SOURCES and source not in AUX_FILES:
         return _error("invalid_source", "Unknown policy source.", 400)
 
     def mutate(state, now, version):
-        active = _plugin_active() if source == "plugin" else source in render.active_sources(state)
+        active = _aux_active(source) if source in AUX_FILES else source in render.active_sources(state)
         if not active:
             raise BanError("source_not_enabled", f"The {source} source is not in use.", 400)
         return Mutation({"source": source}, 200, [("bans_reapply", source)])
@@ -502,8 +568,8 @@ def reset(payload, actor, remote_addr):
     source = payload.get("source")
     if source not in RESET_SOURCES:
         return _error("invalid_source", "source must be manual, crowdsec, country or cloudflare.", 400)
-    if source not in render.SOURCES:
-        return _error("source_not_enabled", f"The {source} source is not part of this version.", 400)
+    if source in AUX_FILES:
+        return _reset_aux(source, payload, actor)
     what = "manual ban" if source == "manual" else "stored CrowdSec decision"
     if payload.get("confirm") is not True:
         return _error("confirmation_required", f"Resetting deletes every {what}; send confirm: true.", 400)
@@ -524,6 +590,134 @@ def reset(payload, actor, remote_addr):
         return Mutation(body, 200, [("bans_reset", f"{source}: removed {len(removed)} records")])
     return _transact(actor, _verified_client(remote_addr), mutate, force=(source,), allow_corrupt=True,
                      source="reset", affects=(source,))
+
+
+# --- Phase 4: client-IP profile, Cloudflare ranges, country policy ------------------------
+
+def _country_active() -> bool:
+    return False
+
+
+def _refused_error(refused):
+    if refused.gate == "unavailable":
+        return _error("bans_unavailable", refused.message, 503, reason=refused.reason)
+    if refused.gate == "corrupt":
+        return _error("state_degraded", f"{refused.message}. The last generated policy stays enforced; "
+                      "open Security to recover.", 503, recovery=True)
+    return _error("state_degraded", refused.message, 503, recovery=True)
+
+
+def _policy_transaction(actor, source, events, *, prof=None, check=None, force=(), background=False,
+                        allow_corrupt=False):
+    """A profile, range or country change: the candidate profile (and the
+    country candidate, see _country_override) expanded through every dependent
+    file, committed by one journal under caddyfile_lock() (spec 4.2).
+    check(state) runs under the lock and returns an error response to stop."""
+    def prepare(state, corrupt):
+        if check is not None:
+            stop = check(state)
+            if stop is not None:
+                return stop
+        holds = {} if corrupt else {k: v for k, v in _holds(state).items() if k not in force}
+        candidate = prof if prof is not None else profile.load_or_default()
+        prot = protected_for(state, prof=candidate)
+        try:
+            # A corrupt bans.json is never rewritten here: the operator recovers it.
+            changes = _candidates(state, prot, holds, store.utc_now(), prof=candidate,
+                                  bans=corrupt is None and _bans_present(state), with_profile=prof is not None)
+        except render.CapacityError as e:
+            return _error("capacity_exceeded", f"The ban files would render {e.count} prefixes; the limit "
+                          f"(BANS_MAX) is {e.limit}. Remove bans first.", 409, count=e.count, limit=e.limit)
+        return _Plan(changes, actor, source, list(events), context=holds)
+
+    refused, plan, outcome = _locked_transaction(prepare, background=background, allow_corrupt=allow_corrupt)
+    if refused is not None:
+        return _refused_error(refused)
+    if outcome is None:
+        return plan
+    return _outcome_body(outcome), (200 if outcome.ok else outcome.http_status)
+
+
+def _reset_aux(source, payload, actor):
+    if source == "country" and not _country_active() or source == "cloudflare" and not _profile_active():
+        return _error("source_not_enabled", f"The {source} policy is not in use.", 400)
+    if source == "plugin":
+        return _error("invalid_source", "The plugin route has no state to reset; use Re-apply.", 400)
+    if payload.get("confirm") is not True:
+        return _error("confirmation_required", f"Resetting returns the {source} policy to its defaults; "
+                      "send confirm: true.", 400)
+    if source == "cloudflare":
+        prof = profile.Profile(mode="direct", stored=True)
+        return _policy_transaction(actor, "reset", [("bans_reset", "cloudflare: direct profile, bundled ranges")],
+                                   prof=prof, force=("cloudflare",), allow_corrupt=True)
+    return _reset_country(actor)
+
+
+def client_ip_profile_info() -> dict:
+    corrupt = None
+    try:
+        prof = profile.load()
+    except profile.Corrupt as e:
+        prof, corrupt = profile.default(), str(e)
+    data = fsio.read_bytes(render.PROFILE.path)
+    check = _ranges_check_meta()
+    return {
+        "mode": prof.mode, "env_mode": profile.parse_mode(config.CLIENT_IP_MODE), "stored": prof.stored,
+        "modes": list(profile.MODES), "tunnel_peers": prof.tunnel_peers, "tunnel_only": prof.tunnel_only,
+        "trusted_peers": prof.peers(), "corrupt": corrupt,
+        "file": render.PROFILE.path, "import_line": render.PROFILE.import_line,
+        "present": data is not None, "current": data is not None and data == profile.render(prof),
+        "hash": fsio.sha256_tag(data)[7:19] if data is not None else None,
+        "ranges": {"v4": prof.ranges.get("v4", []), "v6": prof.ranges.get("v6", []), "source": prof.ranges_source,
+                   "fetched_at": prof.ranges_fetched_at, "auto_update": config.CLOUDFLARE_RANGES_AUTO_UPDATE,
+                   "checked_at": check.get("checked_at"), "last_error": check.get("last_error")},
+    }
+
+
+def set_client_ip_profile(payload, actor):
+    """PUT /api/security/client-ip-profile: validate the mode and every peer
+    before anything is generated, then regenerate the trusted proxies file and
+    everything that repeats the protected set or the Cloudflare peers."""
+    try:
+        candidate = profile.from_payload(payload, profile.load_or_default())
+    except profile.InputError as e:
+        return _error(e.code, str(e), 400)
+    detail = candidate.mode + (f" peers={' '.join(candidate.tunnel_peers)}" if candidate.tunnel_peers else "")
+    return _policy_transaction(actor, "profile", [("client_ip_profile_changed", detail)], prof=candidate,
+                               force=("cloudflare",))
+
+
+def _ranges_check_meta() -> dict:
+    return {}
+
+
+def _reset_country(actor):
+    return _error("source_not_enabled", "The country policy is not in use.", 400)
+
+
+def _live_trust(live, prof) -> list:
+    """Per live server: the trusted proxies and client-IP headers Caddy runs,
+    and whether they are what the selected profile renders."""
+    servers = (((live or {}).get("apps") or {}).get("http") or {}).get("servers") or {}
+    want = {ipaddress.ip_network(x, strict=False) for x in detect.expand_tokens(prof.peers())}
+    out = []
+    for name, srv in sorted(servers.items()):
+        if not isinstance(srv, dict):
+            continue
+        tp = srv.get("trusted_proxies") or {}
+        ranges = [str(r) for r in tp.get("ranges") or []] if isinstance(tp, dict) else []
+        headers = [str(h) for h in srv.get("client_ip_headers") or []]
+        try:
+            have = {ipaddress.ip_network(r, strict=False) for r in ranges}
+        except ValueError:
+            have = None
+        if prof.mode == "direct":
+            ok = not ranges
+        else:
+            ok = have == want and any(h.lower() == "cf-connecting-ip" for h in headers)
+        out.append({"server": name, "listen": srv.get("listen") or [], "trusted_proxies": ranges[:64],
+                    "client_ip_headers": headers[:8], "matches": ok})
+    return out
 
 
 # --- CrowdSec file sync (spec 2.4-2.6) ---------------------------------------------------
@@ -954,6 +1148,14 @@ def _plugin_status(live, state, holds, text) -> dict:
     }
 
 
+def _profile_status(live, holds, text) -> dict:
+    info = client_ip_profile_info()
+    prof = profile.load_or_default()
+    return {**info, "active": _profile_active(), "hold": holds.get("cloudflare"),
+            "imported": scan.mentions_import(text, render.PROFILE.path),
+            "live": _live_trust(live, prof) if live is not None else None}
+
+
 def status(remote_addr) -> dict:
     avail = availability()
     info = recovery_info()
@@ -991,6 +1193,7 @@ def status(remote_addr) -> dict:
         "protected": protected_for(state or store.State(), _verified_client(remote_addr)).summary(),
         "sites": _site_rows(live, text, state, now, holds),
         "plugin": _plugin_status(live, state, holds, text),
+        "client_ip_profile": _profile_status(live, holds, text),
         "caddy": caddy,
         "limits": {"max_prefixes": config.BANS_MAX, "used": sum(by_source.values()), "by_source": by_source},
         "last_apply": _last_apply(),
@@ -1015,13 +1218,17 @@ def expire_tick(now=None) -> str:
         removed = store.prune_expired(state, now, sources=[n for n in render.active_sources(state) if n not in holds])
         aged = store.prune_management(state, now)
         if not removed and not aged:
-            if "plugin" in holds or not _plugin_active() or plugin_route_current(state):
+            # Only a record-less policy may be out of date (first start, a
+            # CLIENT_IP_MODE default, BANS_NEVER or Docker networks changed):
+            # render those alone, writing no ban state.
+            changes = [c for c in _aux_changes(protected_for(state), holds) if fsio.read_bytes(c.path) != c.data]
+            if not changes:
                 return "idle"
-            # Only the plugin route is out of date (first start, BANS_NEVER or
-            # Docker networks changed): render it alone, writing no ban state.
-            changes = _plugin_changes(protected_for(state))
-            outcome = txn.apply_locked(changes, actor="system", source="plugin",
-                                       audit_events=[("plugin_route_rendered", _route_detail(changes[0].data))])
+            events = [("plugin_route_rendered", _route_detail(c.data)) for c in changes if c.path == render.PLUGIN.path]
+            events += [("client_ip_profile_rendered", profile.load_or_default().mode)
+                       for c in changes if c.path == render.PROFILE.path]
+            source = "plugin" if any(c.path == render.PLUGIN.path for c in changes) else "profile"
+            outcome = txn.apply_locked(changes, actor="system", source=source, audit_events=events)
             return "applied" if outcome.ok else outcome.code
         try:
             changes = _candidates(state, protected_for(state), holds, now)

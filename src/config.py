@@ -110,3 +110,10 @@ CROWDSEC_POLL_INTERVAL = bounded_int("CROWDSEC_POLL_INTERVAL", 10, 5, 300)
 # caddy-admin address. Both are validated by src/bans/plugin.py at startup.
 CROWDSEC_PLUGIN_BOUNCER_KEY_FILE = os.environ.get("CROWDSEC_PLUGIN_BOUNCER_KEY_FILE", "").strip()
 CADDY_ADMIN_ADDRESS = os.environ.get("CADDY_ADMIN_ADDRESS", "").strip() or "0.0.0.0:2019"
+
+# Phase 4, Cloudflare trust profiles (docs/security.md#client-ip-profiles).
+# CLIENT_IP_MODE is the default profile until an operator saves one in Security;
+# src/bans/profile.py validates it at startup. Direct mode never contacts Cloudflare.
+CLIENT_IP_MODE = os.environ.get("CLIENT_IP_MODE", "direct").strip().lower() or "direct"
+CLOUDFLARE_RANGES_AUTO_UPDATE = os.environ.get(
+    "CLOUDFLARE_RANGES_AUTO_UPDATE", "true").lower() not in ("0", "false", "no")
