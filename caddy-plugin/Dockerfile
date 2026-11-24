@@ -22,6 +22,9 @@ RUN go mod verify \
 
 FROM caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0
 ARG VARIANT=crowdsec
+# Pick up Alpine security fixes released after the pinned base digest
+# (the vulnerability scan fails on fixable critical CVEs).
+RUN apk upgrade --no-cache
 COPY --from=build /out/caddy /usr/bin/caddy
 COPY --from=build /out/caddy-console-preflight /usr/bin/caddy-console-preflight
 COPY --from=build /out/modules.json /usr/share/caddy-console/modules.json
