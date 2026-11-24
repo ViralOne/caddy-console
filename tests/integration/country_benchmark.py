@@ -1,5 +1,6 @@
 """Direct country policy at 1,000 / 10,000 / 20,000 prefixes (spec Phase 4 gate).
 
+  docker compose -f docker-compose.dev.yaml restart caddy-target   # a clean Caddy heap is the RSS baseline
   docker compose -f docker-compose.dev.yaml exec -T caddy-console \
     /app/.venv/bin/python -m tests.integration.country_benchmark
 
@@ -33,7 +34,8 @@ config.COUNTRY_MAX_PREFIXES = 200000       # measure sizes beyond any shipped ca
 SITES = 8
 SIZES = (0, 1000, 10000, 20000)
 BUDGET = {"adapt_s": 2.0, "load_s": 3.0, "rss_delta_mib": 150.0, "p95_delta_ms": 2.0}
-REQUESTS = 300
+REQUESTS = 600
+RUNS = 3                 # each size is measured RUNS times; the table shows medians (Go GC and a shared host are noisy)
 D = itenv.BANS_DIR
 GEO = os.path.join(D, "geo.caddy")
 CADDYFILE = ("{\n\tadmin 0.0.0.0:2019\n\tservers {\n\t\ttrusted_proxies static private_ranges\n"
@@ -102,11 +104,14 @@ def main():
         f.write(CADDYFILE)
     workdir = tempfile.mkdtemp(prefix="country-bench-")
     try:
-        rows = [measure(n, workdir) for n in SIZES]
+        runs = [[measure(n, workdir) for n in SIZES] for _ in range(RUNS)]
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
         with open("/etc/caddy/Caddyfile", encoding="utf-8") as f:
             caddy_admin.load(f.read())
+    rows = [{k: statistics.median(run[i][k] for run in runs) for k in runs[0][i]} for i in range(len(SIZES))]
+    # Caddy's heap is not returned between runs: the clean baseline is the smallest one seen.
+    rows[0]["rss"] = min(run[0]["rss"] for run in runs)
     base, best = rows[0], None
     print("| Prefixes | File | Adapt | Reload | Caddy RSS | p95 allowed (last prefix) | p95 denied | Within budget |")
     print("|---:|---:|---:|---:|---:|---:|---:|:---|")
