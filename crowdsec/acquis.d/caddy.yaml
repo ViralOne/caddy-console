@@ -1,0 +1,6 @@
+# Caddy Console's CrowdSec acquisition (docs/security.md#crowdsec-file-sync).
+# Only the live file: rotated archives (access-*.log) are never replayed.
+filenames:
+  - /var/log/caddy/access.log
+labels:
+  type: caddy

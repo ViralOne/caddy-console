@@ -18,3 +18,18 @@ for f in docker-compose.prod.yaml docker-compose.tunnel.yaml docker-compose.inte
   done
   echo "$f: ok"
 done
+
+# Phase 2 gate: the optional overlay is the only change needed to start CrowdSec,
+# and it keeps Caddy off the CrowdSec network. NAS uses its companion file
+# because its console service is named caddy-editor.
+export CROWDSEC_CONSOLE_BOUNCER_KEY=dummy-check-key
+for combo in "docker-compose.prod.yaml docker-compose.crowdsec.yaml caddy caddy-console" \
+             "docker-compose.internal.yaml docker-compose.crowdsec.yaml caddy caddy-console" \
+             "docker-compose.tunnel.yaml docker-compose.crowdsec.yaml caddy caddy-console" \
+             "docker-compose.dev.yaml docker-compose.crowdsec.yaml caddy-target caddy-console" \
+             "docker-compose.nas.yaml docker-compose.crowdsec.nas.yaml caddy caddy-editor"; do
+  read -r base overlay caddy console <<<"$combo"
+  docker compose -f "$base" -f "$overlay" config --format json | python3 dev/check-crowdsec-overlay.py "$caddy" "$console" \
+    || { echo "$base + $overlay: CrowdSec overlay check failed" >&2; exit 1; }
+  echo "$base + $overlay: ok"
+done

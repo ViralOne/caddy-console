@@ -1,0 +1,63 @@
+# Optional CrowdSec file-sync add-on (docs/security.md#crowdsec-file-sync).
+#
+#   docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml up -d
+#
+# Works with the prod, internal, tunnel and dev stacks; the NAS stack uses
+# docker-compose.crowdsec.nas.yaml. Running only a baseline file never starts
+# CrowdSec. CrowdSec reads Caddy's access log read-only and answers only the
+# console on the internal crowdsec-lapi network; Caddy never joins it, so the
+# Caddy admin API stays unreachable from CrowdSec. No port is published.
+services:
+  crowdsec:
+    # Reviewed tag plus its immutable multi-arch index digest:
+    #   docker buildx imagetools inspect crowdsecurity/crowdsec:v1.8.2
+    image: crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    environment:
+      COLLECTIONS: crowdsecurity/caddy
+      PARSERS: crowdsecurity/whitelists
+      # No community enrollment or blocklists by default (spec 2.1).
+      DISABLE_ONLINE_API: "true"
+      # Registers the read-only bouncer "caddy_console" at first start. To change
+      # the key later: cscli bouncers delete caddy_console, then restart.
+      BOUNCER_KEY_caddy_console: ${CROWDSEC_CONSOLE_BOUNCER_KEY:?Set CROWDSEC_CONSOLE_BOUNCER_KEY (python -c "import secrets; print(secrets.token_hex(32))")}
+    volumes:
+      - crowdsec-config:/etc/crowdsec
+      - crowdsec-data:/var/lib/crowdsec/data
+      - caddy-logs:/var/log/caddy:ro
+      - ./crowdsec/acquis.d/caddy.yaml:/etc/crowdsec/acquis.d/caddy.yaml:ro
+      - ./crowdsec/parsers/s02-enrich/caddy-console-safe-fields.yaml:/etc/crowdsec/parsers/s02-enrich/caddy-console-safe-fields.yaml:ro
+    networks:
+      - crowdsec-lapi
+      # Hub downloads at start (COLLECTIONS, PARSERS, scenario data files).
+      - crowdsec-egress
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  caddy-console:
+    environment:
+      CROWDSEC_URL: http://crowdsec:8080
+      CROWDSEC_CONSOLE_BOUNCER_KEY: ${CROWDSEC_CONSOLE_BOUNCER_KEY:?Set CROWDSEC_CONSOLE_BOUNCER_KEY}
+      CROWDSEC_ORIGINS: ${CROWDSEC_ORIGINS:-crowdsec,cscli}
+      CROWDSEC_POLL_INTERVAL: ${CROWDSEC_POLL_INTERVAL:-10}
+      BANS_SYNC_INTERVAL: ${BANS_SYNC_INTERVAL:-30}
+    networks:
+      - crowdsec-lapi
+
+networks:
+  # CrowdSec <-> console only. No other service may join it.
+  crowdsec-lapi:
+    internal: true
+  crowdsec-egress:
+
+volumes:
+  crowdsec-config:
+  crowdsec-data:
+  caddy-logs:

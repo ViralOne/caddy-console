@@ -1,0 +1,21 @@
+# Caddy Console deletes request>headers and resp_headers from the access log
+# (they carry cookies and tokens), so crowdsecurity/caddy-logs finds no
+# User-Agent and no Www-Authenticate header. The console's "CrowdSec: log
+# fields for detection" snippet appends two safe top-level fields instead:
+#   user_agent      the request's User-Agent
+#   auth_challenge  the response's Www-Authenticate (set by basic_auth on a 401)
+# This enricher maps them to what the shipped scenarios read:
+#   crowdsecurity/http-bad-user-agent  evt.Parsed.http_user_agent
+#   crowdsecurity/http-generic-bf      evt.Meta.sub_type == 'auth_fail'
+# (the same rule caddy-logs applies to the unfiltered Www-Authenticate header).
+# It never sees Cookie, Authorization or a body: those are not in the log.
+name: caddy-console/caddy-safe-fields
+description: "Safe User-Agent and Basic auth failure fields from Caddy Console's filtered access log"
+filter: "evt.Meta.log_type == 'http_access-log' && evt.Unmarshaled.caddy != nil && evt.Unmarshaled.caddy.request != nil"
+statics:
+  - parsed: http_user_agent
+    expression: "evt.Parsed.http_user_agent not in ['', nil] ? evt.Parsed.http_user_agent : get(evt.Unmarshaled.caddy, 'user_agent')"
+  - meta: http_user_agent
+    expression: evt.Parsed.http_user_agent
+  - meta: sub_type
+    expression: "evt.Meta.sub_type not in ['', nil] ? evt.Meta.sub_type : (evt.Meta.http_status == '401' && get(evt.Unmarshaled.caddy, 'auth_challenge') != nil && evt.Unmarshaled.caddy.auth_challenge startsWith 'Basic' ? 'auth_fail' : nil)"
