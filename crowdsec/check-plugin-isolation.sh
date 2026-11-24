@@ -37,10 +37,11 @@ except OSError:
     sys.exit(1)' "$2" "$3"
 }
 # Exit 0 when the main process of container $1 has neither CAP_NET_ADMIN (12) nor
-# CAP_NET_RAW (13) in its bounding set (what cap_drop removes; a process can never
-# gain a capability outside it, not even through a setuid or file-capability binary). Caddy accepts a packet for 172.30.250.2
-# on any of its interfaces, so a peer able to write raw frames or routes could
-# address the admin port through a network it shares with Caddy.
+# CAP_NET_RAW (13) in its bounding set: what cap_drop removes, and a process can
+# never gain a capability outside it, not even through a setuid or file-capability
+# binary. Caddy accepts a packet for 172.30.250.2 on any of its interfaces, so a
+# peer able to write raw frames or routes could address the admin port through a
+# network it shares with Caddy.
 no_net_caps() {
   docker run --rm --cap-drop ALL --security-opt no-new-privileges:true --network none --pid "container:$1" \
     --entrypoint /app/.venv/bin/python "$probe_image" -c '
