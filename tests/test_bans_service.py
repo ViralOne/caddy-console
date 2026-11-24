@@ -290,6 +290,19 @@ class JournalRecoveryTest(ServiceCase):
         self.assertIn("bans_recovered", actions())
         self.assertEqual(self.ban("192.0.2.1")[1], 201)
 
+    def test_sites_are_unknown_while_caddy_is_unreachable(self):
+        _bans.write_caddyfile(f"a.example.com {{\n\timport {env.BANS_DIR}/bans-manual*.caddy\n\trespond 200\n}}\n"
+                              "b.example.com {\n\trespond 200\n}\n"
+                              "c.example.com { # caddy-console: management\n\trespond 200\n}\n")
+        self.caddy.down = True
+        sites = {s["label"]: s for s in service.status(None)["sites"]}
+        self.assertEqual(sites["a.example.com"]["status"], "caddy_unreachable")
+        self.assertTrue(sites["a.example.com"]["import"]["present"])
+        self.assertEqual(sites["b.example.com"]["status"], "caddy_unreachable")
+        self.assertIn("unreachable", sites["b.example.com"]["detail"])
+        self.assertNotIn("Save & Reload", sites["b.example.com"]["detail"])
+        self.assertEqual(sites["c.example.com"]["status"], "management")
+
 
 class HoldTest(ServiceCase):
     def test_truncated_policy_enters_hold_until_reapply(self):

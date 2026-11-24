@@ -2,6 +2,8 @@
 // node can test it. Everything returned is plain text; callers render it as
 // text children, never as HTML.
 
+import { absoluteTime, relativeTime } from './format.js';
+
 export const DURATIONS = [
   { id: '4h', label: '4 hours' },
   { id: '24h', label: '24 hours' },
@@ -17,6 +19,11 @@ const PROTECTED = {
 };
 export const protectedLabel = (category) => PROTECTED[category] || 'protected range';
 export const durationLabel = (id) => (DURATIONS.find(d => d.id === id) || {}).label || '';
+
+/** A table time cell: relative text, absolute time for the title tooltip (as the dashboard does). */
+export function createdCell(value, now = Date.now()) {
+  return { text: relativeTime(value, now), title: absoluteTime(value) };
+}
 
 export function expiryLabel(expiresAt, now = Date.now()) {
   if (!expiresAt) return 'Never expires';
@@ -83,6 +90,7 @@ const SITE = {
   imported_empty: ['Imported, no active bans', 'ok'],
   not_imported: ['Not enforced', 'none'],
   not_loaded: ['Not loaded yet', 'none'],
+  caddy_unreachable: ['Unknown while Caddy is unreachable', 'warn'],
   unknown: ['Enforcement not verified', 'warn'],
   management: ['Console site, never banned', 'none'],
   management_imported: ['Console site imports the ban list: lockout risk', 'crit'],
@@ -94,6 +102,7 @@ export function siteStatus(site) {
     enforced_pre_handler: `These run before the ban check: ${(site.pre_handlers || []).join(', ')}. They do not serve the application, but they may redirect or contact an auth service first.`,
     not_imported: 'This site does not import the ban list.',
     not_loaded: 'Save & Reload to load this site into Caddy.',
+    caddy_unreachable: 'The Caddy admin API did not answer, so whether this site enforces the ban list cannot be checked. The import line on disk is shown as it is.',
     management: 'The console is excluded so a ban cannot lock you out.',
     management_imported: 'A ban that matches your address would block the console itself. Remove the import line from this site in the editor, then Save & Reload.',
   }[site.status] || site.detail || '';

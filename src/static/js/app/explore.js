@@ -9,6 +9,7 @@ import { activeKeys, cycleTerm, placeholderFor, setTermState, termState } from '
 import { SLOW_MS, absoluteTime, countryName, durationNote, formatBytes, formatMs, statusText } from './format.js';
 import { CLASSES, Histogram } from './histogram.js';
 import { Icon } from './icons.js';
+import { inDialog, keepsIpPopover } from './ip-info.js';
 import { IpPopover } from './ip-popover.js';
 import { JsonView } from './jsonview.js';
 import { exploreStateFromSearch, exploreStateToSearch, replaceSearch } from './router.js';
@@ -109,13 +110,16 @@ function App() {
     return () => { document.removeEventListener('click', close); document.removeEventListener('keydown', esc); };
   }, [fieldMenu]);
 
-  // The IP popover closes the same way, but clicks inside it must not.
+  // The IP popover closes the same way, but clicks inside it must not. The
+  // Ban/Unban dialogs are outside it (appended to <body>): a click, Esc or
+  // scroll there belongs to the dialog, and the popover must survive it so its
+  // ban state refreshes in place when the dialog completes.
   useEffect(() => {
     if (!ipPop) return;
-    const close = (ev) => { if (!ev.target.closest('.ip-pop, .field-value-click')) setIpPop(null); };
-    const esc = (ev) => { if (ev.key === 'Escape') setIpPop(null); };
+    const close = (ev) => { if (!keepsIpPopover(ev.target)) setIpPop(null); };
+    const esc = (ev) => { if (ev.key === 'Escape' && !inDialog(ev.target)) setIpPop(null); };
     // Fixed-position, so it would float away from its row on scroll.
-    const scroll = (ev) => { if (!ev.target.closest?.('.ip-pop')) setIpPop(null); };
+    const scroll = (ev) => { if (!ev.target.closest?.('.ip-pop') && !inDialog(ev.target)) setIpPop(null); };
     document.addEventListener('click', close);
     document.addEventListener('keydown', esc);
     document.addEventListener('scroll', scroll, true);

@@ -528,13 +528,17 @@ def _site_rows(live, text, prefixes, held) -> list:
                      "pre_handlers": s.pre_handlers, "detail": s.detail,
                      "source": "main" if block else "external", "line": block.start if block else None,
                      "import": imp})
+    unreachable = live is None
+    fallback = "caddy_unreachable" if unreachable else "not_loaded"
+    fallback_detail = ("The Caddy admin API is unreachable, so whether this site enforces the ban list "
+                       "cannot be checked." if unreachable
+                       else "This site block is not in Caddy's running configuration.")
     for b in blocks:
         if b.start not in seen:
             imp = scan.block_import_state(text, b, src.path)
             rows.append({"label": b.hosts[0] if b.hosts else b.addresses[0], "hosts": b.hosts,
-                         "status": _management_status("not_loaded", imp) if set(b.hosts) & management
-                         else "not_loaded",
-                         "pre_handlers": [], "detail": "This site block is not in Caddy's running configuration.",
+                         "status": _management_status(fallback, imp) if set(b.hosts) & management else fallback,
+                         "pre_handlers": [], "detail": fallback_detail,
                          "source": "main", "line": b.start, "import": imp})
     return rows
 
@@ -544,7 +548,7 @@ def _management_status(live_status, imp) -> str:
     list (live) nor imports it (on disk, applied by the next reload). The
     snippet guard is advisory, so a hand-typed import is reported as the
     lockout risk it is, never as safe."""
-    if live_status in ("not_imported", "not_loaded") and not (imp and imp.get("present")):
+    if live_status in ("not_imported", "not_loaded", "caddy_unreachable") and not (imp and imp.get("present")):
         return "management"
     return "management_imported"
 

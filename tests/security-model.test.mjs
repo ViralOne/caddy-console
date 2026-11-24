@@ -147,4 +147,21 @@ for (const f of ['security.js', 'security-model.js', 'ban-dialog.js', 'ip-popove
   check(`${f} never writes HTML`, () =>
     assert.doesNotMatch(fs.readFileSync(p, 'utf8'), /innerHTML|outerHTML|insertAdjacentHTML|dangerouslySetInnerHTML/));
 }
+console.log('\n--- Phase 1 polish ---');
+const F = await import(path.join(APP, 'format.js'));
+check('Created is relative, with the absolute time as its title', () => {
+  const c = M.createdCell('2026-11-23T19:00:00Z', NOW);
+  assert.equal(c.text, '1h ago');
+  assert.equal(c.title, F.absoluteTime('2026-11-23T19:00:00Z'));
+  assert.deepEqual(M.createdCell('garbage', NOW), { text: '', title: '' });
+});
+check('a site is unknown, not "not loaded", while Caddy is unreachable', () => {
+  const s = M.siteStatus({ status: 'caddy_unreachable' });
+  assert.equal(s.label, 'Unknown while Caddy is unreachable');
+  assert.equal(s.tone, 'warn');
+  assert.doesNotMatch(s.detail, /Save & Reload/);
+  assert.match(s.detail, /admin API/);
+  assert.deepEqual(M.siteActions({ status: 'caddy_unreachable', source: 'main', import: { present: true } }), []);
+  assert.deepEqual(M.siteActions({ status: 'caddy_unreachable', source: 'main', import: { present: false } }), ['insert', 'copy']);
+});
 console.log(`\n${passed} passed`);

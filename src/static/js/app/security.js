@@ -9,7 +9,7 @@ import { confirmDialog } from './ui/dialog.js';
 import { toast } from './ui/toast.js';
 import { requestJson as call } from './security-api.js';
 import {
-  DURATIONS, banPayload, errorMessage, expiryLabel, outcomeText, overallState, staleNotice, HOST_RECOVERY_URL,
+  DURATIONS, banPayload, createdCell, errorMessage, expiryLabel, outcomeText, overallState, staleNotice, HOST_RECOVERY_URL,
   protectedLabel, recoveryActionLabel, siteActions, siteStatus,
 } from './security-model.js';
 
@@ -82,7 +82,7 @@ function BanList({ records, onDone }) {
           <td>${r.geo ? [r.geo.country_code, r.geo.asn_org].filter(Boolean).join(' · ') : ''}</td>
           <td class="sec-reason">${r.reason}</td>
           <td>${r.actor}</td>
-          <td>${absoluteTime(r.created_at)}</td>
+          <td title=${createdCell(r.created_at).title}>${createdCell(r.created_at).text}</td>
           <td>${r.expired ? 'Expired, removed at the next cleanup' : expiryLabel(r.expires_at)}</td>
           <td>${r.source === 'manual'
             ? html`<button class="btn sm" type="button" onClick=${() => unban(r)}>Unban</button>`
