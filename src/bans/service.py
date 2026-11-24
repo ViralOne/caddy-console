@@ -885,8 +885,9 @@ def _country_facts():
         return policy, corrupt, None, None, e, prof
 
 
-def country_policy_info() -> dict:
-    policy, corrupt, data, facts, error, prof = _country_facts()
+def country_policy_info(country_facts=None) -> dict:
+    """`country_facts`: a _country_facts() result already read for this request."""
+    policy, corrupt, data, facts, error, prof = country_facts or _country_facts()
     on_disk = fsio.read_bytes(render.COUNTRY.path)
     current = data is not None and on_disk == data
     facts = facts or {"profile": None, "prefixes": policy.dataset.get("prefixes") or {}, "month": None, "warnings": []}
@@ -1236,7 +1237,7 @@ def _read_caddyfile() -> str:
         return ""
 
 
-def _site_rows(live, text, state, now, holds) -> list:
+def _site_rows(live, text, state, now, holds, country_facts=None) -> list:
     """One row per site: the manual policy's result at the top level (the Phase 1
     shape) plus `policies` for every active source. `state` None means the
     stored records are unknown (corrupt), so any managed ban route counts."""
@@ -1262,7 +1263,7 @@ def _site_rows(live, text, state, now, holds) -> list:
         names.append("country")
         if live is not None:
             detected["country"] = detect.country_site_statuses(
-                live, expected_shape=None if "country" in holds else _country_expected_shape())
+                live, expected_shape=None if "country" in holds else _country_expected_shape(country_facts))
     country_after = tuple(render.SOURCES[n].path for n in render.COUNTRY_AFTER if n in render.SOURCES)
 
     def policy(name, status, block, mgmt, found=None):
@@ -1306,10 +1307,10 @@ def _country_rows_wanted(live) -> bool:
     return _country_active() or (live is not None and bool(detect.country_shapes(live)))
 
 
-def _country_expected_shape():
+def _country_expected_shape(country_facts=None):
     """The marker value the current settings render, or None while the policy
     cannot be rendered (the live value is then not compared)."""
-    policy, _, _, facts, error, _ = _country_facts()
+    policy, _, _, facts, error, _ = country_facts or _country_facts()
     if not country.effective_enabled(policy):
         return "off"
     return None if error is not None or facts is None else facts["profile"]
@@ -1445,8 +1446,8 @@ def _age_seconds(stamp):
         return None
 
 
-def _country_status(live, holds) -> dict:
-    info = country_policy_info()
+def _country_status(live, holds, country_facts=None) -> dict:
+    info = country_policy_info(country_facts)
     shapes = detect.country_shapes(live) if live is not None else None
     # Healthy needs the rendered file, the confirmation (Cloudflare) and, when
     # Caddy answers, the same shape running live.
@@ -1493,16 +1494,17 @@ def status(remote_addr) -> dict:
         degraded = {"kind": info["kind"], "reason": info["reason"], "phase": info["phase"], "message": info["summary"]}
     by_source = {name: s["rendered_prefixes"] for name, s in sources.items()}
     text = _read_caddyfile()
+    country_facts = _country_facts()               # the dataset is read once per request
     return {
         "enabled": True, "available": avail.ok,
         "unavailable": None if avail.ok else {"code": avail.code, "message": avail.message},
         "state_version": info["state_version"], "degraded": degraded, "recovery": info,
         "sources": sources,
         "protected": protected_for(state or store.State(), _verified_client(remote_addr)).summary(),
-        "sites": _site_rows(live, text, state, now, holds),
+        "sites": _site_rows(live, text, state, now, holds, country_facts),
         "plugin": _plugin_status(live, state, holds, text),
         "client_ip_profile": _profile_status(live, holds, text),
-        "country_policy": _country_status(live, holds),
+        "country_policy": _country_status(live, holds, country_facts),
         "caddy": caddy,
         "limits": {"max_prefixes": config.BANS_MAX, "used": sum(by_source.values()), "by_source": by_source},
         "last_apply": _last_apply(),

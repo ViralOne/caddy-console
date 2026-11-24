@@ -199,6 +199,15 @@ class CountryApiTest(_bans.ApiCase):
         self.assertIn("RO", info["iso_codes"])
         self.assertEqual(info["dataset"]["month"], "2026-11")
 
+    def test_security_status_reads_the_dataset_once_per_request(self):
+        self.addCleanup(remove_dataset)
+        self.assertEqual(self.put({"enabled": True, "countries": ["RO"]}).status_code, 200)
+        with mock.patch.object(countrydata, "load", wraps=countrydata.load) as load, \
+                mock.patch.object(countrydata, "info", wraps=countrydata.info) as info:
+            r = self.get("/api/security")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((load.call_count, info.call_count), (1, 1))
+
     def test_enabling_direct_writes_state_hash_and_file_in_one_transaction(self):
         self.caddy.calls.clear()
         r = self.put({"enabled": True, "countries": ["RO", "DE"]})
