@@ -40,6 +40,29 @@ running configuration as soon as it can.
 Bans apply to new requests and new connections. Open WebSocket or other
 long-lived connections are not cut.
 
+## Which address is banned
+
+A ban matches Caddy's resolved client address (the `client_ip` matcher), the
+same address Explore shows. That is the visitor's own address only when Caddy
+knows which proxy to trust; without that setup a ban can look right and still
+do nothing, or block the wrong people:
+
+- **Behind Cloudflare Tunnel (or another proxy) without `trusted_proxies`**,
+  every request comes from the private address of `cloudflared` or the proxy.
+  Private ranges are never banned, so no ban ever matches, even though Security
+  can still show the site as Protected: the ban check is in place, it just never
+  sees a public address.
+- **With proxied DNS (the orange cloud) without that setup**, the public
+  addresses Explore shows are Cloudflare edge addresses, not visitors. Banning
+  one, for example `198.51.100.23`, blocks every visitor Cloudflare happens to
+  route through that edge address.
+
+Configure `trusted_proxies` and `client_ip_headers` first, as described in
+[Behind a proxy or tunnel: real client IPs](setup.md#behind-a-proxy-or-tunnel-real-client-ips),
+then check in Explore that visitors show their own addresses before you ban
+any. When the dashboard shows the "Visitors' real IPs are not being logged"
+notice, fix that before relying on bans.
+
 ## Setup
 
 1. Keep the Caddyfile **directory** mounted: read-write in `caddy-console`,
