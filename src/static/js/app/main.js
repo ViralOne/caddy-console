@@ -4,7 +4,7 @@
 import './csrf.js';  // patches window.fetch before init() issues any request
 import { closePreview, restoreFromPreview, rollbackFromPreview } from './backups.js';
 import { init, showView, syncViewFromUrl } from './caddyfile.js';
-import { revealSite } from './core.js';
+import { revealLine, revealSite } from './core.js';
 import { closeAllPanels, closePanel, togglePanel } from './panels.js';
 import { interceptLinks, onNavigate } from './router.js';
 import { closeSearch, doSearch, replaceAll, replaceOne, searchNext, searchPrev, toggleSearch } from './search.js';
@@ -76,6 +76,12 @@ watchSystemTheme();
 document.addEventListener('app:open-site', (e) => {
   showView('editor');
   revealSite(e.detail.host);
+});
+
+// Security "Add import in editor": Task 14 turns this into a context-aware insertion.
+document.addEventListener('app:insert-ban-import', (e) => {
+  showView('editor');
+  revealLine(e.detail.line);
 });
 
 syncViewFromUrl();

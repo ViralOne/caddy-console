@@ -99,4 +99,11 @@ check('a query with quoted spaces survives the round trip', () => {
   assert.deepEqual(exploreStateFromSearch('?' + exploreStateToSearch(want)), want);
 });
 
+console.log('\n--- security ---');
+check('security has its own path', () => {
+  assert.equal(viewFromPath('/security'), 'security');
+  assert.equal(viewFromPath('/security/'), 'security');
+  assert.equal(pathFor('security'), '/security');
+});
+
 console.log(`\n${passed} checks passed\n`);

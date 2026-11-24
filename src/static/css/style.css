@@ -551,3 +551,24 @@ details.raw[open]{flex-basis:100%}
   .dlg-ft .note{flex-basis:100%}
 }
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* Security view (src/static/js/app/security.js) */
+.sec-add{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:16px}
+.sec-add label{display:flex;flex-direction:column;gap:4px;font-size:var(--t-sm);color:var(--ink-2)}
+.sec-add label.grow{flex:1 1 220px}
+.sec-error{flex-basis:100%;margin:0;color:var(--crit);font-size:var(--t-sm)}
+.sec-table{width:100%;border-collapse:collapse;font-size:var(--t-sm)}
+.sec-table th,.sec-table td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+.sec-table tr.expired{color:var(--ink-3)}
+.sec-reason{white-space:pre-wrap;overflow-wrap:anywhere;max-width:32ch}
+.sec-tag{font-size:var(--t-xs);color:var(--warn)}
+.sec-sites{list-style:none;margin:0;padding:0}
+.sec-sites li{display:grid;grid-template-columns:minmax(160px,1fr) minmax(160px,auto) auto;gap:4px 12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.sec-sites li .muted{grid-column:1/-1}
+.sec-sites .tone-ok .sec-state{color:var(--good)} .sec-sites .tone-warn .sec-state{color:var(--warn)}
+.sec-protected{display:grid;gap:8px;margin:0}
+.sec-protected div{display:grid;grid-template-columns:220px 1fr;gap:12px}
+.sec-protected dt{color:var(--ink-3)} .sec-protected dd{margin:0;overflow-wrap:anywhere}
+.sec-recovery{padding:14px 18px;border-radius:var(--r-md);border:1px solid color-mix(in srgb,var(--crit) 25%,transparent);margin-bottom:20px}
+.sec-recovery .acts{display:flex;gap:8px;flex-wrap:wrap}
+@media (max-width:640px){.sec-table thead{display:none}.sec-table td{display:block;border:0;padding:2px 0}.sec-table tr{display:block;padding:8px 0;border-bottom:1px solid var(--line)}.sec-protected div,.sec-sites li{grid-template-columns:1fr}}
