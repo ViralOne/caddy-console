@@ -113,6 +113,14 @@ class SelfTestTest(unittest.TestCase):
             self.assertFalse(locks.self_test(tempfile.mkdtemp()))
         self.assertIn("does not exclude", "\n".join(logs.output))
 
+    def test_an_unusable_directory_is_reported_as_such(self):
+        missing = os.path.join(tempfile.mkdtemp(), "nope")
+        with self.assertLogs(locks.log, "WARNING") as logs:
+            self.assertFalse(locks.self_test(missing))
+        text = "\n".join(logs.output)
+        self.assertIn("cannot be opened or written", text)
+        self.assertNotIn("does not exclude", text)
+
 
 class LeaderLockTest(unittest.TestCase):
     def test_the_local_lock_decides_leadership_across_split_views(self):
@@ -133,6 +141,48 @@ class LeaderLockTest(unittest.TestCase):
         leader = sync.Leadership(shared, local_dir=tempfile.mkdtemp())
         self.assertFalse(leader.try_acquire())
         leader.release()
+
+
+class StepDownTest(unittest.TestCase):
+    def test_a_stood_down_worker_keeps_the_local_lock_and_drops_the_shared_one(self):
+        shared, local = os.path.join(tempfile.mkdtemp(), "bans-sync.lock"), tempfile.mkdtemp()
+        mine = sync.Leadership(shared, local_dir=local)
+        self.assertTrue(mine.try_acquire())
+        mine.stand_down()
+        self.addCleanup(mine.release)
+        sibling = sync.Leadership(shared, local_dir=local)
+        self.assertFalse(sibling.try_acquire(), "a sibling in this container must not take over")
+        other_container = sync.Leadership(shared, local_dir=tempfile.mkdtemp())
+        self.assertTrue(other_container.try_acquire(), "the shared lock was given up")
+        self.assertFalse(mine.try_acquire(), "re-acquiring the shared lock fails while held elsewhere")
+        other_container.release()
+        self.assertTrue(mine.try_acquire())
+        self.assertFalse(mine.stood_down)
+
+    def test_no_leadership_while_a_leader_on_another_host_reports(self):
+        s = sync.Synchronizer()
+        s._write()
+        self.assertFalse(sync.foreign_host_live(), "our own host")
+        doc = syncstate.read()
+        doc.update(leader_host="another-container", updated_at=syncstate_now())
+        syncstate.write(doc)
+        self.assertTrue(sync.foreign_host_live())
+        doc["updated_at"] = "2000-01-01T00:00:00Z"
+        syncstate.write(doc)
+        self.assertFalse(sync.foreign_host_live(), "a stale report does not block")
+
+    def test_the_loop_does_not_acquire_while_a_foreign_host_reports(self):
+        s = sync.Synchronizer()
+        s._write()
+        doc = syncstate.read()
+        doc.update(leader_host="another-container", updated_at=syncstate_now())
+        syncstate.write(doc)
+        stop, acquired = threading.Event(), []
+        threading.Timer(0.2, stop.set).start()
+        with mock.patch.object(sync.Leadership, "try_acquire", lambda self_: acquired.append(1) or True), \
+                mock.patch.object(config, "CROWDSEC_POLL_INTERVAL", 0.01):
+            jobs._sync_loop(stop)
+        self.assertEqual(acquired, [])
 
 
 class SecondLeaderTest(unittest.TestCase):

@@ -51,7 +51,7 @@ def _sync_loop(stop) -> None:
         try:
             if stood_down and sync.foreign_leader_live(stood_down):
                 pass                                 # the other leader still reports: stay a follower
-            elif leader.try_acquire():
+            elif not sync.foreign_host_live() and leader.try_acquire():
                 stood_down = None
                 if synchronizer is None:
                     synchronizer = sync.Synchronizer()
@@ -63,7 +63,7 @@ def _sync_loop(stop) -> None:
                     log.error("IP bans: a second CrowdSec sync leader wrote the status file; worker %d steps "
                               "down until that leader stops reporting. Check that BACKUP_DIR is a local "
                               "filesystem and that only one console container uses it.", os.getpid())
-                    leader.release()
+                    leader.stand_down()
                     synchronizer, stood_down = None, synchronizer.nonce
                 else:
                     synchronizer.step()

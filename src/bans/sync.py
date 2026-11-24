@@ -46,6 +46,7 @@ class Leadership:
     def __init__(self, path=None, local_dir=None):
         self.path, self.local_dir = path or LOCK_PATH, local_dir
         self.fd = self.shared_fd = None
+        self.stood_down = False                  # holds the local lock only
 
     def _local(self) -> str:
         if self.local_dir:
@@ -54,6 +55,12 @@ class Leadership:
 
     def try_acquire(self) -> bool:
         if self.fd is not None:
+            if not self.stood_down:
+                return True
+            shared_fd, held_elsewhere = locks.shared_flock(self.path, blocking=False)
+            if held_elsewhere:
+                return False
+            self.shared_fd, self.stood_down = shared_fd, False
             return True
         fd = os.open(self._local(), os.O_CREAT | os.O_RDWR, 0o600)
         try:
@@ -71,7 +78,18 @@ class Leadership:
         self.fd, self.shared_fd = fd, shared_fd
         return True
 
+    def stand_down(self) -> None:
+        """Give up the shared BACKUP_DIR lock but keep the container-local one, so
+        sibling workers in this container do not take over while another
+        container's leader reports."""
+        if self.shared_fd is not None:
+            os.close(self.shared_fd)
+            self.shared_fd = None
+        if self.fd is not None:
+            self.stood_down = True
+
     def release(self) -> None:
+        self.stood_down = False
         for name in ("shared_fd", "fd"):
             fd = getattr(self, name)
             if fd is not None:
@@ -85,11 +103,24 @@ def foreign_leader_live(nonce) -> bool:
     doc = syncstate.read()
     if doc is None or doc.get("leader_nonce") in (None, nonce):
         return False
+    return _fresh(doc)
+
+
+def _fresh(doc) -> bool:
     try:
         age = (store.utc_now() - store.parse_iso(doc["updated_at"])).total_seconds()
     except (KeyError, TypeError, ValueError):
         return False
     return age <= STALE_POLLS * config.CROWDSEC_POLL_INTERVAL + config.BANS_SYNC_INTERVAL
+
+
+def foreign_host_live() -> bool:
+    """Is a fresh status report written by a leader on a different host (another
+    container on this BACKUP_DIR)? Then this container must not lead."""
+    doc = syncstate.read()
+    if doc is None or doc.get("leader_host") in (None, socket.gethostname()):
+        return False
+    return _fresh(doc)
 
 
 def _audit(action, detail) -> None:
