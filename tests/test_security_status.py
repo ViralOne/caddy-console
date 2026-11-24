@@ -119,5 +119,32 @@ class StatusTest(_bans.ApiCase):
         self.assertIn("cloudflare-trusted-proxies.caddy", [d["file"] for d in block["dependencies"]])
 
 
+class SnippetTest(_bans.ApiCase):
+    def snippets(self):
+        body = self.get("/api/snippets").get_json()
+        return {s.get("id") or s["name"]: s for s in body["snippets"]}, body["context"]
+
+    def test_cloudflare_snippets_replace_the_ambiguous_one(self):
+        by_id, ctx = self.snippets()
+        self.assertNotIn("Cloudflare Only", by_id)
+        self.assertEqual(by_id["cloudflare-proxied-real-ip"]["name"], "Cloudflare proxied DNS: real client IP")
+        self.assertEqual(by_id["cloudflare-tunnel-real-ip"]["name"], "Cloudflare Tunnel: real client IP")
+        self.assertEqual(by_id["country-policy-site"]["code"], f"import {config.BANS_DIR}/geo*.caddy\n")
+        self.assertIn(f"import {config.BANS_DIR}/cloudflare-trusted-proxies*.caddy\n",
+                      by_id["cloudflare-proxied-real-ip"]["code"])
+        self.assertEqual((ctx["client_ip"]["mode"], ctx["client_ip"]["peers"]), ("direct", []))
+
+    def test_origin_guard_carries_the_current_edge_ranges_and_never_a_header(self):
+        self.assertEqual(self.put("/api/security/client-ip-profile", {"mode": "cloudflare-proxied"}).status_code, 200)
+        by_id, ctx = self.snippets()
+        guard = by_id["cloudflare-origin-guard"]["code"]
+        self.assertEqual(ctx["client_ip"]["mode"], "cloudflare-proxied")
+        self.assertTrue(ctx["client_ip"]["current"])
+        for net in ctx["client_ip"]["ranges"]:
+            self.assertIn(net, guard)
+        self.assertIn("remote_ip", guard)
+        self.assertNotRegex(guard, r"(?i)header|client_ip|X-Forwarded")
+
+
 if __name__ == "__main__":
     unittest.main()

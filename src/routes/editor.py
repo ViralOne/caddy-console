@@ -18,7 +18,7 @@ from .. import config
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
 from ..bans import lapi as bans_lapi, render as bans_render, scan as bans_scan, txn as bans_txn
-from ..bans import plugin as bans_plugin, profile as bans_profile, protected as bans_protected
+from ..bans import cfranges as bans_cfranges, plugin as bans_plugin, profile as bans_profile, protected as bans_protected
 from ..caddy_api import get_servers, invalidate_servers_cache
 from ..config import (
     APP_VERSION,
@@ -631,12 +631,17 @@ def get_snippets():
             return False
         return s.get("key_mode") in (None, mode)
     snippets = [s for s in snippets if offered(s)]
+    client_ip = bans_service.client_ip_snippet_context()
     bans_dir = config.BANS_DIR.rstrip("/")
     for s in snippets:
         if s.get("phase"):
             s["code"] = s["code"].replace("/etc/caddy/console/", bans_dir + "/")
         if s.get("id") == "crowdsec-plugin-global-file":
             s["code"] = s["code"].replace(bans_plugin.DEFAULT_KEY_FILE, bans_plugin.key_file())
+        elif s.get("id") == "cloudflare-origin-guard":
+            s["code"] = s["code"].replace(" ".join(bans_cfranges.BUNDLED["v4"] + bans_cfranges.BUNDLED["v6"]),
+                                          " ".join(client_ip["ranges"]) or " ".join(bans_cfranges.BUNDLED["v4"]
+                                                                                    + bans_cfranges.BUNDLED["v6"]))
         elif s.get("id") == "crowdsec-plugin-allowlist":
             s["code"] = bans_plugin.allowlist_commands(
                 bans_protected.build(never=bans_service.never_networks(), docker=bans_protected.read_docker_networks()))
@@ -645,4 +650,5 @@ def get_snippets():
         "crowdsec": crowdsec,
         "management_hosts": sorted(bans_scan.management_hosts(text, bans_scan.console_host())),
         "plugin": plugin_ctx,
+        "client_ip": client_ip,
     }})

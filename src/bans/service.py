@@ -1529,6 +1529,17 @@ def expire_tick(now=None) -> str:
     return "applied" if outcome.ok else outcome.code
 
 
+def client_ip_snippet_context() -> dict:
+    """What the Cloudflare snippets need before they may be inserted: the saved
+    profile mode, whether its trusted proxies file is current, the trusted peers
+    and the Cloudflare ranges to put into the origin guard."""
+    info = client_ip_profile_info()
+    ranges = info["ranges"]
+    return {"mode": info["mode"], "current": bool(info["current"] and not info["corrupt"]),
+            "peers": info["trusted_peers"], "tunnel_only": info["tunnel_only"],
+            "ranges": list(ranges["v4"]) + list(ranges["v6"])}
+
+
 def plugin_snippet_context(text):
     """What the editor needs to place the plugin snippets (spec 3.6), or None
     when they are not offered (CrowdSec off, or a build without the module)."""

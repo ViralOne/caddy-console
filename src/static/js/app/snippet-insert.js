@@ -27,10 +27,17 @@ export function importMatches(token, target) {
 /** Mirrors render.AFTER in src/bans/render.py: the CrowdSec import may follow the manual one. */
 export const IMPORT_AFTER = { crowdsec: ['manual'] };
 export const SOURCE_FILES = { manual: 'bans-manual.caddy', crowdsec: 'bans-crowdsec.caddy' };
+/** Mirrors render.COUNTRY and render.COUNTRY_AFTER: the country import follows the ban imports. */
+export const COUNTRY_FILE = 'geo.caddy';
+export const COUNTRY_IMPORT_AFTER = ['manual', 'crowdsec'];
 
 const stripComment = (raw) => String(raw ?? '').replace(/(^|\s)#.*$/, '').trim();
 
-export function planSiteInsertion(text, cursorLine, code, { target, managementHosts = [], after = [], snippetName = null } = {}) {
+/** Every code line indented; blank lines stay empty. */
+const indented = (code, indent) => String(code).trim().split('\n').map(l => (l ? indent + l : l)).join('\n');
+
+/** `marker`: a first token (such as `@name`) that identifies a snippet that is not an import. */
+export function planSiteInsertion(text, cursorLine, code, { target, managementHosts = [], after = [], snippetName = null, marker = null } = {}) {
   const lines = String(text).split('\n');
   const block = siteBlocks(text).find(b => cursorLine >= b.start && cursorLine <= b.end);
   if (!block) return { ok: false, reason: 'outside-site' };
@@ -39,7 +46,8 @@ export function planSiteInsertion(text, cursorLine, code, { target, managementHo
   // Interior lines are block.start + 1 .. block.end - 1 (1-based); lines[] is 0-based.
   for (let n = block.start + 1; n <= block.end - 1; n++) {
     const m = stripComment(lines[n - 1]).match(/^import\s+(\S+)/);
-    if (m && (snippetName ? m[1] === snippetName : importMatches(m[1], target))) return { ok: false, reason: 'duplicate', block, line: n };
+    if (marker ? stripComment(lines[n - 1]).split(/\s+/)[0] === marker
+      : m && (snippetName ? m[1] === snippetName : importMatches(m[1], target))) return { ok: false, reason: 'duplicate', block, line: n };
   }
   // `after`: managed imports that may lead the block (the CrowdSec import goes
   // directly after the manual one). Skip a leading run of them, if any.
@@ -54,11 +62,11 @@ export function planSiteInsertion(text, cursorLine, code, { target, managementHo
   if (lead > 0) {
     const prev = kids[lead - 1];
     const indent = lines[prev - 1].match(/^\s*/)[0];
-    return { ok: true, block, line: prev + 1, text: indent + String(code).trim() + '\n' };
+    return { ok: true, block, line: prev + 1, text: indented(code, indent) + '\n' };
   }
   const firstChild = lines.slice(block.start, block.end - 1).find(l => stripComment(l));
   const indent = (firstChild && firstChild.match(/^\s*/)[0]) || '\t';
-  const body = indent + String(code).trim();
+  const body = indented(code, indent);
   // The opening line is the last line of the buffer: there is no line below to insert before.
   if (block.start >= lines.length) return { ok: true, block, line: block.start + 1, text: '\n' + body, atEnd: true };
   return { ok: true, block, line: block.start + 1, text: body + '\n' };
@@ -133,4 +141,46 @@ export function pluginGate(snippet, ctx) {
     if (!ctx.definition_import || !ctx.definition_current) return 'plugin-definition-missing';
   }
   return null;
+}
+
+/** The snippet's profile mode against the saved client-IP profile (spec 4.4), or null. */
+export function clientIpGate(snippet, ctx) {
+  if (!snippet.requires_mode) return null;
+  if (!ctx) return 'client-ip-unavailable';
+  if (ctx.mode !== snippet.requires_mode) return 'client-ip-mode';
+  if (snippet.insert === 'servers' && !ctx.current) return 'client-ip-stale';
+  if (snippet.requires_mode === 'cloudflare-tunnel' && !(ctx.peers || []).length) return 'client-ip-peer';
+  return null;
+}
+
+/** Insert code lines into the bare `servers { }` block of the global options, creating it (and the options) when
+ *  missing. Lines already present in that block are skipped; nothing new is a duplicate. `target`: the managed
+ *  file whose import counts as present. */
+export function planServersInsertion(text, code, { target } = {}) {
+  const want = String(code).trim().split('\n').map(l => l.trim()).filter(Boolean);
+  const g = globalOptionsBlock(text);
+  const lines = String(text).split('\n');
+  const inner = g ? depthLines(text).filter(l => l.n > g.start && l.n < g.end) : [];
+  const at = inner.findIndex(l => l.depth === 1 && /^servers\s*\{$/.test(l.line));
+  if (at < 0) {
+    const block = ['servers {', ...want.map(l => '\t' + l), '}'];
+    if (!g) return { ok: true, line: 1, text: '{\n' + block.map(l => '\t' + l).join('\n') + '\n}\n\n' };
+    const first = inner.find(l => l.depth === 1);
+    const indent = (first && lines[first.n - 1].match(/^\s*/)[0]) || '\t';
+    return { ok: true, line: g.end, text: block.map(l => indent + l).join('\n') + '\n' };
+  }
+  const open = inner[at];
+  // The block's own lines sit one level deeper; its closing brace is the first `}` at that level.
+  const after = inner.slice(at + 1);
+  const end = after.findIndex(l => l.depth === 2 && l.line.startsWith('}'));
+  if (end < 0) return { ok: false, reason: 'servers-unclosed', line: open.n };
+  const kids = after.slice(0, end).filter(l => l.depth === 2);
+  const has = (w) => kids.some((k) => {
+    const m = w.match(/^import\s+(\S+)/), km = k.line.match(/^import\s+(\S+)/);
+    return m ? !!km && importMatches(km[1], target) : k.line === w;
+  });
+  const missing = want.filter(w => !has(w));
+  if (!missing.length) return { ok: false, reason: 'duplicate', line: open.n };
+  const indent = kids.length ? lines[kids[0].n - 1].match(/^\s*/)[0] : lines[open.n - 1].match(/^\s*/)[0] + '\t';
+  return { ok: true, line: after[end].n, text: missing.map(l => indent + l).join('\n') + '\n' };
 }
