@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.join(import.meta.dirname, '..');
-const { IMPORT_AFTER, SOURCE_FILES, globToRegExp, importMatches, planSiteInsertion } = await import(path.join(ROOT, 'src', 'static', 'js', 'app', 'snippet-insert.js'));
+const { IMPORT_AFTER, PLUGIN_IMPORT_AFTER, PLUGIN_SNIPPET, SOURCE_FILES, globToRegExp, globalOptionsBlock, importMatches, planGlobalOptionInsertion, planSiteInsertion, planTopLevelInsertion, pluginGate } = await import(path.join(ROOT, 'src', 'static', 'js', 'app', 'snippet-insert.js'));
 let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
 
@@ -70,7 +70,7 @@ check('the site snippet carries the spec metadata', () => {
   });
 });
 check('scopes: ban imports insert first in a site, everything else is copy only', () => {
-  for (const s of snippets.filter(x => x.scope)) {
+  for (const s of snippets.filter(x => x.scope && x.phase !== 'plugin')) {
     const importsBans = s.scope === 'site' && /^import \S*bans-\w+\*\.caddy\n$/.test(s.code);
     assert.equal(s.insert, importsBans ? 'site-first' : 'copy-only', s.id);
   }
@@ -114,5 +114,79 @@ check('IMPORT_AFTER mirrors render.AFTER in src/bans/render.py', () => {
 check('SOURCE_FILES mirrors the PolicySource file names', () => {
   const py = fs.readFileSync(path.join(ROOT, 'src', 'bans', 'render.py'), 'utf8');
   for (const [name, file] of Object.entries(SOURCE_FILES)) assert.match(py, new RegExp(`"${name}": PolicySource\\("${name}", "${file}"`));
+});
+console.log('\n--- CrowdSec plugin scopes ---');
+const FIX = path.join(ROOT, 'tests', 'fixtures', 'plugin');
+const fixture = (n) => fs.readFileSync(path.join(FIX, n), 'utf8');
+const byId = Object.fromEntries(snippets.filter(s => s.id).map(s => [s.id, s]));
+const DIR = '/etc/caddy/console';
+const DEF_T = `${DIR}/crowdsec-plugin-protect.caddy`;
+const SITE_OPTS = { snippetName: PLUGIN_SNIPPET, managementHosts: ['console.example.com'],
+  after: PLUGIN_IMPORT_AFTER.map(a => `${DIR}/${SOURCE_FILES[a]}`) };
+const insertAll = (text, globalId) => {
+  let t = applyPlan(text, planGlobalOptionInsertion(text, byId[globalId].code));
+  t = applyPlan(t, planTopLevelInsertion(t, byId['crowdsec-plugin-definition'].code, { target: DEF_T }));
+  const site = t.split('\n').indexOf('plugin.example.com {') + 1;
+  return applyPlan(t, planSiteInsertion(t, site, byId['crowdsec-plugin-site'].code, SITE_OPTS));
+};
+check('the shipped plugin snippets produce exactly the adapted fixtures, in both secret modes', () => {
+  assert.equal(insertAll(fixture('base.Caddyfile'), 'crowdsec-plugin-global-env'), fixture('env.Caddyfile'));
+  assert.equal(insertAll(fixture('base.Caddyfile'), 'crowdsec-plugin-global-file'), fixture('file.Caddyfile'));
+});
+check('the global options block is found, and created when missing', () => {
+  assert.deepEqual(globalOptionsBlock(fixture('base.Caddyfile')), { start: 1, end: 5 });
+  assert.equal(globalOptionsBlock('a.example.com {\n}\n'), null);
+  assert.equal(globalOptionsBlock('# c\n\n{\n\tdebug\n}\n').start, 3);
+  const p = planGlobalOptionInsertion('a.example.com {\n\trespond 200\n}\n', 'order crowdsec first\n');
+  assert.deepEqual([p.ok, p.line, p.text], [true, 1, '{\n\torder crowdsec first\n}\n\n']);
+});
+check('the global app is never inserted twice', () => {
+  const env = fixture('env.Caddyfile');
+  const p = planGlobalOptionInsertion(env, byId['crowdsec-plugin-global-file'].code);
+  assert.deepEqual([p.ok, p.reason, p.line], [false, 'duplicate-global', 5]);
+});
+check('the definition goes below the global options, once, at top level only', () => {
+  const env = fixture('env.Caddyfile');
+  assert.equal(planTopLevelInsertion(env, byId['crowdsec-plugin-definition'].code, { target: DEF_T }).reason, 'duplicate');
+  const bare = 'a.example.com {\n\trespond 200\n}\n';
+  const p = planTopLevelInsertion(bare, byId['crowdsec-plugin-definition'].code, { target: DEF_T });
+  assert.deepEqual([p.line, p.text], [1, `import ${DIR}/crowdsec-plugin-protect*.caddy\n\n`]);
+  const end = planTopLevelInsertion('{\n\tdebug\n}', byId['crowdsec-plugin-definition'].code, { target: DEF_T });
+  assert.deepEqual([end.line, end.atEnd, end.text], [4, true, `\n\nimport ${DIR}/crowdsec-plugin-protect*.caddy`]);
+  // An import of the definition inside a site is not a top-level duplicate.
+  const inSite = `a.example.com {\n\timport ${DIR}/crowdsec-plugin-protect*.caddy\n}\n`;
+  assert.equal(planTopLevelInsertion(inSite, byId['crowdsec-plugin-definition'].code, { target: DEF_T }).ok, true);
+});
+check('the site import follows the ban imports, is matched by name, and never goes into the console site', () => {
+  const env = fixture('env.Caddyfile');
+  const site = env.split('\n').indexOf('plugin.example.com {') + 1;
+  assert.equal(planSiteInsertion(env, site, 'import protect_crowdsec\n', SITE_OPTS).reason, 'duplicate');
+  const file = env.split('\n').indexOf('file.example.com {') + 1;
+  const p = planSiteInsertion(env, file, 'import protect_crowdsec\n', SITE_OPTS);
+  assert.deepEqual([p.ok, p.line], [true, file + 3], 'after the manual and CrowdSec file imports');
+  assert.equal(planSiteInsertion(CF, 29, 'import protect_crowdsec\n', SITE_OPTS).reason, 'management-site');
+  // Without snippetName the name is never a duplicate of a file glob (old behaviour kept).
+  assert.equal(importMatches('protect_crowdsec', DEF_T), false);
+});
+check('plugin snippets are offered only when their prerequisites hold', () => {
+  const ok = { module: true, blocked: '', app_live: true, definition_import: true, definition_current: true };
+  const site = byId['crowdsec-plugin-site'];
+  const def = byId['crowdsec-plugin-definition'];
+  const glob = byId['crowdsec-plugin-global-env'];
+  assert.equal(pluginGate(site, ok), null);
+  assert.equal(pluginGate(site, null), 'plugin-unavailable');
+  assert.equal(pluginGate(glob, { ...ok, module: false }), 'plugin-module-missing');
+  assert.equal(pluginGate(glob, { ...ok, module: null }), null, 'unknown build: Check will tell');
+  assert.equal(pluginGate(glob, { ...ok, blocked: 'Caddy admin listens on every interface' }), 'plugin-blocked');
+  assert.equal(pluginGate(def, { ...ok, definition_current: false }), 'plugin-definition-stale');
+  assert.equal(pluginGate(site, { ...ok, app_live: false }), 'plugin-app-missing');
+  assert.equal(pluginGate(site, { ...ok, definition_import: false }), 'plugin-definition-missing');
+  assert.equal(pluginGate(site, { ...ok, definition_current: false }), 'plugin-definition-missing');
+  assert.equal(pluginGate(glob, { ...ok, app_live: false, definition_import: false }), null);
+});
+check('plugin snippet scopes', () => {
+  assert.deepEqual(['crowdsec-plugin-global-env', 'crowdsec-plugin-global-file', 'crowdsec-plugin-definition',
+    'crowdsec-plugin-site', 'crowdsec-plugin-allowlist'].map(id => [byId[id].scope, byId[id].insert]),
+  [['global', 'global-options'], ['global', 'global-options'], ['top-level', 'top-level'], ['site', 'site-first'], ['host', 'copy-only']]);
 });
 console.log(`\n${passed} passed`);
