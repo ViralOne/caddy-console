@@ -60,3 +60,29 @@ for combo in "docker-compose.prod.yaml docker-compose.crowdsec.yaml docker-compo
 done
 # The baseline files still render without any plugin variable.
 unset CROWDSEC_PLUGIN_BOUNCER_KEY CADDY_PLUGIN_IMAGE
+
+# Portainer single-file stacks: self-contained (no repo bind mounts), same checks as the overlays.
+export CADDY_CONSOLE_IMAGE=ghcr.io/example/caddy-console:sha-0000000 CROWDSEC_CONSOLE_BOUNCER_KEY=dummy-check-key \
+  CROWDSEC_PLUGIN_BOUNCER_KEY=dummy-plugin-key
+for combo in "docker-compose.nas.crowdsec.portainer.yaml crowdsec" \
+             "docker-compose.nas.crowdsec-plugin.portainer.yaml crowdsec-cloudflare"; do
+  read -r f variant <<<"$combo"
+  image="ghcr.io/viralone/caddy-$variant:sha-0000000"
+  out=$(CADDY_PLUGIN_IMAGE="$image" docker compose -f "$f" config --format json 2>/dev/null)
+  if grep -q '"extends"' "$f" || grep -Eq '^\s*- \./|^\s*- \.\./' "$f"; then
+    echo "$f is not self-contained" >&2; exit 1
+  fi
+  if [ "$variant" = crowdsec ]; then
+    python3 dev/check-crowdsec-overlay.py caddy caddy-editor <<<"$out" || { echo "$f: check failed" >&2; exit 1; }
+  else
+    python3 dev/check-crowdsec-overlay.py caddy caddy-editor --plugin <<<"$out" || { echo "$f: check failed" >&2; exit 1; }
+    python3 dev/check-plugin-overlay.py caddy caddy-editor "$variant" <<<"$out" || { echo "$f: plugin check failed" >&2; exit 1; }
+  fi
+  python3 -c '
+import json,sys
+c=json.loads(sys.stdin.read())
+bad=[p for s in c["services"].values() for p in (s.get("ports") or []) if str(p.get("target")) in ("8080","2019") or str(p.get("published")) in ("8080","2019")]
+sys.exit("published 8080/2019: %s" % bad if bad else 0)' <<<"$out" || { echo "$f: published 8080/2019" >&2; exit 1; }
+  echo "$f: ok"
+done
+unset CROWDSEC_PLUGIN_BOUNCER_KEY CADDY_PLUGIN_IMAGE

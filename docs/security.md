@@ -253,6 +253,8 @@ different values leave CrowdSec refusing the console's key. On the NAS, copy
 `docker-compose.crowdsec.nas.yaml` as well: its `crowdsec` service extends the
 shipped overlay, so point its `extends.file` at your copy and make the same
 console change under `caddy-editor`.
+Portainer (NAS, no checkout): paste the single file `docker-compose.nas.crowdsec.portainer.yaml`
+(file sync) or `docker-compose.nas.crowdsec-plugin.portainer.yaml` (plugin); acquisition and parser are inline `configs`.
 The `crowdsec/` directory of this repository must sit next to the Compose
 files: the overlay mounts its acquisition and parser files read-only.
 

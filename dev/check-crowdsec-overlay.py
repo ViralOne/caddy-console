@@ -47,7 +47,10 @@ def main(caddy, console, plugin=False):
     if not env.get("BOUNCER_KEY_caddy_console") or env.get("BOUNCER_KEY_caddy_console") != cenv.get("CROWDSEC_CONSOLE_BOUNCER_KEY"):
         problems.append("BOUNCER_KEY_caddy_console and the console's CROWDSEC_CONSOLE_BOUNCER_KEY differ or are empty")
     mounts = {v.get("target"): v for v in cs.get("volumes") or []}
-    problems += [f"{t} is not mounted read-only" for t in MOUNTS if not (mounts.get(t) or {}).get("read_only")]
+    # A Compose config (inline `content:` or file) is always mounted read-only.
+    cfgs = {c.get("target") for c in cs.get("configs") or [] if isinstance(c, dict)}
+    problems += [f"{t} is not mounted read-only" for t in MOUNTS
+                 if t not in cfgs and not (mounts.get(t) or {}).get("read_only")]
     if problems:
         sys.exit("\n".join(problems))
 
