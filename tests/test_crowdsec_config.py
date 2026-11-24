@@ -44,9 +44,19 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(lapi.parse_url(" http://crowdsec:8080/ "), "http://crowdsec:8080")
         self.assertEqual(lapi.parse_url("https://lapi.example.com"), "https://lapi.example.com")
         for bad in ("crowdsec:8080", "ftp://crowdsec", "http://user:pw@crowdsec:8080", "http://crowdsec:8080/v1",
-                    "http://crowdsec:8080?x=1", "http://crowdsec:99999", "http://"):
+                    "http://crowdsec:8080?x=1", "http://crowdsec:99999", "http://", "http://crowdsec:", "http://crow dsec:8080",
+                    "http://crowdsec:8080#frag"):
             with self.subTest(bad=bad), self.assertRaises(lapi.ConfigError):
                 lapi.parse_url(bad)
+
+    def test_url_error_never_echoes_the_value(self):
+        for bad in ("http://user:pw@crowdsec:8080", "http://crowdsec:8080?token=s3cret", "http://crowdsec:8080/s3cret",
+                    "ftp://s3cret", "http://crowdsec:s3cret", "http://crowdsec:8080#s3cret"):
+            with self.subTest(bad=bad), self.assertRaises(lapi.ConfigError) as cm:
+                lapi.parse_url(bad)
+            self.assertNotIn("s3cret", str(cm.exception))
+            self.assertNotIn("pw", str(cm.exception))
+            self.assertNotIn("crowdsec:8080", str(cm.exception))
 
     def test_origins(self):
         self.assertEqual(lapi.parse_origins("crowdsec,cscli"), ("crowdsec", "cscli"))
@@ -110,7 +120,7 @@ class GoDurationTest(unittest.TestCase):
                 self.assertAlmostEqual(lapi.parse_go_duration(text), seconds, places=9)
 
     def test_invalid(self):
-        for bad in ("", "h", "4", "4d", "4h ", " 4h", "--1s", "1e3s", "1h" * 33, "999999999h", "1.2.3s", None, 5):
+        for bad in ("", "h", "4", "4d", "4h ", " 4h", "--1s", "1e3s", "1h" * 33, "999999999h", "1.2.3s", "\u0663h", "1\u0663s", None, 5):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 lapi.parse_go_duration(bad)
 

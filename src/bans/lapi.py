@@ -21,17 +21,33 @@ class ConfigError(ValueError):
 
 
 def parse_url(raw) -> str:
+    """Validate CROWDSEC_URL. Errors name the offending part, never the value:
+    it may carry credentials and ends up in startup logs."""
     text = (raw or "").strip().rstrip("/")
     if not text:
         return ""
-    parts = urlsplit(text)
+    problem = None
     try:
-        port_ok = parts.port is None or 0 < parts.port < 65536
+        parts = urlsplit(text)
+        port = parts.port
+        if parts.scheme not in ("http", "https"):
+            problem = "scheme (only http and https)"
+        elif not parts.hostname or any(c.isspace() for c in text):
+            problem = "host"
+        elif parts.username is not None or parts.password is not None:
+            problem = "userinfo"
+        elif parts.path:
+            problem = "path"
+        elif parts.query:
+            problem = "query"
+        elif parts.fragment:
+            problem = "fragment"
+        elif parts.netloc.endswith(":") or (port is not None and not 0 < port < 65536):
+            problem = "port"
     except ValueError:
-        port_ok = False
-    if (parts.scheme not in ("http", "https") or not parts.hostname or parts.username is not None
-            or parts.password is not None or parts.path or parts.query or parts.fragment or not port_ok):
-        raise ConfigError(f"CROWDSEC_URL must be http(s)://host[:port] and nothing else, got {text!r}")
+        problem = "port or host"
+    if problem:
+        raise ConfigError(f"CROWDSEC_URL must be http(s)://host[:port] and nothing else: invalid {problem}")
     return text
 
 
@@ -99,7 +115,7 @@ def read_key():
 
 _UNITS = {"ns": Decimal("1e-9"), "us": Decimal("1e-6"), "µs": Decimal("1e-6"), "μs": Decimal("1e-6"),
           "ms": Decimal("1e-3"), "s": Decimal(1), "m": Decimal(60), "h": Decimal(3600)}
-_PART = re.compile(r"(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)")
+_PART = re.compile(r"([0-9]+(?:\.[0-9]*)?|\.[0-9]+)(ns|us|µs|μs|ms|s|m|h)")
 DURATION_MAX_TEXT = 64
 DURATION_MAX_SECONDS = Decimal(100 * 366 * 86400)
 
