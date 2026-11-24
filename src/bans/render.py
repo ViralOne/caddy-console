@@ -36,15 +36,52 @@ class PolicySource:
 SOURCES = {
     "manual": PolicySource("manual", "bans-manual.caddy",
                            "caddy_console_manual_policy", "caddy_console_manual_banned"),
-    # Phase 2 adds: "crowdsec": PolicySource("crowdsec", "bans-crowdsec.caddy",
-    #   "caddy_console_crowdsec_policy", "caddy_console_crowdsec_banned")
+    "crowdsec": PolicySource("crowdsec", "bans-crowdsec.caddy",
+                             "caddy_console_crowdsec_policy", "caddy_console_crowdsec_banned"),
 }
+# Import order between sources: the CrowdSec import goes after the manual import.
+AFTER = {"crowdsec": ("manual",)}
+# CrowdSec origins that count as "local" for manual-ban priority (spec 2.5).
+LOCAL_ORIGINS = ("crowdsec", "cscli")
+
+
+def active_sources(state=None) -> dict:
+    """The sources the console renders. Manual always. CrowdSec once it is
+    configured, or once it left something behind (records or a recorded policy
+    hash), so turning CrowdSec off still lets expiry and Reset clear what it
+    rendered. An install that never used CrowdSec never gets bans-crowdsec.caddy."""
+    out = {"manual": SOURCES["manual"]}
+    cs = SOURCES["crowdsec"]
+    if config.CROWDSEC_URL or (state is not None and (
+            any(r.source == "crowdsec" for r in state.records) or cs.filename in state.last_rendered_hashes)):
+        out["crowdsec"] = cs
+    return out
 
 
 class CapacityError(Exception):
-    def __init__(self, count: int, limit: int):
+    def __init__(self, count: int, limit: int, by_source=None):
         super().__init__(f"{count} prefixes exceed the limit of {limit}")
-        self.count, self.limit = count, limit
+        self.count, self.limit, self.by_source = count, limit, dict(by_source or {})
+
+
+def check_capacity(by_source: dict, limit: int) -> None:
+    """BANS_MAX is a total over every source rendered into stock Caddy (spec 2.5)."""
+    total = sum(by_source.values())
+    if total > limit:
+        raise CapacityError(total, limit, by_source)
+
+
+def is_local(record) -> bool:
+    return record.source == "manual" or (record.origin or "").lower() in LOCAL_ORIGINS
+
+
+def capacity_counts(records, now) -> dict:
+    """Prefixes that count against BANS_MAX for a manual-side change: manual
+    bans plus CrowdSec decisions of local origin. Non-local CrowdSec origins
+    (CAPI, lists) never cause a manual ban to be refused (spec 2.5)."""
+    local = [r for r in records if is_local(r)]
+    return {"manual": len(effective_prefixes(local, now, "manual")),
+            "crowdsec": len(effective_prefixes(local, now, "crowdsec"))}
 
 
 def effective_prefixes(records, now, source_name: str) -> list:

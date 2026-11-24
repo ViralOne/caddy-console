@@ -28,6 +28,7 @@ REASON_MAX = 500
 MANAGEMENT_MAX = 16
 MANAGEMENT_TTL = timedelta(days=30)
 _HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DECISION_ID = re.compile(r"^[0-9]{1,20}$")
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 _KEYS = {"version", "records", "last_rendered_hashes", "management_addresses"}
 _RECORD_KEYS = {"id", "source", "source_id", "scope", "value", "reason", "scenario",
@@ -133,6 +134,13 @@ def _check_record(r: Record) -> None:
         _opt_str(v)
     if r.source == "manual" and (r.source_id, r.scenario, r.origin) != (None, None, None):
         raise ValueError("manual records carry no source_id, scenario or origin")
+    if r.source == "crowdsec":
+        if not isinstance(r.source_id, str) or not _DECISION_ID.match(r.source_id):
+            raise ValueError("crowdsec records carry their LAPI decision id")
+        if not r.origin:
+            raise ValueError("crowdsec records carry their LAPI origin")
+        if r.reason:
+            raise ValueError("crowdsec records carry no reason")
     validate_reason(r.reason)
     parse_iso(r.created_at)
     if r.expires_at is not None:
@@ -228,6 +236,14 @@ def new_manual_record(net, duration, reason, actor, now) -> Record:
                   scope=addr.scope_of(net), value=addr.token(net), reason=reason,
                   scenario=None, origin=None, actor=actor, created_at=iso(now),
                   expires_at=None if delta is None else iso(now + delta))
+
+
+def new_crowdsec_record(decision_id, net, origin, scenario, fetched_at, expires_at) -> Record:
+    """One LAPI decision. The id is derived from the decision id, so the same
+    decision always maps to the same record; created_at is when it was fetched."""
+    return Record(id=f"crowdsec-{decision_id}", source="crowdsec", source_id=str(decision_id),
+                  scope=addr.scope_of(net), value=addr.token(net), reason="", scenario=scenario or None,
+                  origin=origin, actor="system", created_at=iso(fetched_at), expires_at=iso(expires_at))
 
 
 def prune_expired(state: State, now, sources=None) -> list:

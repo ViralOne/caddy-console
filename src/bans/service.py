@@ -210,7 +210,7 @@ def _holds(state) -> dict:
     """Sources whose file differs from the hash recorded at their last render:
     an out-of-band recovery override (spec 1.6). Not regenerated until Re-apply."""
     out = {}
-    for name, src in render.SOURCES.items():
+    for name, src in render.active_sources(state).items():
         recorded = state.last_rendered_hashes.get(src.filename)
         actual = fsio.sha256_tag(fsio.read_bytes(src.path))
         if recorded != actual:
@@ -219,8 +219,15 @@ def _holds(state) -> dict:
 
 
 def _candidates(state, prot, holds, now) -> list:
+    """Every active source's candidate policy (held ones excepted) plus the
+    state that embeds their hashes. Held sources still count toward BANS_MAX:
+    their file stays loaded in Caddy. Non-local CrowdSec origins do not count
+    here, so they never block a manual change (spec 2.5); the CrowdSec sync
+    checks the whole total itself before it stores anything."""
+    sources = render.active_sources(state)
+    render.check_capacity(render.capacity_counts(state.records, now), config.BANS_MAX)
     changes, owns = [], []
-    for name, src in render.SOURCES.items():
+    for name, src in sources.items():
         if name in holds:
             continue
         data = render.render_policy(src, render.effective_prefixes(state.records, now, name),
@@ -256,7 +263,8 @@ def _after_commit(corrupt) -> None:
         store.clear_error()
 
 
-def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt=False, force_reload=False):
+def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt=False, force_reload=False,
+              affects=("manual",)):
     """mutate(state, now, version) edits state in place and returns a Mutation,
     or raises BanError. Everything between load and apply runs under the lock.
     The mutation's audit events travel in the transaction journal, so txn
@@ -280,7 +288,7 @@ def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt
         version = _corrupt_version(corrupt) if corrupt else state.version
         holds = {} if corrupt else {k: v for k, v in _holds(state).items() if k not in force}
         now = store.utc_now()
-        expired = store.prune_expired(state, now, sources=[n for n in render.SOURCES if n not in holds])
+        expired = store.prune_expired(state, now, sources=[n for n in render.active_sources(state) if n not in holds])
         store.prune_management(state, now)
         store.touch_management(state, client, "direct", now)
         try:
@@ -291,14 +299,16 @@ def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt
                 audit.log_action(action, actor, detail)
             return _error(e.code, str(e), e.http_status, **e.extra)
         except render.CapacityError as e:
-            return _error("capacity_exceeded", f"This would render {e.count} prefixes; the limit (BANS_MAX) "
-                          f"is {e.limit}. Remove or merge bans first.", 409, count=e.count, limit=e.limit)
+            parts = ", ".join(f"{n} {c}" for n, c in e.by_source.items())
+            return _error("capacity_exceeded", f"This would render {e.count} prefixes ({parts}); the limit "
+                          f"(BANS_MAX) is {e.limit}. Remove or merge bans first.", 409, count=e.count,
+                          limit=e.limit, by_source=e.by_source)
         outcome = txn.apply_locked(changes, actor=actor, source=source,
                                    audit_events=_expired_events(expired) + result.audit, force_reload=force_reload)
         if outcome.ok:
             _after_commit(corrupt)
     body = {**_outcome_body(outcome), **result.body}
-    if outcome.ok and holds:
+    if outcome.ok and set(holds) & set(affects):
         body["enforcement"] = "held"
         body["message"] = ("Stored. The ban file differs from the stored state, so it was not regenerated; "
                            "use Re-apply in Security.")
@@ -307,7 +317,7 @@ def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt
 
 def _public(r, now, prot) -> dict:
     out = {k: getattr(r, k) for k in ("id", "source", "scope", "value", "reason", "actor",
-                                      "created_at", "expires_at", "scenario", "origin")}
+                                      "created_at", "expires_at", "scenario", "origin", "source_id")}
     out.update(expired=r.expired(now), protected=prot.overlap(r.network), geo=_geo(r))
     return out
 
@@ -374,11 +384,13 @@ def reapply(payload, actor, remote_addr):
         return _error("invalid_source", "Unknown policy source.", 400)
 
     def mutate(state, now, version):
+        if source not in render.active_sources(state):
+            raise BanError("source_not_enabled", f"The {source} source is not in use.", 400)
         return Mutation({"source": source}, 200, [("bans_reapply", source)])
     # Re-apply also reloads unchanged files: Caddy may never have loaded the
     # policy (an import in an included file, added before the file existed).
     return _transact(actor, _verified_client(remote_addr), mutate, force=(source,), source="reapply",
-                     force_reload=True)
+                     force_reload=True, affects=(source,))
 
 
 def reset(payload, actor, remote_addr):
@@ -389,17 +401,26 @@ def reset(payload, actor, remote_addr):
         return _error("invalid_source", "source must be manual, crowdsec, country or cloudflare.", 400)
     if source not in render.SOURCES:
         return _error("source_not_enabled", f"The {source} source is not part of this version.", 400)
+    what = "manual ban" if source == "manual" else "stored CrowdSec decision"
     if payload.get("confirm") is not True:
-        return _error("confirmation_required", "Resetting deletes every manual ban; send confirm: true.", 400)
+        return _error("confirmation_required", f"Resetting deletes every {what}; send confirm: true.", 400)
     expected = payload.get("version")
 
     def mutate(state, now, version):
+        if source not in render.active_sources(state):
+            raise BanError("source_not_enabled", f"The {source} source is not in use.", 400)
         if expected != version:
             raise BanError("version_conflict", "The ban list changed since you loaded it; reload the Security view.", 409)
         removed = [r for r in state.records if r.source == source]
         state.records = [r for r in state.records if r.source != source]
-        return Mutation({"removed": len(removed)}, 200, [("bans_reset", f"{source}: removed {len(removed)} records")])
-    return _transact(actor, _verified_client(remote_addr), mutate, force=(source,), allow_corrupt=True, source="reset")
+        body = {"removed": len(removed)}
+        if source == "crowdsec":
+            body["message"] = (f"Removed {len(removed)} stored CrowdSec decisions. They return within "
+                               f"{config.BANS_SYNC_INTERVAL} seconds unless they are removed in CrowdSec "
+                               "(cscli decisions delete).")
+        return Mutation(body, 200, [("bans_reset", f"{source}: removed {len(removed)} records")])
+    return _transact(actor, _verified_client(remote_addr), mutate, force=(source,), allow_corrupt=True,
+                     source="reset", affects=(source,))
 
 
 # --- reads ------------------------------------------------------------------------------
@@ -424,8 +445,9 @@ def list_bans(covering=None):
                 "records": [_public(r, now, prot) for r in hits],
                 "exact_ids": [r.id for r in hits if r.source == "manual" and r.value == token]}, 200
     records = sorted(state.records, key=lambda r: r.created_at, reverse=True)
+    by_source = {n: len(render.effective_prefixes(state.records, now, n)) for n in render.active_sources(state)}
     return {"records": [_public(r, now, prot) for r in records], "state_version": state.version,
-            "rendered_prefixes": len(render.effective_prefixes(state.records, now, "manual")),
+            "rendered_prefixes": by_source["manual"], "rendered_by_source": by_source,
             "max_prefixes": config.BANS_MAX}, 200
 
 
@@ -621,7 +643,7 @@ def expire_tick(now=None) -> str:
             return "corrupt"
         now = now or store.utc_now()
         holds = _holds(state)
-        removed = store.prune_expired(state, now, sources=[n for n in render.SOURCES if n not in holds])
+        removed = store.prune_expired(state, now, sources=[n for n in render.active_sources(state) if n not in holds])
         aged = store.prune_management(state, now)
         if not removed and not aged:
             return "idle"
