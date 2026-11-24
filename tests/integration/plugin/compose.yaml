@@ -1,0 +1,132 @@
+# Plugin-mode integration project, driven by dev/crowdsec-plugin-it.sh. NOT for
+# deployment. Same isolation as docker-compose.crowdsec-plugin.yaml, plus
+# client containers whose addresses are the direct, proxied and tunnel peers.
+name: caddy-console-plugin-it
+
+x-console-image: &console-image
+  image: caddy-console:plugin-it
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m,mode=1777"]
+  volumes:
+    - ../../../tests:/app/tests:ro
+
+services:
+  caddy:
+    image: ${PLUGIN_IMAGE:-caddy-crowdsec:local}
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    environment:
+      CADDY_ADMIN_ADDRESS: 172.30.250.2:2019
+      CADDY_ADMIN_SUBNET: 172.30.250.0/29
+      CROWDSEC_PLUGIN_BOUNCER_KEY: ${IT_PLUGIN_KEY:?}
+      CROWDSEC_PLUGIN_BOUNCER_KEY_FILE: ""
+    volumes:
+      - ../../../dev/run/plugin-it:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      caddy-admin: {ipv4_address: 172.30.250.2}
+      crowdsec-lapi: {}
+      edge-direct: {ipv4_address: 198.51.100.2}
+      edge-proxied: {ipv4_address: 192.0.2.2}
+      caddy-edge: {ipv4_address: 172.30.252.2}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://172.30.250.2:2019/config/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  console:
+    <<: *console-image
+    build: ../../..
+    user: "${CADDY_CONSOLE_UID:-1000}:${CADDY_CONSOLE_GID:-1000}"
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    environment:
+      AUTH_MODE: cloudflare
+      UNSAFE_ALLOW_UNVERIFIED_CF_HEADER: "true"
+      ALLOWED_EMAILS: it@example.com
+      SECRET_KEY: plugin-it-only-not-a-real-secret-0123456789
+      SESSION_COOKIE_SECURE: "false"
+      GEOIP_AUTO_UPDATE: "false"
+      SERVER_URL: http://console.it.example.com
+      CADDYFILE_PATH: /etc/caddy/Caddyfile
+      BACKUP_DIR: /backups
+      AUDIT_LOG: /backups/audit.log
+      CADDY_API_URL: http://172.30.250.2:2019
+      CADDY_ADMIN_ADDRESS: 172.30.250.2:2019
+      CROWDSEC_PLUGIN_BOUNCER_KEY_FILE: ""
+      BANS_ENABLED: "true"
+      BANS_NEVER: 203.0.113.99
+      CROWDSEC_URL: http://crowdsec:8080
+      CROWDSEC_CONSOLE_BOUNCER_KEY: ${IT_CONSOLE_KEY:?}
+      CROWDSEC_ORIGINS: crowdsec,cscli
+      CROWDSEC_POLL_INTERVAL: "5"
+      BANS_SYNC_INTERVAL: "10"
+      FAKE_LAPI_CONTROL: ${IT_CONTROL:?}
+      # One worker: on Docker Desktop (virtiofs) two processes can hold flock on
+      # the same bind-mounted BACKUP_DIR file through different mount views, so
+      # both would lead CrowdSec sync. Leadership has its own unit tests.
+      GUNICORN_WORKERS: "1"
+    volumes:
+      - ../../../dev/run/plugin-it:/etc/caddy
+      - ../../../dev/run/plugin-it-backups:/backups
+      - ../../../tests:/app/tests:ro
+    networks:
+      caddy-admin: {ipv4_address: 172.30.250.3}
+      crowdsec-lapi: {}
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9090/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  crowdsec:
+    <<: *console-image
+    command: ["/app/.venv/bin/python", "-m", "tests.integration.fake_lapi"]
+    environment:
+      FAKE_LAPI_KEYS: console:${IT_CONSOLE_KEY:?},plugin:${IT_PLUGIN_KEY:?}
+      FAKE_LAPI_CONTROL: ${IT_CONTROL:?}
+    networks: [crowdsec-lapi]
+
+  client-direct:
+    <<: *console-image
+    command: ["sleep", "infinity"]
+    networks:
+      edge-direct: {ipv4_address: 198.51.100.10}
+
+  edge-proxy:
+    <<: *console-image
+    command: ["sleep", "infinity"]
+    networks:
+      edge-proxied: {ipv4_address: 192.0.2.10}
+
+  cloudflared:
+    <<: *console-image
+    command: ["sleep", "infinity"]
+    networks:
+      caddy-edge: {ipv4_address: 172.30.252.3}
+
+networks:
+  caddy-admin:
+    internal: true
+    ipam: {config: [{subnet: 172.30.250.0/29}]}
+  crowdsec-lapi:
+    internal: true
+  edge-direct:
+    internal: true
+    ipam: {config: [{subnet: 198.51.100.0/24}]}
+  edge-proxied:
+    internal: true
+    ipam: {config: [{subnet: 192.0.2.0/24}]}
+  caddy-edge:
+    internal: true
+    ipam: {config: [{subnet: 172.30.252.0/29}]}
+
+volumes:
+  caddy-data:
+  caddy-config:
