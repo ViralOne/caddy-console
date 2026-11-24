@@ -203,6 +203,10 @@ class ApiCase(unittest.TestCase):
         reset()
         fresh_audit(self)
         self.caddy = FakeCaddy().install(self)
+        from src.bans import protected
+        docker = mock.patch.object(protected, "read_docker_networks", lambda: [])
+        docker.start()
+        self.addCleanup(docker.stop)
         for name, value in (("caddy_fmt", lambda c: c),
                             ("caddy_validate", lambda c: (True, "ok")),
                             ("caddy_check", lambda c: (True, "ok", "adapted"))):

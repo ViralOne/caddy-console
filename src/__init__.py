@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from flask import Flask, jsonify, request
 from markupsafe import Markup
 
+from . import config as app_config
 from .auth import auth_bp, cf_jwt_enabled, csrf_valid, oauth
 from .config import (
     AUTH_MODE,
@@ -141,6 +142,14 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(editor_bp)
     app.register_blueprint(ops_bp)
+
+    # IP bans (docs/security.md). Disabled means no routes, checks or jobs at all.
+    # An invalid BANS_NEVER raises here and refuses startup on purpose.
+    if app_config.BANS_ENABLED:
+        from .bans import service as bans_service
+        from .routes.security import security_bp
+        bans_service.init_config()
+        app.register_blueprint(security_bp)
 
     @app.context_processor
     def theme_boot():

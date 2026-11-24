@@ -8,8 +8,11 @@ const html = fs.readFileSync(path.join(import.meta.dirname, '..', 'src', 'templa
 let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
 
-check('tabs are Dashboard, Explore, Editor', () => assert.deepEqual(
-  [...html.matchAll(/class="tab" data-view="(\w+)"/g)].map(m => m[1]), ['dashboard', 'explore', 'editor']));
+check('tabs are Dashboard, Explore, Editor, plus Security only behind the bans flag', () => {
+  const tabs = [...html.matchAll(/class="tab" data-view="(\w+)"/g)].map(m => m[1]);
+  assert.deepEqual(tabs, ['dashboard', 'explore', 'editor', 'security']);
+  assert.match(html, /{% if bans_enabled %}<a class="tab" data-view="security"/);
+});
 check('the status bar lives inside the editor view', () => {
   const start = html.indexOf('id="tab-editor"');
   const end = html.indexOf('</section>', start);

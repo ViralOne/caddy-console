@@ -17,7 +17,7 @@ from flask import Blueprint, jsonify, render_template, request, session
 from .. import config
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
-from ..bans import txn as bans_txn
+from ..bans import render as bans_render, scan as bans_scan, txn as bans_txn
 from ..caddy_api import get_servers, invalidate_servers_cache
 from ..config import (
     APP_VERSION,
@@ -369,7 +369,7 @@ def _apply_config(content: str, user: str, source: str, expected_version: str | 
 @editor_bp.route("/explore")
 @login_required
 def index():
-    return render_template("index.html", csrf_token=get_or_create_csrf())
+    return render_template("index.html", csrf_token=get_or_create_csrf(), bans_enabled=config.BANS_ENABLED)
 
 
 @editor_bp.route("/health")
@@ -444,6 +444,9 @@ def validate():
     warnings = [w for w in (fmt_warning(content, formatted),) if w]
     warnings += smart_validate(content)
     warnings += upstream_resolve_warnings(content)
+    if config.BANS_ENABLED:
+        warnings += bans_scan.bans_warnings(content, bans_render.SOURCES["manual"].path,
+                                            bans_scan.management_hosts(content, bans_scan.console_host()))
 
     return jsonify({"valid": True,
                     "message": "Caddyfile check passed, but review warnings" if warnings else message,
@@ -580,4 +583,19 @@ def get_snippets():
     snippets_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "snippets.json")
     with open(snippets_path) as f:
         snippets = json.load(f)
-    return jsonify({"snippets": snippets})
+    if not config.BANS_ENABLED:
+        return jsonify({"snippets": [s for s in snippets if "BANS_ENABLED" not in s.get("prerequisites", [])],
+                        "context": {}})
+    bans_dir = config.BANS_DIR.rstrip("/")
+    for s in snippets:
+        if s.get("phase"):
+            s["code"] = s["code"].replace("/etc/caddy/console/", bans_dir + "/")
+    try:
+        with open(CADDYFILE, encoding="utf-8", newline="") as f:
+            text = f.read()
+    except (OSError, UnicodeError):
+        text = ""
+    return jsonify({"snippets": snippets, "context": {
+        "bans_dir": bans_dir,
+        "management_hosts": sorted(bans_scan.management_hosts(text, bans_scan.console_host())),
+    }})

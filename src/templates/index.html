@@ -14,7 +14,7 @@
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/style.css">
 </head>
-<body>
+<body data-bans="{{ 'on' if bans_enabled else 'off' }}">
 
 {% include "_icons.html" %}
 
@@ -27,6 +27,7 @@
     <a class="tab" data-view="dashboard" href="/"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-dashboard"/></svg>Dashboard</a>
     <a class="tab" data-view="explore" href="/explore"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-explore"/></svg>Explore</a>
     <a class="tab" data-view="editor" href="/editor"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-editor"/></svg>Editor</a>
+    {% if bans_enabled %}<a class="tab" data-view="security" href="/security"><svg class="icon" width="16" height="16" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg>Security</a>{% endif %}
   </nav>
   <span class="hdr-spacer"></span>
   <!-- Editor-only actions, hidden on the other views where none of them apply. -->
@@ -99,6 +100,7 @@
       </div>
     </aside>
   </section>
+  {% if bans_enabled %}<section class="tab-content" id="tab-security" aria-label="Security"><div id="security-root"></div></section>{% endif %}
 </main>
 
 <!-- Save Diff Modal -->

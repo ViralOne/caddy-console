@@ -53,5 +53,27 @@
     "name": "Access Log",
     "description": "JSON access log per site",
     "code": "    log {\n        output file /var/log/caddy/access.log\n        format json\n    }\n"
+  },
+  {
+    "id": "manual-bans-site",
+    "name": "Manual bans: protect this site",
+    "description": "Answer 403 to addresses banned in Security. Goes first in a site block.",
+    "phase": "manual",
+    "scope": "site",
+    "insert": "site-first",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED"],
+    "code": "import /etc/caddy/console/bans-manual*.caddy\n"
+  },
+  {
+    "id": "manual-bans-recovery",
+    "name": "Manual bans: host recovery",
+    "description": "Shell commands to clear manual bans from the host if you lock yourself out. Copy only.",
+    "phase": "manual",
+    "scope": "host",
+    "insert": "copy-only",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED"],
+    "code": "docker compose -f docker-compose.prod.yaml stop caddy-console\nsudo sh -c ': > /opt/caddy/console/bans-manual.caddy'\ndocker compose -f docker-compose.prod.yaml exec caddy sh -c \\\n  'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \\\n   --address \"${CADDY_ADMIN_ADDRESS:-localhost:2019}\"'\ndocker compose -f docker-compose.prod.yaml start caddy-console\n"
   }
 ]
