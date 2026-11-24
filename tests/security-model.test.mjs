@@ -105,6 +105,28 @@ check('a stale refresh never shows an ok verdict', () => {
   passed++; console.log('  ok  requestJson turns a network failure into status 0');
 }
 
+console.log('\n--- popover ban state ---');
+const look = (records, exact, prot = null) => ({ ip: '203.0.113.8', protected: prot, records, exact_ids: exact });
+const exactRec = { id: 'e1', value: '203.0.113.8' };
+const rangeRec = { id: 'r1', value: '203.0.113.0/24' };
+check('a protected address offers no Ban', () => {
+  const s = M.banState(look([], [], 'private'));
+  assert.equal(s.canBan, false);
+  assert.match(s.protectedText, /private network/);
+});
+check('an exact record offers Unban', () => {
+  const s = M.banState(look([exactRec], ['e1']));
+  assert.deepEqual([s.banned, s.canUnban, s.canBan], [true, true, false]);
+});
+check('banState after removing the exact record still reports the covering range', () => {
+  const s = M.banState(look([rangeRec], []));
+  assert.deepEqual([s.banned, s.canUnban, s.canBan], [true, false, true]);
+  assert.equal(s.coveredText, 'Banned by 203.0.113.0/24');
+});
+check('both exact and range', () => {
+  assert.equal(M.banState(look([exactRec, rangeRec], ['e1'])).coveredText, 'Also covered by 203.0.113.0/24');
+});
+
 console.log('\n--- no HTML sinks ---');
 for (const f of ['security.js', 'security-model.js', 'ban-dialog.js', 'ip-popover.js', 'snippet-insert.js', 'panels.js', 'ui/dialog.js']) {
   const p = path.join(APP, f);

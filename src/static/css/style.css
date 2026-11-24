@@ -574,3 +574,8 @@ details.raw[open]{flex-basis:100%}
 @media (max-width:640px){.sec-table thead{display:none}.sec-table td{display:block;border:0;padding:2px 0}.sec-table tr{display:block;padding:8px 0;border-bottom:1px solid var(--line)}.sec-protected div,.sec-sites li{grid-template-columns:1fr}}
 .sec-stale{font-weight:600;color:var(--warn)}
 .verdict a{color:inherit;text-decoration:underline}
+.dlg-form{display:flex;flex-direction:column;gap:6px}
+.dlg-form .dlg-label{font-size:var(--t-sm);color:var(--ink-2);margin-top:8px}
+.dlg-form .dlg-error{color:var(--crit);font-size:var(--t-sm);margin:8px 0 0}
+.ban-sect{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.ban-badge{display:inline-flex;gap:4px;align-items:center;font-weight:600;color:var(--crit)}

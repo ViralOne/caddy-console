@@ -60,6 +60,23 @@ export function outcomeText(body, verb) {
   }
 }
 
+/** What the IP popover can offer for one address, from GET /api/bans?covering=. */
+export function banState(lookup) {
+  const records = lookup?.records || [];
+  const exact = lookup?.exact_ids || [];
+  const coveredBy = [...new Set(records.filter(r => !exact.includes(r.id)).map(r => r.value))];
+  const prot = lookup?.protected || null;
+  return {
+    banned: records.length > 0,
+    exact,
+    coveredBy,
+    coveredText: coveredBy.length ? `${exact.length ? 'Also covered by' : 'Banned by'} ${coveredBy.join(', ')}` : '',
+    protectedText: prot ? `Protected (${protectedLabel(prot)}), cannot be banned` : '',
+    canBan: !prot && exact.length === 0,
+    canUnban: exact.length > 0,
+  };
+}
+
 const SITE = {
   enforced: ['Protected', 'ok'],
   enforced_pre_handler: ['Protected, pre-handler present', 'warn'],

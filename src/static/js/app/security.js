@@ -4,6 +4,7 @@
 import { h, htm, render, useEffect, useState } from '../explore-vendor.js';
 import { Icon } from './icons.js';
 import { absoluteTime } from './format.js';
+import { unbanRecords } from './ban-dialog.js';
 import { confirmDialog } from './ui/dialog.js';
 import { toast } from './ui/toast.js';
 import { requestJson as call } from './security-api.js';
@@ -71,15 +72,7 @@ function AddBan({ onDone }) {
 
 function BanList({ records, onDone }) {
   if (!records.length) return html`<p class="metrics-hint">No manual bans.</p>`;
-  const unban = async (r) => {
-    const ok = await confirmDialog({ title: `Unban ${r.value}?`, body: 'New requests from this address are allowed again once Caddy reloads.', confirmLabel: 'Unban', danger: true });
-    if (!ok) return;
-    const res = await call(`/api/bans/${encodeURIComponent(r.id)}`, 'DELETE');
-    if (!res.ok) { toast(errorMessage(res.body, res.status), { kind: 'error' }); return; }
-    const t = outcomeText(res.body, 'unban');
-    toast(t.text, { kind: t.kind });
-    onDone();
-  };
+  const unban = async (r) => { if (await unbanRecords([r.id], r.value)) onDone(); };
   return html`
     <table class="sec-table">
       <thead><tr><th>Address</th><th>Location</th><th>Reason</th><th>By</th><th>Created</th><th>Expiry</th><th><span class="sr">Actions</span></th></tr></thead>
