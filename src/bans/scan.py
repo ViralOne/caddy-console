@@ -197,3 +197,82 @@ def bans_warnings(text, path, management=frozenset(), *, label="manual ban list"
         if not st["first_child"]:
             out.append(f"Line {st['line']}: {_after_msg(label, after) if after else FIRST_MSG}")
     return out
+
+
+_CROWDSEC_LINE = re.compile(r"^crowdsec(\s|$)")
+_API_KEY = re.compile(r"^api_key\s+(\S+)")
+
+
+def _depth_lines(text):
+    """(line number, stripped line, depth before the line) for every non-empty line."""
+    out, depth = [], 0
+    for i, raw in enumerate(str(text).split("\n"), 1):
+        line = _strip(raw)
+        if not line:
+            continue
+        out.append((i, line, depth))
+        bare = _PLACEHOLDER.sub("", line)
+        depth = max(0, depth + bare.count("{") - bare.count("}"))
+    return out
+
+
+def _global_block(lines):
+    """The global options block: the first top-level line, when it is a bare "{"."""
+    if not lines or lines[0][1] != "{" or lines[0][2] != 0:
+        return []
+    inner = []
+    for ln, line, depth in lines[1:]:
+        if depth == 0:
+            break
+        inner.append((ln, line, depth))
+    return inner
+
+
+def plugin_warnings(text, definition_path, management=frozenset(), *, snippet="protect_crowdsec",
+                    placeholder=None, crowdsec_path=None) -> list:
+    out = []
+    lines = _depth_lines(text)
+    glob_line = f"import {os.path.join(os.path.dirname(definition_path), os.path.basename(definition_path)[:-len('.caddy')] + '*.caddy')}"
+    top = [(ln, line) for ln, line, d in lines if d == 0]
+    definition_top = any(_is_policy_import(line, definition_path) for _, line in top)
+    g = _global_block(lines)
+    app_at = next((ln for ln, line, d in g if d == 1 and line.startswith("crowdsec") and line.endswith("{")), None)
+    if app_at is not None:
+        if not any(d == 1 and re.match(r"^order\s+crowdsec\s", line) for _, line, d in g):
+            out.append(f"Line {app_at}: add `order crowdsec first` to the global options, or Caddy cannot place the "
+                       "crowdsec handler.")
+        for ln, line, d in g:
+            m = _API_KEY.match(line)
+            if d != 2 or not m:
+                continue
+            value = m.group(1)
+            if not value.startswith(("{env.", "{file.")):
+                out.append(f"Line {ln}: the bouncer key is written into the Caddyfile, where anyone who can read "
+                           f"Caddy's config sees it; use api_key {placeholder or '{env.CROWDSEC_PLUGIN_BOUNCER_KEY}'}.")
+            elif placeholder and value != placeholder:
+                out.append(f"Line {ln}: api_key is {value}, but this deployment's Caddy expects {placeholder} "
+                           "(set by CROWDSEC_PLUGIN_BOUNCER_KEY_FILE).")
+    for block in site_blocks(text):
+        inner = [(ln, line) for ln, line, d in lines if block.start < ln < block.end and d >= 1]
+        uses = [ln for ln, line in inner if _is_snippet_import(line, snippet)]
+        for ln, line in inner:
+            if _is_policy_import(line, definition_path):
+                out.append(f"Line {ln}: the protected route definition is a top-level import; move it outside every "
+                           "site block, below the global options.")
+            elif _CROWDSEC_LINE.match(line) and not line.endswith("{"):
+                out.append(f"Line {ln}: the crowdsec handler without import {snippet} also runs for private, Docker "
+                           f"and BANS_NEVER addresses; use import {snippet} instead.")
+        if not uses:
+            continue
+        if not definition_top:
+            out.append(f"Line {uses[0]}: import {snippet} needs the protected route definition at top level "
+                       f"first: {glob_line}")
+        if set(block.hosts) & set(management):
+            out.append(f"Line {uses[0]}: this is the console's own site; the CrowdSec plugin here could lock you "
+                       "out of the console.")
+        if len(uses) > 1:
+            out.append(f"Line {uses[0]}: this site imports {snippet} {len(uses)} times; keep one import.")
+        if crowdsec_path and any(_is_policy_import(line, crowdsec_path) for _, line in inner):
+            out.append(f"Line {uses[0]}: this site enforces CrowdSec decisions twice, through bans-crowdsec.caddy "
+                       "and the plugin; plugin sites do not need the CrowdSec file import.")
+    return out

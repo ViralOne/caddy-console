@@ -97,5 +97,62 @@
     "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
     "prerequisites": ["BANS_ENABLED", "CROWDSEC_URL"],
     "code": "log_append <user_agent {http.request.header.User-Agent}\nlog_append auth_challenge {http.response.header.Www-Authenticate}\n"
+  },
+  {
+    "id": "crowdsec-plugin-global-env",
+    "name": "CrowdSec plugin: global app",
+    "description": "Loads the CrowdSec bouncer and runs its handler first. Goes inside the global options block. The key comes from CROWDSEC_PLUGIN_BOUNCER_KEY in the Caddy container; decisions are polled every 10 s, near-real-time without a reload.",
+    "phase": "plugin",
+    "scope": "global",
+    "insert": "global-options",
+    "key_mode": "env",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED", "CROWDSEC_URL", "CROWDSEC_PLUGIN"],
+    "code": "crowdsec {\n\tapi_url http://crowdsec:8080\n\tapi_key {env.CROWDSEC_PLUGIN_BOUNCER_KEY}\n\tticker_interval 10s\n}\norder crowdsec first\n"
+  },
+  {
+    "id": "crowdsec-plugin-global-file",
+    "name": "CrowdSec plugin: global app",
+    "description": "Loads the CrowdSec bouncer and runs its handler first. Goes inside the global options block. The key is read from the mounted secret file named by CROWDSEC_PLUGIN_BOUNCER_KEY_FILE; decisions are polled every 10 s, near-real-time without a reload.",
+    "phase": "plugin",
+    "scope": "global",
+    "insert": "global-options",
+    "key_mode": "file",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED", "CROWDSEC_URL", "CROWDSEC_PLUGIN"],
+    "code": "crowdsec {\n\tapi_url http://crowdsec:8080\n\tapi_key {file./run/secrets/crowdsec_plugin_bouncer_key}\n\tticker_interval 10s\n}\norder crowdsec first\n"
+  },
+  {
+    "id": "crowdsec-plugin-definition",
+    "name": "CrowdSec plugin: load protected route definition",
+    "description": "Loads the generated protect_crowdsec snippet, which keeps protected addresses away from the plugin. Goes at top level, outside every site and the global options.",
+    "phase": "plugin",
+    "scope": "top-level",
+    "insert": "top-level",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED", "CROWDSEC_URL", "CROWDSEC_PLUGIN"],
+    "code": "import /etc/caddy/console/crowdsec-plugin-protect*.caddy\n"
+  },
+  {
+    "id": "crowdsec-plugin-site",
+    "name": "CrowdSec plugin: protect this site",
+    "description": "Answer 403 to addresses CrowdSec banned, through the plugin. Goes first in a site block, or after the ban imports. Needs the global app and the definition loaded in Caddy first.",
+    "phase": "plugin",
+    "scope": "site",
+    "insert": "site-first",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED", "CROWDSEC_URL", "CROWDSEC_PLUGIN"],
+    "code": "import protect_crowdsec\n"
+  },
+  {
+    "id": "crowdsec-plugin-allowlist",
+    "name": "CrowdSec plugin: LAPI allowlist",
+    "description": "cscli commands that put the static protected ranges into a CrowdSec allowlist, as defense in depth. Run them inside the crowdsec container. Copy only.",
+    "phase": "plugin",
+    "scope": "host",
+    "insert": "copy-only",
+    "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
+    "prerequisites": ["BANS_ENABLED", "CROWDSEC_URL", "CROWDSEC_PLUGIN"],
+    "code": "cscli allowlists delete caddy_console_protected || true\ncscli allowlists create caddy_console_protected -d 'Caddy Console protected ranges'\ncscli allowlists add caddy_console_protected 127.0.0.0/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 fe80::/10 100.64.0.0/10 fc00::/7 0.0.0.0/8 224.0.0.0/4 240.0.0.0/4 :: ff00::/8\n"
   }
 ]

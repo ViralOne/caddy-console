@@ -73,6 +73,7 @@ class FakeResponse:
 _IMPORT_RE = re.compile(r"(?m)^\s*import\s+(/\S+)")
 _MARKER_RE = re.compile(r"(?m)^vars (caddy_console_\w+) (\S+)$")
 _CROWDSEC_BLOCK = re.compile(r"(?m)^\s*crowdsec\s*\{")
+_ADMIN_RE = re.compile(r"(?m)^\s*admin\s+(\S+)(?:\s*\{\s*\n\s*origins\s+([^\n]+)\n)?")
 
 
 class FakeCaddy:
@@ -98,9 +99,15 @@ class FakeCaddy:
         if not self.hide_imports:
             self._resolve_imports(text, routes, depth=0)
         routes.append({"handle": [{"handler": "fake_caddyfile", "body": text}]})
-        return {"apps": {"http": {"servers": {"srv0": {"listen": [":80"], "routes": [
+        result = {"apps": {"http": {"servers": {"srv0": {"listen": [":80"], "routes": [
             {"match": [{"host": ["example.com"]}],
              "handle": [{"handler": "subroute", "routes": routes}], "terminal": True}]}}}}}
+        m = _ADMIN_RE.search(text)
+        if m and m.group(1) != "{":
+            result["admin"] = {"listen": m.group(1)} if m.group(1) != "off" else {"disabled": True}
+            if m.group(2):
+                result["admin"]["origins"] = m.group(2).split()
+        return result
 
     def _resolve_imports(self, text, routes, depth):
         """Absolute import globs, followed into imported files like Caddy does."""

@@ -1,0 +1,8 @@
+# Managed by Caddy Console. Do not edit; changes are overwritten.
+(protect_crowdsec) {
+	vars caddy_console_plugin_protect 1
+	@caddy_console_crowdsec_candidate {
+		not client_ip private_ranges 100.64.0.0/10 169.254.0.0/16 fc00::/7 fe80::/10
+	}
+	crowdsec @caddy_console_crowdsec_candidate
+}

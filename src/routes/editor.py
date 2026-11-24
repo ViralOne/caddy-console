@@ -18,6 +18,7 @@ from .. import config
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
 from ..bans import lapi as bans_lapi, render as bans_render, scan as bans_scan, txn as bans_txn
+from ..bans import plugin as bans_plugin, protected as bans_protected
 from ..caddy_api import get_servers, invalidate_servers_cache
 from ..config import (
     APP_VERSION,
@@ -453,6 +454,10 @@ def validate():
                                                 label="CrowdSec ban list", short="the CrowdSec ban list",
                                                 after=tuple(bans_render.SOURCES[n].path for n in bans_render.AFTER["crowdsec"]),
                                                 reserved=False)
+        if "crowdsec" in content.lower():
+            warnings += bans_scan.plugin_warnings(
+                content, bans_render.PLUGIN.path, mgmt, placeholder=bans_plugin.api_key_placeholder(),
+                crowdsec_path=bans_render.SOURCES["crowdsec"].path)
 
     return jsonify({"valid": True,
                     "message": "Caddyfile check passed, but review warnings" if warnings else message,
@@ -489,6 +494,10 @@ def save():
     if not is_valid:
         log_action("save_failed", user, message[:200])
         return jsonify({"ok": False, "message": f"Invalid config: {message}"}), 400
+    exposed = bans_plugin.admin_guard(content)
+    if exposed:
+        log_action("save_refused", user, "admin bind would expose the Caddy admin API")
+        return jsonify({"ok": False, "code": "admin_exposed", "message": f"Not saved: {exposed}"}), 409
 
     return _apply_config(content, user, "save", expected_version=client_version)
 
@@ -540,6 +549,10 @@ def restore_backup(name):
     if not is_valid:
         log_action("restore_failed", user, f"{safe_name}: {message[:160]}")
         return jsonify({"ok": False, "message": f"Backup is not valid, not restored: {message}"}), 400
+    exposed = bans_plugin.admin_guard(content)
+    if exposed:
+        log_action("save_refused", user, f"{safe_name}: admin bind")
+        return jsonify({"ok": False, "code": "admin_exposed", "message": f"Not saved: {exposed}"}), 409
 
     data = request.get_json(silent=True) or {}
     expected_version = data.get("version") if isinstance(data, dict) else None
@@ -592,19 +605,36 @@ def get_snippets():
     if not config.BANS_ENABLED:
         return jsonify({"snippets": [s for s in snippets if "BANS_ENABLED" not in s.get("prerequisites", [])],
                         "context": {}})
-    crowdsec = bool(bans_lapi.url())
-    snippets = [s for s in snippets if crowdsec or "CROWDSEC_URL" not in s.get("prerequisites", [])]
-    bans_dir = config.BANS_DIR.rstrip("/")
-    for s in snippets:
-        if s.get("phase"):
-            s["code"] = s["code"].replace("/etc/caddy/console/", bans_dir + "/")
     try:
         with open(CADDYFILE, encoding="utf-8", newline="") as f:
             text = f.read()
     except (OSError, UnicodeError):
         text = ""
+    crowdsec = bool(bans_lapi.url())
+    from ..bans import service as bans_service           # service imports this module; keep it lazy
+    plugin_ctx = bans_service.plugin_snippet_context(text) if crowdsec else None
+    mode = bans_plugin.key_mode()
+
+    def offered(s):
+        pre = s.get("prerequisites", [])
+        if "CROWDSEC_URL" in pre and not crowdsec:
+            return False
+        if "CROWDSEC_PLUGIN" in pre and plugin_ctx is None:
+            return False
+        return s.get("key_mode") in (None, mode)
+    snippets = [s for s in snippets if offered(s)]
+    bans_dir = config.BANS_DIR.rstrip("/")
+    for s in snippets:
+        if s.get("phase"):
+            s["code"] = s["code"].replace("/etc/caddy/console/", bans_dir + "/")
+        if s.get("id") == "crowdsec-plugin-global-file":
+            s["code"] = s["code"].replace(bans_plugin.DEFAULT_KEY_FILE, bans_plugin.key_file())
+        elif s.get("id") == "crowdsec-plugin-allowlist":
+            s["code"] = bans_plugin.allowlist_commands(
+                bans_protected.build(never=bans_service.never_networks(), docker=bans_protected.read_docker_networks()))
     return jsonify({"snippets": snippets, "context": {
         "bans_dir": bans_dir,
         "crowdsec": crowdsec,
         "management_hosts": sorted(bans_scan.management_hosts(text, bans_scan.console_host())),
+        "plugin": plugin_ctx,
     }})

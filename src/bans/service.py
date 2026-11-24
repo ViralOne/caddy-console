@@ -11,6 +11,7 @@ import ipaddress
 import json
 import logging
 import os
+import re
 import secrets
 import threading
 import time
@@ -1030,3 +1031,34 @@ def expire_tick(now=None) -> str:
         if outcome.ok:
             _after_commit(None)
     return "applied" if outcome.ok else outcome.code
+
+
+def plugin_snippet_context(text):
+    """What the editor needs to place the plugin snippets (spec 3.6), or None
+    when they are not offered (CrowdSec off, or a build without the module)."""
+    if not lapi.enabled():
+        return None
+    module = plugin.module_available()
+    if module is False:
+        return None
+    try:
+        live = caddy_admin.live_config()
+    except caddy_admin.CaddyUnavailable:
+        live = None
+    problem = plugin.admin_problem(live) if live is not None else None
+    try:
+        state = store.load()
+    except store.StateCorrupt:
+        state = None
+    data = fsio.read_bytes(render.PLUGIN.path)
+    return {
+        "module": module, "blocked": problem.message if problem else "",
+        "key_mode": plugin.key_mode(),
+        "app_live": plugin.live_app(live) is not None,
+        "app_on_disk": bool(re.search(r"(?m)^\s*crowdsec\s*\{", text or "")),
+        "definition_target": render.PLUGIN.path,
+        "definition_import": scan.mentions_import(text, render.PLUGIN.path),
+        "definition_current": data is not None and state is not None and plugin_route_current(state),
+        "definition_hash": fsio.sha256_tag(data)[7:19] if data is not None else None,
+        "snippet": render.PLUGIN.snippet,
+    }

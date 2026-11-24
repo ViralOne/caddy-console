@@ -251,3 +251,20 @@ def allowlist_commands(prot) -> str:
         f"cscli allowlists create {ALLOWLIST} -d 'Caddy Console protected ranges'",
         f"cscli allowlists add {ALLOWLIST} " + " ".join(seen),
     ]) + "\n"
+
+
+def admin_guard(content: str):
+    """While the console runs with a fixed CADDY_ADMIN_ADDRESS (the plugin
+    overlay), refuse to save a Caddyfile whose admin bind would expose port
+    2019 or lose the console. None means "save may go on"; an unreachable
+    Caddy or an adapt error is left to the save path, which fails anyway."""
+    if not config.BANS_ENABLED or not admin_address().fixed:
+        return None
+    try:
+        result = caddy_admin.adapt(content)
+    except caddy_admin.CaddyUnavailable:
+        return None
+    if not result.ok:
+        return None
+    problem = admin_problem(result.config)
+    return problem.message if problem else None
