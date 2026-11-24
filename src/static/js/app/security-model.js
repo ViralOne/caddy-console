@@ -84,6 +84,87 @@ export function banState(lookup) {
   };
 }
 
+export const SOURCE_LABELS = { manual: 'Manual', crowdsec: 'CrowdSec' };
+export const LIST_ORIGIN_WARNING = 'CAPI and list origins can hold tens of thousands of decisions. Stock Caddy file mode has a finite matcher budget (BANS_MAX); prefer plugin mode for them once it is available.';
+
+const TONE_RANK = { none: 0, ok: 1, warn: 2, crit: 3 };
+const LAPI_STATES = {
+  ok: ['Connected to CrowdSec', 'ok'],
+  starting: ['Starting', 'none'],
+  unreachable: ['CrowdSec unreachable, last synced list kept', 'warn'],
+  auth_failed: ['CrowdSec refused the bouncer key', 'crit'],
+  malformed: ['CrowdSec sent an unusable response', 'warn'],
+  missing_key: ['No bouncer key configured', 'crit'],
+};
+const APPLY_STATES = {
+  ok: ['', 'ok'],
+  pending: ['Waiting for the first sync', 'none'],
+  capacity_exceeded: ['Over capacity: automatic apply paused', 'crit'],
+  held: ['CrowdSec file differs from state: sync paused', 'warn'],
+  degraded: ['Ban state needs attention: sync paused', 'crit'],
+  failed: ['Applying CrowdSec decisions failed', 'crit'],
+};
+
+export function crowdsecState(src, now = Date.now()) {
+  if (!src?.enabled) {
+    return { tone: 'none', title: 'CrowdSec is not configured', detail: 'Stored CrowdSec decisions stay enforced until they expire or are reset. Start the docker-compose.crowdsec.yaml overlay to sync again.' };
+  }
+  const s = src.sync;
+  if (!s) return { tone: 'warn', title: 'No CrowdSec sync report yet', detail: 'No console worker has polled CrowdSec yet. If this lasts, check the console logs.' };
+  if (src.stale) {
+    return { tone: 'warn', title: 'CrowdSec sync report is out of date', detail: `Last report ${relativeTime(s.updated_at, now) || 'unknown'}; no worker is polling CrowdSec right now.` };
+  }
+  const [lapiTitle, lapiTone] = LAPI_STATES[s.lapi_state] || ['Unknown CrowdSec state', 'warn'];
+  const [applyTitle, applyTone] = APPLY_STATES[s.apply_state] || APPLY_STATES.failed;
+  const tone = TONE_RANK[applyTone] > TONE_RANK[lapiTone] ? applyTone : lapiTone;
+  const n = Number(s.decisions) || 0;
+  const title = s.lapi_state !== 'ok' ? lapiTitle : (applyTitle || `${n} active ${n === 1 ? 'decision' : 'decisions'} synced`);
+  const last = s.last_success_at ? `Last successful poll ${relativeTime(s.last_success_at, now)}.` : '';
+  const detail = [s.lapi_state !== 'ok' ? s.lapi_message : '', s.apply_state !== 'ok' ? s.apply_message : '', last]
+    .filter(Boolean).join(' ');
+  return { tone, title, detail };
+}
+
+export function syncTimes(sync, now = Date.now()) {
+  return [['Last snapshot', sync?.last_snapshot_at], ['Last successful poll', sync?.last_success_at], ['Last apply', sync?.last_apply_at]]
+    .map(([label, at]) => ({ label, text: at ? relativeTime(at, now) : 'Never', title: at ? absoluteTime(at) : '' }));
+}
+
+const IGNORED = {
+  not_ban: 'Not a ban (captcha or another remediation)', scope: 'Scope other than Ip or Range',
+  origin: 'Origin not in CROWDSEC_ORIGINS', expired: 'Already expired', invalid_value: 'Invalid address',
+  too_wide: 'Range wider than /16 (IPv4) or /48 (IPv6)',
+};
+
+export function ignoredRows(ignored) {
+  return Object.entries(ignored || {}).filter(([, n]) => Number(n) > 0)
+    .map(([reason, count]) => ({
+      reason, count: Number(count),
+      label: reason.startsWith('protected:') ? `Protected (${protectedLabel(reason.slice('protected:'.length))})` : (IGNORED[reason] || reason),
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+/** Synced decisions per CrowdSec origin, e.g. "crowdsec 5, cscli 1". */
+export function originCountsText(sync) {
+  return Object.entries(sync?.by_origin || {}).filter(([, n]) => Number(n) > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([origin, n]) => `${origin} ${n}`).join(', ');
+}
+
+/** Copy-only text; the id is checked so nothing else can ride along. */
+export function cscliDeleteCommand(record) {
+  const id = String(record?.source_id ?? '');
+  return /^[0-9]{1,20}$/.test(id) ? `cscli decisions delete --id ${id}` : '';
+}
+
+export function capacityText(limits) {
+  const by = Object.entries(limits?.by_source || {});
+  const name = (n) => (n === 'manual' ? 'manual' : SOURCE_LABELS[n] || n);
+  const parts = by.length > 1 ? ` (${by.map(([n, c]) => `${name(n)} ${c}`).join(', ')})` : '';
+  return `${limits?.used ?? 0} of ${limits?.max_prefixes ?? 0} prefixes rendered${parts}.`;
+}
+
 const SITE = {
   enforced: ['Protected', 'ok'],
   enforced_pre_handler: ['Protected, pre-handler present', 'warn'],
@@ -117,6 +198,8 @@ export function siteActions(site) {
 
 const RELOAD_UNKNOWN = ['live_mismatch', 'caddy_unreachable'];
 
+const policiesOf = (site) => Object.values(site.policies || { manual: site });
+
 function baseState(status, recordCount) {
   if (!status) return { tone: 'none', title: 'Loading…', body: '' };
   if (!status.available) return { tone: 'crit', title: 'Unavailable, not enforced', body: status.unavailable?.message || '' };
@@ -130,13 +213,19 @@ function baseState(status, recordCount) {
   if (status.caddy && status.caddy.reachable === false) {
     return { tone: 'crit', title: 'Caddy unreachable, enforcement unknown', body: status.caddy.message || 'The Caddy admin API did not answer, so the running configuration could not be checked.' };
   }
-  if (status.sources?.manual?.hold) {
-    return { tone: 'warn', title: 'Policy differs from state', body: 'The ban file was changed outside the console. Fix the records, then Re-apply.' };
+  const held = Object.entries(status.sources || {}).filter(([, s]) => s?.hold).map(([n]) => SOURCE_LABELS[n] || n);
+  if (held.length) {
+    return { tone: 'warn', title: 'Policy differs from state', body: `The ${held.join(' and ')} ban file was changed outside the console. Fix the records, then Re-apply.` };
   }
-  if ((status.sites || []).some(s => s.status === 'management_imported')) {
+  if ((status.sites || []).some(s => policiesOf(s).some(p => p.status === 'management_imported'))) {
     return { tone: 'crit', title: 'Console site imports the ban list: lockout risk', body: 'Remove the import line from the console site in the editor, then Save & Reload.' };
   }
-  const n = (status.sites || []).filter(s => ['enforced', 'enforced_pre_handler', 'imported_empty'].includes(s.status)).length;
+  const cs = status.sources?.crowdsec;
+  if (cs?.enabled && crowdsecState(cs).tone === 'crit') {
+    return { tone: 'warn', title: 'CrowdSec sync needs attention', body: crowdsecState(cs).title };
+  }
+  const ENFORCING = ['enforced', 'enforced_pre_handler', 'imported_empty'];
+  const n = (status.sites || []).filter(s => policiesOf(s).some(p => ENFORCING.includes(p.status))).length;
   if (n) return { tone: 'ok', title: `Enforced on ${n} ${n === 1 ? 'site' : 'sites'}`, body: '' };
   if (recordCount > 0) return { tone: 'warn', title: 'Stored but not imported', body: 'No site imports the ban list, so these bans are not enforced yet.' };
   return { tone: 'none', title: 'No site imports the ban list', body: 'Add the import line to a site to enforce bans there.' };

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.join(import.meta.dirname, '..');
-const { globToRegExp, importMatches, planSiteInsertion } = await import(path.join(ROOT, 'src', 'static', 'js', 'app', 'snippet-insert.js'));
+const { IMPORT_AFTER, SOURCE_FILES, globToRegExp, importMatches, planSiteInsertion } = await import(path.join(ROOT, 'src', 'static', 'js', 'app', 'snippet-insert.js'));
 let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
 
@@ -102,5 +102,17 @@ check('the CrowdSec snippets carry their metadata', () => {
   assert.match(f.code, /^log_append <user_agent \{http\.request\.header\.User-Agent\}$/m);
   assert.match(f.code, /^log_append auth_challenge \{http\.response\.header\.Www-Authenticate\}$/m);
   assert.doesNotMatch(f.code, /Authorization|Cookie/i);
+});
+check('IMPORT_AFTER mirrors render.AFTER in src/bans/render.py', () => {
+  const py = fs.readFileSync(path.join(ROOT, 'src', 'bans', 'render.py'), 'utf8');
+  const m = py.match(/^AFTER = \{(.*)\}$/m);
+  assert.ok(m, 'render.AFTER not found');
+  const parsed = {};
+  for (const [, k, v] of m[1].matchAll(/"(\w+)":\s*\(([^)]*)\)/g)) parsed[k] = [...v.matchAll(/"(\w+)"/g)].map(x => x[1]);
+  assert.deepEqual(IMPORT_AFTER, parsed);
+});
+check('SOURCE_FILES mirrors the PolicySource file names', () => {
+  const py = fs.readFileSync(path.join(ROOT, 'src', 'bans', 'render.py'), 'utf8');
+  for (const [name, file] of Object.entries(SOURCE_FILES)) assert.match(py, new RegExp(`"${name}": PolicySource\\("${name}", "${file}"`));
 });
 console.log(`\n${passed} passed`);

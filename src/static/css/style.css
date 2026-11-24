@@ -579,3 +579,5 @@ details.raw[open]{flex-basis:100%}
 .dlg-form .dlg-error{color:var(--crit);font-size:var(--t-sm);margin:8px 0 0}
 .ban-sect{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .ban-badge{display:inline-flex;gap:4px;align-items:center;font-weight:600;color:var(--crit)}
+.sec-sites .sec-policy{display:flex;flex-wrap:wrap;gap:.25rem .75rem;align-items:baseline;grid-column:1/-1}
+.sec-src{font-size:var(--t-xs);text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);min-width:5.5rem}

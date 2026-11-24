@@ -8,8 +8,9 @@ import { unbanRecords } from './ban-dialog.js';
 import { confirmDialog } from './ui/dialog.js';
 import { toast } from './ui/toast.js';
 import { requestJson as call } from './security-api.js';
+import { CrowdSecSection } from './security-crowdsec.js';
 import {
-  DURATIONS, banPayload, createdCell, errorMessage, expiryLabel, outcomeText, overallState, staleNotice, HOST_RECOVERY_URL,
+  DURATIONS, SOURCE_LABELS, banPayload, capacityText, createdCell, errorMessage, expiryLabel, outcomeText, overallState, staleNotice, HOST_RECOVERY_URL,
   protectedLabel, recoveryActionLabel, siteActions, siteStatus,
 } from './security-model.js';
 
@@ -91,24 +92,30 @@ function BanList({ records, onDone }) {
     </table>`;
 }
 
-function Sites({ sites, importLine }) {
+function Sites({ sites, sources }) {
   if (!sites.length) return html`<p class="metrics-hint">No sites in the running configuration.</p>`;
+  const names = Object.keys(sources);
   return html`
-    <ul class="sec-sites">${sites.map(s => {
-      const st = siteStatus(s);
-      const acts = siteActions(s);
-      return html`
-        <li key=${s.label + ':' + (s.line || '')} class=${'tone-' + st.tone}>
-          <span class="mono">${s.label}</span>
-          <span class="sec-state">${st.label}</span>
-          ${st.detail && html`<span class="muted small">${st.detail}</span>`}
-          <span class="acts">
-            ${acts.includes('insert') && html`<button class="btn sm" type="button"
-                onClick=${() => document.dispatchEvent(new CustomEvent('app:insert-ban-import', { detail: { line: s.line } }))}>Add import in editor</button>`}
-            ${acts.includes('copy') && html`<button class="btn sm btn-quiet" type="button" onClick=${() => copy(importLine, 'Import line')}><${Icon} name="copy" size=${14} />Copy import</button>`}
-          </span>
-        </li>`;
-    })}</ul>`;
+    <ul class="sec-sites">${sites.map(s => html`
+      <li key=${s.label + ':' + (s.line || '')}>
+        <span class="mono">${s.label}</span>
+        ${names.map(name => {
+          const p = s.policies?.[name] || s;
+          const st = siteStatus(p);
+          const acts = siteActions({ ...p, source: s.source });
+          return html`
+            <div class=${'sec-policy tone-' + st.tone} key=${name}>
+              ${names.length > 1 && html`<span class="sec-src">${SOURCE_LABELS[name] || name}</span>`}
+              <span class="sec-state">${st.label}</span>
+              ${st.detail && html`<span class="muted small">${st.detail}</span>`}
+              <span class="acts">
+                ${acts.includes('insert') && html`<button class="btn sm" type="button"
+                    onClick=${() => document.dispatchEvent(new CustomEvent('app:insert-ban-import', { detail: { line: s.line, source: name } }))}>Add import in editor</button>`}
+                ${acts.includes('copy') && html`<button class="btn sm btn-quiet" type="button" onClick=${() => copy(sources[name].import_line, 'Import line')}><${Icon} name="copy" size=${14} />Copy import</button>`}
+              </span>
+            </div>`;
+        })}
+      </li>`)}</ul>`;
 }
 
 function Protected({ groups }) {
@@ -118,7 +125,7 @@ function Protected({ groups }) {
     </dl>`;
 }
 
-function Recovery({ info, onDone }) {
+function Recovery({ info, onDone, sources }) {
   if (!info?.required) return null;
   const finish = (r, okText) => {
     toast(r.ok ? okText : errorMessage(r.body, r.status), { kind: r.ok ? 'ok' : 'error' });
@@ -128,7 +135,12 @@ function Recovery({ info, onDone }) {
     const ok = await confirmDialog({ title: recoveryActionLabel(action), body: 'The console rewrites the managed files and reloads Caddy.', confirmLabel: 'Continue', danger: action !== 'use_candidate' });
     if (ok) finish(await call('/api/security/recovery', 'POST', { recovery_id: info.recovery_id, action, backup_id: backupId }), 'Recovered.');
   };
-  const reapply = async () => finish(await call('/api/security/reapply', 'POST', { source: 'manual' }), 'Re-applied; Caddy reloaded.');
+  const reapply = async (source) => finish(await call('/api/security/reapply', 'POST', { source }), 'Re-applied; Caddy reloaded.');
+  const resetCrowdsec = async () => {
+    const ok = await confirmDialog({ title: 'Delete every stored CrowdSec decision?', body: 'Caddy reloads without them. CrowdSec decisions that are still active return within the sync interval unless you also delete them in CrowdSec.', confirmLabel: 'Reset CrowdSec decisions', danger: true });
+    if (ok) finish(await call('/api/security/reset', 'POST', { source: 'crowdsec', version: info.state_version, confirm: true }), 'CrowdSec decisions reset.');
+  };
+  const held = info.held_sources?.length ? info.held_sources : ['manual'];
   const reset = async () => {
     const ok = await confirmDialog({ title: 'Delete every manual ban?', body: 'The list is emptied and Caddy reloads. This cannot be undone.', confirmLabel: 'Reset manual bans', danger: true });
     if (ok) finish(await call('/api/security/reset', 'POST', { source: 'manual', version: info.state_version, confirm: true }), 'Manual bans reset.');
@@ -140,8 +152,9 @@ function Recovery({ info, onDone }) {
       ${info.files.length > 0 && html`<p class="muted small">Files: ${info.files.join(', ')}</p>`}
       <div class="acts">
         ${info.actions.filter(a => a !== 'restore_backup').map(a => html`<button class="btn" type="button" key=${a} onClick=${() => run(a)}>${recoveryActionLabel(a)}</button>`)}
-        ${info.reapply && html`<button class="btn btn-primary" type="button" onClick=${reapply}>Re-apply</button>`}
+        ${info.reapply && held.map(n => html`<button class="btn btn-primary" type="button" key=${'re-' + n} onClick=${() => reapply(n)}>${n === 'manual' && held.length === 1 ? 'Re-apply' : `Re-apply ${SOURCE_LABELS[n] || n}`}</button>`)}
         ${info.reset && html`<button class="btn btn-danger" type="button" onClick=${reset}>Reset manual bans</button>`}
+        ${info.reset && sources?.crowdsec && html`<button class="btn btn-danger" type="button" onClick=${resetCrowdsec}>Reset CrowdSec decisions</button>`}
       </div>
       ${info.actions.includes('restore_backup') && html`
         <ul class="sec-backups">${info.backups.map(b => html`
@@ -176,22 +189,28 @@ function App() {
   if (error && !status) return html`<div class="page"><p class="metrics-hint error">Could not load Security: ${error}</p></div>`;
   if (!status) return html`<div class="page"><p class="metrics-hint">Loading…</p></div>`;
   const records = bans?.records || [];
+  const manualRecords = records.filter(r => r.source === 'manual');
+  const crowdsecRecords = records.filter(r => r.source === 'crowdsec');
   const manual = status.sources.manual;
+  const cs = status.sources.crowdsec;
+  // A source that is not enabled has no policy file to show (CrowdSec off).
+  const active = Object.fromEntries(Object.entries(status.sources).filter(([, s]) => s.enabled !== false));
   const writable = status.available && !status.degraded;
   return html`
     <div class="page sec">
-      <${Verdict} status=${status} records=${records.length} stale=${error ? loadedAt : null} recoveryShown=${!!status.recovery?.required} />
-      <${Recovery} info=${status.recovery} onDone=${load} />
+      <${Verdict} status=${status} records=${manualRecords.length} stale=${error ? loadedAt : null} recoveryShown=${!!status.recovery?.required} />
+      <${Recovery} info=${status.recovery} onDone=${load} sources=${status.sources} />
       <section aria-labelledby="sec-bans-h">
         <div class="h-sec"><h2 id="sec-bans-h">Manual bans</h2>
-          <p>${manual.active_records} active, ${manual.rendered_prefixes} of ${status.limits.max_prefixes} prefixes rendered.</p></div>
+          <p>${manual.active_records} active. ${capacityText(status.limits)}</p></div>
         ${writable ? html`<${AddBan} onDone=${load} />` : html`<p class="metrics-hint">Changes are paused until the problem above is resolved.</p>`}
-        ${bans?.error ? html`<p class="metrics-hint error">${bans.error}</p>` : html`<${BanList} records=${records} onDone=${load} />`}
+        ${bans?.error ? html`<p class="metrics-hint error">${bans.error}</p>` : html`<${BanList} records=${manualRecords} onDone=${load} />`}
       </section>
+      ${cs?.enabled && html`<${CrowdSecSection} src=${cs} records=${crowdsecRecords} onCopy=${copy} />`}
       <section aria-labelledby="sec-sites-h">
         <div class="h-sec"><h2 id="sec-sites-h">Sites</h2><p>Proven from Caddy's running configuration.</p></div>
-        <p class="sec-import">Import line: <code>${manual.import_line}</code></p>
-        <${Sites} sites=${status.sites} importLine=${manual.import_line} />
+        ${Object.entries(active).map(([n, s]) => html`<p class="sec-import" key=${n}>${SOURCE_LABELS[n] || n} import line: <code>${s.import_line}</code></p>`)}
+        <${Sites} sites=${status.sites} sources=${active} />
       </section>
       <section aria-labelledby="sec-prot-h">
         <div class="h-sec"><h2 id="sec-prot-h">Never banned</h2><p>Refused at input and excluded again by the generated policy.</p></div>

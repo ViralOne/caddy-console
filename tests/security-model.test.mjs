@@ -7,6 +7,7 @@ import path from 'node:path';
 const APP = path.join(import.meta.dirname, '..', 'src', 'static', 'js', 'app');
 const M = await import(path.join(APP, 'security-model.js'));
 
+const F = await import(path.join(APP, 'format.js'));
 let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
 const NOW = Date.parse('2026-11-23T20:00:00Z');
@@ -140,15 +141,73 @@ check('both exact and range', () => {
   assert.equal(M.banState(look([exactRec, rangeRec], ['e1'])).coveredText, 'Also covered by 203.0.113.0/24');
 });
 
+console.log('\n--- CrowdSec ---');
+const CS_OK = { enabled: true, stale: false, origins: ['crowdsec', 'cscli'], list_origins: [],
+  sync: { lapi_state: 'ok', apply_state: 'ok', decisions: 3, updated_at: '2026-11-23T19:59:50Z',
+          last_success_at: '2026-11-23T19:59:50Z', last_snapshot_at: '2026-11-23T19:00:00Z', last_apply_at: null } };
+check('CrowdSec health wording and tone', () => {
+  assert.deepEqual([M.crowdsecState(CS_OK, NOW).tone, M.crowdsecState(CS_OK, NOW).title], ['ok', '3 active decisions synced']);
+  const down = { ...CS_OK, sync: { ...CS_OK.sync, lapi_state: 'unreachable', lapi_message: 'LAPI is unreachable (ConnectionError).' } };
+  const s = M.crowdsecState(down, NOW);
+  assert.deepEqual([s.tone, s.title], ['warn', 'CrowdSec unreachable, last synced list kept']);
+  assert.match(s.detail, /ConnectionError.*Last successful poll just now/);
+  const key = M.crowdsecState({ ...CS_OK, sync: { ...CS_OK.sync, lapi_state: 'auth_failed' } }, NOW);
+  assert.equal(key.tone, 'crit');
+  const cap = M.crowdsecState({ ...CS_OK, sync: { ...CS_OK.sync, apply_state: 'capacity_exceeded', apply_message: 'too many' } }, NOW);
+  assert.deepEqual([cap.tone, cap.title], ['crit', 'Over capacity: automatic apply paused']);
+  assert.equal(M.crowdsecState({ ...CS_OK, stale: true }, NOW).title, 'CrowdSec sync report is out of date');
+  assert.equal(M.crowdsecState({ ...CS_OK, sync: null }, NOW).title, 'No CrowdSec sync report yet');
+  assert.equal(M.crowdsecState({ enabled: false }, NOW).title, 'CrowdSec is not configured');
+});
+check('a stale report is never shown as healthy', () => {
+  const s = M.crowdsecState({ ...CS_OK, stale: true }, NOW);
+  assert.notEqual(s.tone, 'ok');
+  assert.doesNotMatch(s.title, /synced|Connected/);
+});
+check('sync times are relative with an absolute title', () => {
+  const t = M.syncTimes(CS_OK.sync, NOW);
+  assert.deepEqual(t.map(x => [x.label, x.text]), [['Last snapshot', '1h ago'], ['Last successful poll', 'just now'], ['Last apply', 'Never']]);
+  assert.equal(t[0].title, F.absoluteTime('2026-11-23T19:00:00Z'));
+});
+check('ignored counts are labelled and sorted', () => {
+  assert.deepEqual(M.ignoredRows({ origin: 1, 'protected:private': 4, not_ban: 0, odd: 2 }).map(r => [r.label, r.count]), [
+    ['Protected (private network)', 4], ['odd', 2], ['Origin not in CROWDSEC_ORIGINS', 1]]);
+  assert.deepEqual(M.ignoredRows(undefined), []);
+});
+check('the cscli command only ever carries a numeric decision id', () => {
+  assert.equal(M.cscliDeleteCommand({ source_id: '42' }), 'cscli decisions delete --id 42');
+  for (const bad of ['42; rm -rf /', '', null, '4 2', 'x']) assert.equal(M.cscliDeleteCommand({ source_id: bad }), '');
+});
+check('capacity by source', () => {
+  assert.equal(M.capacityText({ max_prefixes: 10000, used: 5, by_source: { manual: 3, crowdsec: 2 } }),
+    '5 of 10000 prefixes rendered (manual 3, CrowdSec 2).');
+  assert.equal(M.capacityText({ max_prefixes: 10000, used: 3, by_source: { manual: 3 } }), '3 of 10000 prefixes rendered.');
+});
+check('sync by_origin counts are listed, largest first', () => {
+  assert.equal(M.originCountsText({ by_origin: { cscli: 1, crowdsec: 5 } }), 'crowdsec 5, cscli 1');
+  assert.equal(M.originCountsText({ by_origin: {} }), '');
+  assert.equal(M.originCountsText(null), '');
+});
+check('overall state counts any enforcing source and any held file', () => {
+  const base = { available: true, caddy: { reachable: true }, sources: { manual: { hold: false }, crowdsec: { ...CS_OK, hold: false } } };
+  const sites = [{ status: 'not_imported', policies: { manual: { status: 'not_imported' }, crowdsec: { status: 'enforced' } } }];
+  assert.equal(M.overallState({ ...base, sites }, 0).title, 'Enforced on 1 site');
+  const held = { ...base, sites, sources: { ...base.sources, crowdsec: { ...base.sources.crowdsec, hold: true } } };
+  assert.equal(M.overallState(held, 0).title, 'Policy differs from state');
+  const risk = [{ status: 'management', policies: { manual: { status: 'management' }, crowdsec: { status: 'management_imported' } } }];
+  assert.equal(M.overallState({ ...base, sites: risk }, 0).tone, 'crit');
+  const capped = { ...base, sites, sources: { ...base.sources, crowdsec: { ...CS_OK, hold: false, sync: { ...CS_OK.sync, apply_state: 'capacity_exceeded' } } } };
+  assert.deepEqual([M.overallState(capped, 0).tone, M.overallState(capped, 0).title], ['warn', 'CrowdSec sync needs attention']);
+});
+
 console.log('\n--- no HTML sinks ---');
-for (const f of ['security.js', 'security-model.js', 'ban-dialog.js', 'ip-popover.js', 'snippet-insert.js', 'panels.js', 'ui/dialog.js']) {
+for (const f of ['security.js', 'security-crowdsec.js', 'security-model.js', 'ban-dialog.js', 'ip-popover.js', 'snippet-insert.js', 'panels.js', 'ui/dialog.js']) {
   const p = path.join(APP, f);
   if (!fs.existsSync(p)) continue;
   check(`${f} never writes HTML`, () =>
     assert.doesNotMatch(fs.readFileSync(p, 'utf8'), /innerHTML|outerHTML|insertAdjacentHTML|dangerouslySetInnerHTML/));
 }
 console.log('\n--- Phase 1 polish ---');
-const F = await import(path.join(APP, 'format.js'));
 check('Created is relative, with the absolute time as its title', () => {
   const c = M.createdCell('2026-11-23T19:00:00Z', NOW);
   assert.equal(c.text, '1h ago');
