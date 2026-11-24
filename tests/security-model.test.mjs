@@ -12,6 +12,14 @@ let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
 const NOW = Date.parse('2026-11-23T20:00:00Z');
 
+check('the save notice reflects the real reload status', () => {
+  assert.deepEqual(M.saveNotice('Country policy', { reload_status: 'applied' }), { kind: 'ok', text: 'Country policy saved; Caddy reloaded.' });
+  assert.equal(M.saveNotice('X', { reload_status: 'not_required' }).kind, 'ok');
+  const bad = M.saveNotice('X', { reload_status: 'unknown', message: 'Check Caddy.' });
+  assert.equal(bad.kind, 'warn');
+  assert.match(bad.text, /did not confirm the reload \(unknown\)\. Check Caddy\./);
+  assert.doesNotMatch(M.saveNotice('X', {}).text, /Caddy reloaded/);
+});
 check('the list-origin warning points at plugin mode, which exists now', () => {
   assert.ok(M.LIST_ORIGIN_WARNING.includes('docs/security.md#crowdsec-plugin'));
   assert.ok(!M.LIST_ORIGIN_WARNING.includes('once it is available'));

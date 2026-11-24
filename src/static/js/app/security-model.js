@@ -53,6 +53,15 @@ export function errorMessage(body, status) {
   return status ? `Request failed (HTTP ${status}).` : 'Request failed.';
 }
 
+/** Toast for a saved policy, from the transaction outcome's reload_status. */
+export function saveNotice(label, body) {
+  switch (body?.reload_status) {
+    case 'applied': return { kind: 'ok', text: `${label} saved; Caddy reloaded.` };
+    case 'not_required': return { kind: 'ok', text: `${label} saved; no reload was needed.` };
+    default: return { kind: 'warn', text: `${label} saved, but Caddy did not confirm the reload (${body?.reload_status || 'unknown'}). ${body?.message || ''}`.trim() };
+  }
+}
+
 export function outcomeText(body, verb) {
   const value = body?.record?.value || body?.value || '';
   const done = `${verb === 'unban' ? 'Unbanned' : 'Banned'} ${value}`.trim();

@@ -9,6 +9,7 @@ import { toast } from './ui/toast.js';
 import { requestJson as call } from './security-api.js';
 import {
   CLIENT_IP_MODES, clientIpConfirm, clientIpMode, clientIpPayload, clientIpState, errorMessage, rangesAgeText, rangesNotice,
+  saveNotice,
 } from './security-model.js';
 
 const html = htm.bind(h);
@@ -33,7 +34,7 @@ export function ClientIpSection({ info, onDone, onCopy }) {
     const r = await call('/api/security/client-ip-profile', 'PUT', payload);
     setBusy(false);
     if (!r.ok) { setError(errorMessage(r.body, r.status)); return; }
-    toast('Client-IP profile saved; Caddy reloaded.', { kind: 'ok' });
+    { const n = saveNotice('Client-IP profile', r.body); toast(n.text, { kind: n.kind }); }
     onDone();
   };
   const refresh = async () => {

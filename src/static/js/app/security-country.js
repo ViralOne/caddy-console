@@ -8,6 +8,7 @@ import { toast } from './ui/toast.js';
 import { requestJson as call } from './security-api.js';
 import {
   SPECIAL_WARNING, countryOptions, countryPayload, countryPrefixText, countryState, errorMessage, specialSelected, toggleCode,
+  saveNotice,
 } from './security-model.js';
 
 const html = htm.bind(h);
@@ -39,7 +40,7 @@ export function CountrySection({ info, onDone, onCopy }) {
     const r = await call('/api/security/country-policy', 'PUT', payload);
     setBusy(false);
     if (!r.ok) { setError(errorMessage(r.body, r.status)); return; }
-    toast('Country policy saved; Caddy reloaded.', { kind: 'ok' });
+    { const n = saveNotice('Country policy', r.body); toast(n.text, { kind: n.kind }); }
     onDone();
   };
   return html`

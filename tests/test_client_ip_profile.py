@@ -85,6 +85,15 @@ class TrustWarningTest(unittest.TestCase):
         self.assertEqual(scan.trust_warnings(self.TEXT.replace("private_ranges", "172.31.0.2/32"), "direct"), [])
 
 
+class BroadTrustTest(unittest.TestCase):
+    def test_default_routes_and_wider_ranges_warn(self):
+        for token in ("0.0.0.0/0", "::/0", "10.0.0.0/7", "192.168.0.0/16", "fc00::/6"):
+            text = f"{{\n\tservers {{\n\t\ttrusted_proxies static 173.245.48.0/20 {token}\n\t}}\n}}\n"
+            (warning,) = scan.trust_warnings(text, "direct")
+            self.assertIn(token, warning)
+            self.assertNotIn("173.245.48.0/20", warning)
+
+
 class ProfileApiTest(_bans.ApiCase):
     def setUp(self):
         super().setUp()
@@ -131,6 +140,24 @@ class ProfileApiTest(_bans.ApiCase):
         self.assertEqual(oct(os.stat(profile.PATH).st_mode & 0o777), "0o600")
         self.assertIn(("client_ip_profile_changed", "cloudflare-proxied"),
                       [(e["action"], e["detail"]) for e in audit.iter_entries()])
+
+    def test_a_profile_save_keeps_ranges_refreshed_after_it_validated(self):
+        self.put({"mode": "cloudflare-proxied"})
+        newer = profile.load_or_default()
+        newer.ranges = {"v4": ["173.245.48.0/20"], "v6": newer.ranges["v6"]}
+        newer.ranges_source = "cloudflare"
+        real = profile.from_payload
+
+        def stale(payload, current):
+            out = real(payload, current)                  # validated against the old list ...
+            fsio.atomic_write(profile.PATH, profile.dumps(newer), 0o600)    # ... a refresh lands before the lock
+            return out
+        with mock.patch.object(profile, "from_payload", stale):
+            self.assertEqual(self.put({"mode": "cloudflare-proxied"}).status_code, 200)
+        saved = profile.load()
+        self.assertEqual((saved.ranges["v4"], saved.ranges_source), (["173.245.48.0/20"], "cloudflare"))
+        self.assertEqual(read(render.PROFILE.path).count("173.245.48.0/20"), 1)
+        self.assertNotIn("103.21.244.0/22", read(render.PROFILE.path))
 
     def test_edge_ranges_cannot_be_banned_in_proxied_mode(self):
         self.put({"mode": "cloudflare-proxied"})

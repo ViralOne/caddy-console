@@ -735,7 +735,10 @@ validates every line: canonical public networks, bounded size, and at least half
 of the previous address space kept. A valid change regenerates the trusted
 proxies, the protected set and the country file in one journaled transaction and
 reloads Caddy once. A failed or implausible fetch keeps the last good list and
-Security shows its age. Direct and tunnel mode never contact Cloudflare.
+Security shows its age. A refresh also rejects a list that adds a prefix wider
+than /12 (IPv4) or /29 (IPv6) or grows the address space to more than twice the
+previous list. Only proxied mode refreshes on its own schedule; **Refresh ranges**
+contacts Cloudflare in any mode, because you ask for it.
 
 ### Country policy
 

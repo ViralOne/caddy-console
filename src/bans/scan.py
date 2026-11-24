@@ -3,6 +3,7 @@ in, whether it imports a managed policy first, and which site is the console's
 own. A brace counter, not a parser, mirroring static/js/app/caddyfile-sites.js.
 """
 import os
+import ipaddress
 import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -283,6 +284,15 @@ _TRUSTED = re.compile(r"^trusted_proxies\s+static\s+(.+)$")
 _BROAD = {"private_ranges", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7", "fd00::/8"}
 
 
+def _wider_than_private(token) -> bool:
+    """0.0.0.0/0, ::/0 and anything else broader than the private ranges it names."""
+    try:
+        net = ipaddress.ip_network(token, strict=False)
+    except ValueError:
+        return False
+    return net.prefixlen < (8 if net.version == 4 else 7)
+
+
 def trust_warnings(text, mode: str, tunnel_only: bool = False) -> list:
     """Spec 4.1: a broad private-range trust lets any LAN or published-port peer
     forge CF-Connecting-IP. Accepted only for a confirmed tunnel-only listener."""
@@ -291,7 +301,7 @@ def trust_warnings(text, mode: str, tunnel_only: bool = False) -> list:
         m = _TRUSTED.match(line)
         if not m or depth < 2:
             continue
-        broad = sorted(set(m.group(1).split()) & _BROAD)
+        broad = sorted(t for t in m.group(1).split() if t in _BROAD or _wider_than_private(t))
         if broad and not (mode == "cloudflare-tunnel" and tunnel_only):
             out.append(f"Line {ln}: trusted_proxies {' '.join(broad)} lets any peer in those ranges, including LAN "
                        "and published-port clients, forge the client IP. Trust the fixed cloudflared address, or "

@@ -662,7 +662,8 @@ def _policy_transaction(actor, source, events, *, prof=None, check=None, force=(
             if stop is not None:
                 return stop
         holds = {} if corrupt else {k: v for k, v in _holds(state).items() if k not in force}
-        candidate = prof if prof is not None else profile.load_or_default()
+        candidate = prof(profile.load_or_default()) if callable(prof) else (
+            prof if prof is not None else profile.load_or_default())
         prot = protected_for(state, prof=candidate)
         country_cand = country_candidate
         if strict_country_shape and country_cand is None:
@@ -738,8 +739,15 @@ def set_client_ip_profile(payload, actor):
         candidate = profile.from_payload(payload, profile.load_or_default())
     except profile.InputError as e:
         return _error(e.code, str(e), 400)
+
+    def under_lock(current):
+        # Ranges, their source and the recorded hashes are re-read under the lock, so a
+        # refresh that landed since validation is never undone by this save.
+        return dataclasses.replace(candidate, ranges={k: list(v) for k, v in current.ranges.items()},
+                                   ranges_source=current.ranges_source, ranges_fetched_at=current.ranges_fetched_at,
+                                   last_rendered_hashes=dict(current.last_rendered_hashes))
     detail = candidate.mode + (f" peers={' '.join(candidate.tunnel_peers)}" if candidate.tunnel_peers else "")
-    return _policy_transaction(actor, "profile", [("client_ip_profile_changed", detail)], prof=candidate,
+    return _policy_transaction(actor, "profile", [("client_ip_profile_changed", detail)], prof=under_lock,
                                force=("cloudflare",), strict_country_shape=True)
 
 
