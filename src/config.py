@@ -90,3 +90,14 @@ BANS_MAX = bounded_int("BANS_MAX", 10000, 1, 100000)
 # Extra protected IPs/CIDRs, comma or space separated. Parsed by src/bans/protected.py
 # at app start; one invalid token refuses startup.
 BANS_NEVER = os.environ.get("BANS_NEVER", "")
+
+# CrowdSec file sync (docs/security.md#crowdsec-file-sync). Only the optional
+# docker-compose.crowdsec.yaml sets CROWDSEC_URL; empty means no CrowdSec at all.
+# src/bans/lapi.py validates the URL and origins; service.init_config() refuses
+# startup on an invalid value. The key is read at poll time, never logged.
+BANS_SYNC_INTERVAL = bounded_int("BANS_SYNC_INTERVAL", 30, 10, 3600)
+CROWDSEC_URL = os.environ.get("CROWDSEC_URL", "")
+CROWDSEC_CONSOLE_BOUNCER_KEY = os.environ.get("CROWDSEC_CONSOLE_BOUNCER_KEY", "")
+CROWDSEC_CONSOLE_BOUNCER_KEY_FILE = os.environ.get("CROWDSEC_CONSOLE_BOUNCER_KEY_FILE", "").strip()
+CROWDSEC_ORIGINS = os.environ.get("CROWDSEC_ORIGINS", "crowdsec,cscli")
+CROWDSEC_POLL_INTERVAL = bounded_int("CROWDSEC_POLL_INTERVAL", 10, 5, 300)

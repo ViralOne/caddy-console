@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from .. import audit, config
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
-from . import addr, detect, fsio, protected, render, scan, store, txn
+from . import addr, detect, fsio, lapi, protected, render, scan, store, txn
 from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
@@ -79,11 +79,17 @@ def never_networks():
 
 
 def init_config() -> None:
-    """create_app() calls this: an invalid BANS_NEVER token refuses startup."""
+    """create_app() calls this: an invalid BANS_NEVER, CROWDSEC_URL or
+    CROWDSEC_ORIGINS refuses startup."""
     try:
         never_networks()
     except protected.ConfigError as e:
         raise RuntimeError(f"BANS_NEVER has an {e}") from e
+    try:
+        lapi.parse_url(config.CROWDSEC_URL)
+        lapi.parse_origins(config.CROWDSEC_ORIGINS)
+    except lapi.ConfigError as e:
+        raise RuntimeError(str(e)) from e
 
 
 # --- availability (spec 1.1) ------------------------------------------------------
