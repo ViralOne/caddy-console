@@ -74,9 +74,10 @@ export function ClientIpSection({ info, onDone, onCopy }) {
         <div class="acts">
           <button class="btn" type="button" disabled=${busy} onClick=${refresh}><${Icon} name="restore" size=${14} />Refresh ranges</button>
         </div>`}
-      <div class="codelines">
-        <${CodeLine} label="Import line for the global servers block" code=${info.import_line} onCopy=${onCopy} />
-      </div>
+      ${info.mode !== 'direct' && html`
+        <div class="codelines">
+          <${CodeLine} label="Import line for the global servers block" code=${info.import_line} onCopy=${onCopy} />
+        </div>`}
       ${(info.dependencies || []).length > 0 && html`<p class="sec-p sec-detail">Generated files: <span class="mono">${info.dependencies.map(d => `${d.file} (${d.hash})`).join(', ')}</span></p>`}
     </section>`;
 }

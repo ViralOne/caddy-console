@@ -172,12 +172,51 @@ export function cscliDeleteCommand(record) {
   return /^[0-9]{1,20}$/.test(id) ? `cscli decisions delete --id ${id}` : '';
 }
 
+/** Every count on the Security page: thousands separators, always. */
+export const count = (n) => Number(n ?? 0).toLocaleString('en-US');
+
 export function capacityText(limits) {
   const by = Object.entries(limits?.by_source || {});
   const name = (n) => (n === 'manual' ? 'manual' : SOURCE_LABELS[n] || n);
-  const parts = by.length > 1 ? ` (${by.map(([n, c]) => `${name(n)} ${c}`).join(', ')})` : '';
-  return `${limits?.used ?? 0} of ${limits?.max_prefixes ?? 0} prefixes rendered${parts}.`;
+  const parts = by.length > 1 ? ` (${by.map(([n, c]) => `${name(n)} ${count(c)}`).join(', ')})` : '';
+  return `${count(limits?.used)} of ${count(limits?.max_prefixes)} prefixes${parts}`;
 }
+
+/** The IP bans header: "3 active bans · 3 of 10,000 prefixes (manual 1, CrowdSec 2)". */
+export function bansHeader(rows, limits) {
+  const active = rows.filter(r => !r.expired).length;
+  return `${count(active)} active ${active === 1 ? 'ban' : 'bans'} · ${capacityText(limits)}`;
+}
+
+/** One list for every source. `cs` is status.sources.crowdsec (may be absent).
+ * CrowdSec rows say whether they still sync; they are never hidden while stored. */
+export function banRows(records, cs) {
+  const syncing = !!cs?.enabled;
+  return (records || []).filter(r => r.source === 'manual' || r.source === 'crowdsec').map(r => {
+    if (r.source === 'manual') return { ...r, sourceLabel: 'Manual', detail: r.reason || '', by: r.actor || '' };
+    const label = syncing ? (r.origin ? `CrowdSec · ${r.origin}` : 'CrowdSec') : 'CrowdSec (not syncing)';
+    return { ...r, sourceLabel: label, notSyncing: !syncing, detail: r.scenario || '', by: r.origin || 'CrowdSec' };
+  });
+}
+
+export const BAN_FILTERS = [{ id: 'all', label: 'All' }, { id: 'manual', label: 'Manual' }, { id: 'crowdsec', label: 'CrowdSec' }];
+
+export function filterCounts(rows) {
+  return { all: rows.length, manual: rows.filter(r => r.source === 'manual').length, crowdsec: rows.filter(r => r.source === 'crowdsec').length };
+}
+
+export const filterRows = (rows, f) => (f === 'all' || !f ? rows : rows.filter(r => r.source === f));
+
+/** What a CrowdSec row offers: unban here (machine login configured), else the copyable command. */
+export function crowdsecRowAction(row, cs) {
+  if (row.source !== 'crowdsec') return null;
+  if (row.notSyncing) return { kind: 'none' };
+  if (cs?.write_configured && /^[1-9][0-9]{0,19}$/.test(String(row.source_id ?? ''))) return { kind: 'unban' };
+  const cmd = cscliDeleteCommand(row);
+  return cmd ? { kind: 'copy', cmd } : { kind: 'none' };
+}
+
+export const CROWDSEC_WRITE_HINT = 'Add CrowdSec machine credentials to unban here.';
 
 const SITE = {
   enforced: ['Protected', 'ok'],
@@ -328,11 +367,11 @@ export const recoveryActionLabel = (action) => ({
 
 export const CLIENT_IP_MODES = [
   { id: 'direct', label: 'Direct',
-    explain: 'Visitors connect straight to Caddy. The client IP is the TCP peer, and forwarding headers are ignored, so nobody can claim another address.' },
+    explain: 'Visitors connect straight to Caddy. The client IP is the TCP peer; forwarding headers are ignored.' },
   { id: 'cloudflare-proxied', label: 'Cloudflare proxied DNS',
-    explain: 'Visitors reach Cloudflare, which connects to Caddy from its published edge ranges. CF-Connecting-IP is trusted only from those ranges, which the console keeps current. Your origin must accept connections only from Cloudflare.' },
+    explain: 'Cloudflare connects to Caddy from its edge ranges, which the console keeps current. CF-Connecting-IP is trusted only from those ranges; accept connections only from Cloudflare.' },
   { id: 'cloudflare-tunnel', label: 'Cloudflare Tunnel',
-    explain: 'cloudflared connects to Caddy from a private address. CF-Connecting-IP is trusted only from that address, so give it a fixed address or a narrow dedicated subnet, and publish no Caddy port.' },
+    explain: 'cloudflared connects to Caddy from a private address. CF-Connecting-IP is trusted only from there, so give it a fixed address or narrow subnet and publish no Caddy port.' },
 ];
 export const clientIpMode = (id) => CLIENT_IP_MODES.find(m => m.id === id) || CLIENT_IP_MODES[0];
 
@@ -431,8 +470,8 @@ export const specialSelected = (codes, info) => (codes || []).filter(c => (info?
 export function countryPrefixText(summary) {
   const p = summary?.prefixes || {};
   if (!Number.isFinite(p.total)) return '';
-  const base = `${p.v4 ?? 0} IPv4 and ${p.v6 ?? 0} IPv6 prefixes (${p.total} of ${summary.cap} allowed)`;
-  return p.total > summary.warn ? `${base}. Above ${summary.warn}, reloads and adaptation get slower; Cloudflare WAF country rules scale better.` : base;
+  const base = `${count(p.v4)} IPv4 and ${count(p.v6)} IPv6 prefixes (${count(p.total)} of ${count(summary.cap)} allowed)`;
+  return p.total > summary.warn ? `${base}. Above ${count(summary.warn)}, reloads and adaptation get slower; Cloudflare WAF country rules scale better.` : base;
 }
 
 export function countryState(info) {

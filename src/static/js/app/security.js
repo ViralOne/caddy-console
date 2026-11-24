@@ -16,7 +16,7 @@ import { ClientIpSection } from './security-client-ip.js';
 import { CountrySection } from './security-country.js';
 import { Alert, CodeLine, Empty, Field, KV, Mark, SectionHead, Select } from './security-ui.js';
 import {
-  DURATIONS, SOURCE_LABELS, banPayload, capacityText, clientIpState, createdCell, crowdsecPath, crowdsecState, errorMessage, expiryLabel,
+  BAN_FILTERS, CROWDSEC_WRITE_HINT, DURATIONS, SOURCE_LABELS, banPayload, banRows, bansHeader, count, crowdsecRowAction, filterCounts, filterRows, clientIpState, createdCell, crowdsecPath, crowdsecState, errorMessage, expiryLabel,
   outcomeText, overallState, staleNotice, HOST_RECOVERY_URL, pluginSiteActions, protectedLabel, recoveryActionLabel, siteActions, siteStatus,
 } from './security-model.js';
 
@@ -61,10 +61,10 @@ function Figures({ status, manualCount, crowdsecCount }) {
   const ipState = ip ? clientIpState(ip) : null;
   const csState = cs?.enabled ? crowdsecState(cs) : null;
   const items = [
-    { key: 'bans', href: '#sec-bans-h', label: 'Manual bans', value: String(manualCount), sub: manualCount === 1 ? 'active ban' : 'active bans' },
-    csState && { key: 'cs', href: '#sec-cs-h', label: 'CrowdSec decisions', value: String(crowdsecCount), tone: csState.tone, sub: csState.title },
-    { key: 'sites', href: '#sec-sites-h', label: 'Sites enforcing bans', value: String(enforcing), of: `of ${sites.length}`, sub: enforcing < sites.length ? `${sites.length - enforcing} not enforced` : 'All sites' },
-    { key: 'cap', href: '#sec-bans-h', label: 'Prefixes rendered', value: (lim.used ?? 0).toLocaleString('en-US'), of: `of ${(lim.max_prefixes ?? 0).toLocaleString('en-US')}`, share },
+    { key: 'bans', href: '#sec-bans-h', label: 'Manual bans', value: count(manualCount), sub: manualCount === 1 ? 'active ban' : 'active bans' },
+    csState && { key: 'cs', href: '#sec-cs-h', label: 'CrowdSec decisions', value: count(crowdsecCount), tone: csState.tone, sub: csState.title },
+    { key: 'sites', href: '#sec-sites-h', label: 'Sites enforcing bans', value: count(enforcing), of: `of ${count(sites.length)}`, sub: enforcing < sites.length ? `${sites.length - enforcing} not enforced` : 'All sites' },
+    { key: 'cap', href: '#sec-bans-h', label: 'Prefixes rendered', value: count(lim.used), of: `of ${count(lim.max_prefixes)}`, share },
     ipState && { key: 'ip', href: '#sec-ip-h', label: 'Client IP', value: ipState.tone === 'ok' ? ipState.title : null, text: true, tone: ipState.tone, sub: ipState.tone === 'ok' ? '' : ipState.title },
   ].filter(Boolean);
   return html`
@@ -117,31 +117,63 @@ function AddBan({ onDone }) {
 export const ProtectedTag = ({ category }) => html`
   <span class="tag tag-warn" title=${'Protected: ' + protectedLabel(category)}><${Icon} name="warning" size=${12} />ignored, protected</span>`;
 
-function BanList({ records, onDone }) {
-  if (!records.length) return html`<${Empty}>No manual bans. Ban an address above, or from an IP in Explore.</${Empty}>`;
+function BanList({ rows, cs, stateVersion, onDone }) {
+  const [filter, setFilter] = useState('all');
+  const counts = filterCounts(rows);
+  const shown = filterRows(rows, filter);
   const unban = async (r) => { if (await unbanRecords([r.id], r.value)) onDone(); };
+  const unbanCrowdsec = async (r) => {
+    const ok = await confirmDialog({ title: `Unban ${r.value}?`, body: 'The decision is deleted in CrowdSec and Caddy reloads without it.', confirmLabel: 'Unban', danger: true });
+    if (!ok) return;
+    const res = await call(`/api/security/crowdsec/decisions/${encodeURIComponent(r.source_id)}`, 'DELETE');
+    toast(res.ok ? (res.body?.message || `${r.value} unbanned in CrowdSec.`) : errorMessage(res.body, res.status), { kind: res.ok ? 'ok' : 'error' });
+    onDone();
+  };
+  const stale = rows.filter(r => r.notSyncing);
+  const resetCrowdsec = async () => {
+    const ok = await confirmDialog({ title: 'Delete every stored CrowdSec decision?', body: 'CrowdSec is not syncing, so they never expire on their own. Caddy reloads without them.', confirmLabel: 'Reset CrowdSec decisions', danger: true });
+    if (!ok) return;
+    const res = await call('/api/security/reset', 'POST', { source: 'crowdsec', version: stateVersion, confirm: true });
+    toast(res.ok ? 'CrowdSec decisions reset.' : errorMessage(res.body, res.status), { kind: res.ok ? 'ok' : 'error' });
+    onDone();
+  };
+  const needsHint = rows.some(r => crowdsecRowAction(r, cs)?.kind === 'copy');
   return html`
+    ${stale.length > 0 && html`
+      <${Alert} tone="warn">${count(stale.length)} stored CrowdSec ${stale.length === 1 ? 'decision is' : 'decisions are'} still enforced, but CrowdSec is not syncing.
+        <div class="acts"><button class="btn btn-danger sm" type="button" onClick=${resetCrowdsec}>Reset CrowdSec decisions</button></div></${Alert}>`}
+    ${counts.crowdsec > 0 && html`
+      <div class="seg sec-filter" role="radiogroup" aria-label="Filter bans">${BAN_FILTERS.map(f => html`
+        <button key=${f.id} type="button" role="radio" aria-checked=${filter === f.id ? 'true' : 'false'} onClick=${() => setFilter(f.id)}>${f.label}<span class="chip-n">${count(counts[f.id])}</span></button>`)}
+      </div>`}
+    ${!shown.length ? html`<${Empty}>No ${filter === 'all' ? '' : SOURCE_LABELS[filter] + ' '}bans. Ban an address above, or from an IP in Explore.</${Empty}>` : html`
     <div class="tbl-wrap">
       <table class="tbl sec-tbl">
-        <thead><tr><th>Address</th><th>Location</th><th>Reason</th><th>By</th><th>Created</th><th>Expiry</th><th class="c-act"><span class="sr">Actions</span></th></tr></thead>
-        <tbody>${records.map(r => {
+        <thead><tr><th>Address</th><th>Source</th><th>Reason or scenario</th><th>By</th><th>Created</th><th>Expiry</th><th class="c-act"><span class="sr">Actions</span></th></tr></thead>
+        <tbody>${shown.map(r => {
           const created = createdCell(r.created_at);
           const geo = r.geo ? [r.geo.country_code, r.geo.asn_org].filter(Boolean).join(' · ') : '';
+          const act = crowdsecRowAction(r, cs);
           return html`
             <tr key=${r.id} class=${r.expired ? 'is-expired' : ''}>
-              <td class="c-addr"><span class="mono">${r.value}</span>${r.protected && html` <${ProtectedTag} category=${r.protected} />`}</td>
-              <td data-label="Location" class=${geo ? '' : 'is-empty'}>${geo || html`<span class="muted">—</span>`}</td>
-              <td class=${'c-reason' + (r.reason ? '' : ' is-empty')} data-label="Reason">${r.reason || html`<span class="muted">—</span>`}</td>
-              <td data-label="By">${r.actor}</td>
+              <td class="c-addr"><span class="mono">${r.value}</span>${r.protected && html` <${ProtectedTag} category=${r.protected} />`}${geo && html`<span class="c-geo muted">${geo}</span>`}</td>
+              <td data-label="Source">${r.notSyncing ? html`<${Mark} tone="warn" label=${r.sourceLabel} size=${13} />` : r.sourceLabel}</td>
+              <td class=${'c-reason' + (r.detail ? '' : ' is-empty')} data-label="Reason">${r.detail || html`<span class="muted">—</span>`}</td>
+              <td data-label="By">${r.by}</td>
               <td data-label="Created"><time title=${created.title}>${created.text}</time></td>
               <td data-label="Expiry">${r.expired ? html`<${Mark} tone="none" label="Expired, removed at the next cleanup" />` : expiryLabel(r.expires_at)}</td>
               <td class="c-act">${r.source === 'manual'
                 ? html`<button class="btn sm" type="button" onClick=${() => unban(r)} aria-label=${'Unban ' + r.value}>Unban</button>`
-                : html`<span class="muted">Read-only</span>`}</td>
+                : act.kind === 'unban'
+                  ? html`<button class="btn sm" type="button" onClick=${() => unbanCrowdsec(r)} aria-label=${'Unban ' + r.value}>Unban</button>`
+                  : act.kind === 'copy'
+                    ? html`<button class="btn sm btn-quiet" type="button" title=${act.cmd} onClick=${() => copy(act.cmd, 'cscli command')}><${Icon} name="copy" size=${14} />Copy cscli command</button>`
+                    : html`<span class="muted">—</span>`}</td>
             </tr>`;
         })}</tbody>
       </table>
-    </div>`;
+    </div>`}
+    ${needsHint && html`<p class="sec-p sec-detail">${CROWDSEC_WRITE_HINT}</p>`}`;
 }
 
 // "CrowdSec decisions: file sync" -> "File sync"; the row's label already says CrowdSec.
@@ -282,6 +314,7 @@ function App() {
   const records = bans?.records || [];
   const manualRecords = records.filter(r => r.source === 'manual');
   const crowdsecRecords = records.filter(r => r.source === 'crowdsec');
+  const rows = banRows(records, status.sources.crowdsec);
   const manual = status.sources.manual;
   const cs = status.sources.crowdsec;
   // A source that is not enabled has no policy file to show (CrowdSec off).
@@ -305,11 +338,11 @@ function App() {
       <${Figures} status=${status} manualCount=${manual.active_records ?? manualRecords.length} crowdsecCount=${cs?.active_records ?? crowdsecRecords.length} />
 
       <section class="sec-s" aria-labelledby="sec-bans-h">
-        <${SectionHead} id="sec-bans-h" title="Manual bans" desc=${`${manual.active_records} active. ${capacityText(status.limits)}`} />
+        <${SectionHead} id="sec-bans-h" title="IP bans" desc=${bansHeader(rows, status.limits)} />
         ${writable ? html`<${AddBan} onDone=${load} />` : html`<${Alert} tone="warn">Changes are paused until the problem above is resolved.</${Alert}>`}
-        ${bans?.error ? html`<${Alert} tone="crit">${bans.error}</${Alert}>` : html`<${BanList} records=${manualRecords} onDone=${load} />`}
+        ${bans?.error ? html`<${Alert} tone="crit">${bans.error}</${Alert}>` : html`<${BanList} rows=${rows} cs=${cs} stateVersion=${status.state_version} onDone=${load} />`}
       </section>
-      ${cs?.enabled && html`<${CrowdSecSection} src=${cs} records=${crowdsecRecords} onCopy=${copy} />`}
+      ${cs?.enabled && html`<${CrowdSecSection} src=${cs} />`}
       ${plug && html`<${PluginSection} plugin=${plug} onCopy=${copy} onReapply=${reapplyPlugin} />`}
       ${ip && html`<${ClientIpSection} key=${ip.mode + ':' + (ip.tunnel_peers || []).join()} info=${ip} onDone=${load} onCopy=${copy} />`}
       ${cp && html`<${CountrySection} key=${cp.updated_at || 'none'} info=${cp} onDone=${load} onCopy=${copy} />`}

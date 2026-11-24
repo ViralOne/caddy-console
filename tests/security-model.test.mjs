@@ -193,8 +193,8 @@ check('the cscli command only ever carries a numeric decision id', () => {
 });
 check('capacity by source', () => {
   assert.equal(M.capacityText({ max_prefixes: 10000, used: 5, by_source: { manual: 3, crowdsec: 2 } }),
-    '5 of 10000 prefixes rendered (manual 3, CrowdSec 2).');
-  assert.equal(M.capacityText({ max_prefixes: 10000, used: 3, by_source: { manual: 3 } }), '3 of 10000 prefixes rendered.');
+    '5 of 10,000 prefixes (manual 3, CrowdSec 2)');
+  assert.equal(M.capacityText({ max_prefixes: 10000, used: 3, by_source: { manual: 3 } }), '3 of 10,000 prefixes');
 });
 check('sync by_origin counts are listed, largest first', () => {
   assert.equal(M.originCountsText({ by_origin: { cscli: 1, crowdsec: 5 } }), 'crowdsec 5, cscli 1');
@@ -376,8 +376,8 @@ check('countryPayload needs a country to enable and carries the Cloudflare confi
 });
 check('prefix counts, warning and cap wording', () => {
   const s = { prefixes: { v4: 800, v6: 200, total: 1000 }, cap: 20000, warn: 10000 };
-  assert.equal(M.countryPrefixText(s), '800 IPv4 and 200 IPv6 prefixes (1000 of 20000 allowed)');
-  assert.match(M.countryPrefixText({ ...s, prefixes: { v4: 9000, v6: 2000, total: 11000 } }), /Above 10000.*Cloudflare WAF/);
+  assert.equal(M.countryPrefixText(s), '800 IPv4 and 200 IPv6 prefixes (1,000 of 20,000 allowed)');
+  assert.match(M.countryPrefixText({ ...s, prefixes: { v4: 9000, v6: 2000, total: 11000 } }), /Above 10,000.*Cloudflare WAF/);
   assert.equal(M.countryPrefixText({ prefixes: {} }), '');
 });
 check('country state: off, unconfirmed Cloudflare, live mismatch, healthy', () => {
@@ -399,5 +399,32 @@ check('country rows have their own labels and never count as ban enforcement', (
   assert.match(M.siteStatus({ status: 'not_imported' }, 'country').detail, /country policy/);
   const only = { available: true, caddy: { reachable: true }, sources: {}, sites: [{ policies: { manual: { status: 'not_imported' }, country: { status: 'enforced' } } }] };
   assert.equal(M.overallState(only, 0).title, 'No site imports the ban list');
+});
+check('merged IP bans list: sources, filter counts, header', () => {
+  const recs = [
+    { id: 'm1', source: 'manual', value: '203.0.113.7', reason: 'scan', actor: 'a@x' },
+    { id: 'crowdsec-5', source: 'crowdsec', source_id: '5', value: '198.51.100.4', origin: 'cscli', scenario: 'manual ban' },
+    { id: 'crowdsec-6', source: 'crowdsec', source_id: '6', value: '198.51.100.5', origin: 'crowdsec', scenario: 'http-probing', expired: true },
+  ];
+  const rows = M.banRows(recs, { enabled: true, write_configured: false });
+  assert.deepEqual(rows.map(r => r.sourceLabel), ['Manual', 'CrowdSec · cscli', 'CrowdSec · crowdsec']);
+  assert.deepEqual(rows.map(r => r.detail), ['scan', 'manual ban', 'http-probing']);
+  assert.deepEqual(M.filterCounts(rows), { all: 3, manual: 1, crowdsec: 2 });
+  assert.deepEqual(M.filterRows(rows, 'crowdsec').map(r => r.id), ['crowdsec-5', 'crowdsec-6']);
+  assert.equal(M.filterRows(rows, 'all').length, 3);
+  assert.equal(M.bansHeader(rows, { used: 3, max_prefixes: 10000, by_source: { manual: 1, crowdsec: 2 } }),
+    '2 active bans · 3 of 10,000 prefixes (manual 1, CrowdSec 2)');
+  assert.deepEqual(M.crowdsecRowAction(rows[1], { enabled: true }), { kind: 'copy', cmd: 'cscli decisions delete --id 5' });
+  assert.deepEqual(M.crowdsecRowAction(rows[1], { enabled: true, write_configured: true }), { kind: 'unban' });
+  assert.equal(M.crowdsecRowAction(rows[0], {}), null);
+  assert.equal(M.count(12345), '12,345');
+});
+check('CrowdSec records while CrowdSec is off are listed as not syncing', () => {
+  const rows = M.banRows([{ id: 'crowdsec-5', source: 'crowdsec', source_id: '5', value: '198.51.100.4', origin: 'cscli' }], { enabled: false });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].sourceLabel, 'CrowdSec (not syncing)');
+  assert.ok(rows[0].notSyncing);
+  assert.deepEqual(M.crowdsecRowAction(rows[0], { enabled: false, write_configured: true }), { kind: 'none' });
+  assert.equal(M.banRows([{ id: 'c', source: 'crowdsec', value: '1.2.3.4' }], undefined)[0].sourceLabel, 'CrowdSec (not syncing)');
 });
 console.log(`\n${passed} passed`);

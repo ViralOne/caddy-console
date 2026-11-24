@@ -572,7 +572,7 @@ details.raw[open]{flex-basis:100%}
 .fv-n.fv-t{font-size:var(--t-lg);line-height:1.4}
 .sec-h{flex-wrap:wrap;row-gap:2px}
 .sec-h3{margin:24px 0 8px;font-size:var(--t-md);font-weight:600}
-.sec-p{margin:8px 0 0;max-width:80ch}
+.sec-p{margin:8px 0 0}
 .sec-detail{color:var(--ink-3);font-size:var(--t-sm)}
 .sec-stale{margin-top:6px!important;font-weight:600;color:var(--warn)!important}
 .sec .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
@@ -584,13 +584,13 @@ details.raw[open]{flex-basis:100%}
 .mk-none{color:var(--ink-2)} .mk-none>.icon{color:var(--ink-3)}
 .sec-state-line{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;margin:0 0 12px}
 /* Key/value rows with hairlines, as Explore's detail fields. */
-.kv{margin:0;max-width:960px}
+.kv{margin:0}
 .kv>div{display:grid;grid-template-columns:200px minmax(0,1fr);gap:4px 16px;padding:8px 0;border-bottom:1px solid var(--line);font-size:var(--t-sm)}
 .kv>div:last-child{border-bottom:0}
 .kv dt{color:var(--ink-3)}
 .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
 /* Alert block: tinted background and a thin border, no side stripe. */
-.alert{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:start;margin:12px 0;padding:12px 14px;border-radius:var(--r-md);font-size:var(--t-sm);color:var(--ink);max-width:960px}
+.alert{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:start;margin:12px 0;padding:12px 14px;border-radius:var(--r-md);font-size:var(--t-sm);color:var(--ink)}
 .alert>.icon{margin-top:2px}
 .alert-warn{background:var(--warn-soft);border:1px solid color-mix(in srgb,var(--warn) 30%,transparent)}
 .alert-warn>.icon{color:var(--warn)}
@@ -621,11 +621,11 @@ details.raw[open]{flex-basis:100%}
 .field.narrow{flex:0 1 200px}
 .field-l{font-size:var(--t-sm);color:var(--ink-2);font-weight:500}
 .field-hint{font-size:var(--t-xs);color:var(--ink-3)}
-.sec-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin:14px 0 20px;max-width:1080px}
+.sec-form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;margin:14px 0 20px}
 .h-sec+.sec-form{margin-top:0}
 .sec-form>.btn{flex:none}
 .form-row{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px 24px}
-.form-note{flex-basis:100%;margin:0;color:var(--ink-3);font-size:var(--t-sm);max-width:80ch}
+.form-note{flex-basis:100%;margin:0;color:var(--ink-3);font-size:var(--t-sm)}
 .form-error{flex-basis:100%;margin:0;color:var(--crit);font-size:var(--t-sm)}
 .check{display:inline-flex;align-items:flex-start;gap:8px;font-size:var(--t-sm);color:var(--ink);cursor:pointer;min-width:0}
 .check input{flex:none;width:16px;height:16px;margin:2px 0 0;accent-color:var(--accent);cursor:pointer}
@@ -634,6 +634,10 @@ details.raw[open]{flex-basis:100%}
 .tbl-wrap{overflow-x:auto}
 .sec-tbl td{font-size:var(--t-sm)}
 .sec-tbl .c-addr .mono{font-size:13.5px;font-weight:500}
+.sec-tbl .c-geo{display:block;font-size:var(--t-xs);margin-top:2px}
+.sec-filter{margin:0 0 10px}
+.sec-filter .chip-n{color:var(--ink-3);font-variant-numeric:tabular-nums}
+.alert .acts{margin-top:8px}
 .sec-tbl .c-reason{max-width:36ch;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--ink-2)}
 .sec-tbl .c-act{text-align:right;white-space:nowrap;padding-right:0}
 .sec-tbl time{white-space:nowrap}
