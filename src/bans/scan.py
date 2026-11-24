@@ -277,3 +277,23 @@ def plugin_warnings(text, definition_path, management=frozenset(), *, snippet="p
             out.append(f"Line {uses[0]}: this site enforces CrowdSec decisions twice, through bans-crowdsec.caddy "
                        "and the plugin; plugin sites do not need the CrowdSec file import.")
     return out
+
+
+_TRUSTED = re.compile(r"^trusted_proxies\s+static\s+(.+)$")
+_BROAD = {"private_ranges", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7", "fd00::/8"}
+
+
+def trust_warnings(text, mode: str, tunnel_only: bool = False) -> list:
+    """Spec 4.1: a broad private-range trust lets any LAN or published-port peer
+    forge CF-Connecting-IP. Accepted only for a confirmed tunnel-only listener."""
+    out = []
+    for ln, line, depth in _global_block(_depth_lines(text)):
+        m = _TRUSTED.match(line)
+        if not m or depth < 2:
+            continue
+        broad = sorted(set(m.group(1).split()) & _BROAD)
+        if broad and not (mode == "cloudflare-tunnel" and tunnel_only):
+            out.append(f"Line {ln}: trusted_proxies {' '.join(broad)} lets any peer in those ranges, including LAN "
+                       "and published-port clients, forge the client IP. Trust the fixed cloudflared address, or "
+                       "import cloudflare-trusted-proxies*.caddy and select the profile in Security.")
+    return out

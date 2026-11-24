@@ -10,6 +10,8 @@ import { toast } from './ui/toast.js';
 import { requestJson as call } from './security-api.js';
 import { CrowdSecSection } from './security-crowdsec.js';
 import { PluginSection } from './security-plugin.js';
+import { ClientIpSection } from './security-client-ip.js';
+import { CountrySection } from './security-country.js';
 import {
   DURATIONS, SOURCE_LABELS, banPayload, capacityText, createdCell, crowdsecPath, errorMessage, expiryLabel, outcomeText, overallState, staleNotice,
   HOST_RECOVERY_URL, pluginSiteActions, protectedLabel, recoveryActionLabel, siteActions, siteStatus,
@@ -102,9 +104,9 @@ function Sites({ sites, sources, plugin }) {
         <span class="mono">${s.label}</span>
         ${(() => { const cp = crowdsecPath(s); return cp && html`<span class=${'sec-path tone-' + cp.tone}>${cp.text}</span>`; })()}
         ${names.map(name => {
-          const p = s.policies?.[name] || (name === 'plugin' ? null : s);
+          const p = s.policies?.[name] || (name === 'plugin' || name === 'country' ? null : s);
           if (!p) return null;
-          const st = siteStatus(p);
+          const st = siteStatus(p, name);
           const acts = name === 'plugin' ? pluginSiteActions(p, s, plugin) : siteActions({ ...p, source: s.source });
           return html`
             <div class=${'sec-policy tone-' + st.tone} key=${name}>
@@ -200,7 +202,10 @@ function App() {
   const active = Object.fromEntries(Object.entries(status.sources).filter(([, s]) => s.enabled !== false));
   const writable = status.available && !status.degraded;
   const plug = status.plugin?.enabled ? status.plugin : null;
-  const siteSources = plug ? { ...active, plugin: { import_line: plug.definition.site_import } } : active;
+  const ip = status.client_ip_profile;
+  const cp = status.country_policy;
+  const withPlugin = plug ? { ...active, plugin: { import_line: plug.definition.site_import } } : active;
+  const siteSources = (status.sites || []).some(s => s.policies?.country) ? { ...withPlugin, country: { import_line: cp.import_line } } : withPlugin;
   const reapplyPlugin = async () => {
     const r = await call('/api/security/reapply', 'POST', { source: 'plugin' });
     toast(r.ok ? 'Plugin route re-applied.' : errorMessage(r.body, r.status), { kind: r.ok ? 'ok' : 'error' });
@@ -217,6 +222,8 @@ function App() {
         ${bans?.error ? html`<p class="metrics-hint error">${bans.error}</p>` : html`<${BanList} records=${manualRecords} onDone=${load} />`}
       </section>
       ${cs?.enabled && html`<${CrowdSecSection} src=${cs} records=${crowdsecRecords} onCopy=${copy} />`}
+      ${ip && html`<${ClientIpSection} key=${ip.mode + ':' + (ip.tunnel_peers || []).join()} info=${ip} onDone=${load} onCopy=${copy} />`}
+      ${cp && html`<${CountrySection} key=${cp.updated_at || 'none'} info=${cp} onDone=${load} onCopy=${copy} />`}
       ${plug && html`<${PluginSection} plugin=${plug} onCopy=${copy} onReapply=${reapplyPlugin} />`}
       <section aria-labelledby="sec-sites-h">
         <div class="h-sec"><h2 id="sec-sites-h">Sites</h2><p>Proven from Caddy's running configuration.</p></div>

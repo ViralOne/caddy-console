@@ -74,3 +74,33 @@ def add_ban():
 @login_required
 def remove_ban(record_id):
     return _reply(service.remove_ban(record_id, _actor(), request.remote_addr))
+
+
+@security_bp.route("/api/security/client-ip-profile", methods=["GET"])
+@login_required
+def client_ip_profile_get():
+    return jsonify(service.client_ip_profile_info())
+
+
+@security_bp.route("/api/security/cloudflare-ranges/refresh", methods=["POST"])
+@login_required
+def cloudflare_ranges_refresh():
+    return _reply(service.refresh_cloudflare_ranges(_actor(), manual=True))
+
+
+@security_bp.route("/api/security/client-ip-profile", methods=["PUT"])
+@login_required
+def client_ip_profile_put():
+    return _reply(service.set_client_ip_profile(_payload(), _actor()))
+
+
+@security_bp.route("/api/security/country-policy", methods=["GET"])
+@login_required
+def country_policy_get():
+    return jsonify(service.country_policy_info())
+
+
+@security_bp.route("/api/security/country-policy", methods=["PUT"])
+@login_required
+def country_policy_put():
+    return _reply(service.set_country_policy(_payload(), _actor()))

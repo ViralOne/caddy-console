@@ -84,7 +84,7 @@ export function banState(lookup) {
   };
 }
 
-export const SOURCE_LABELS = { manual: 'Manual', crowdsec: 'CrowdSec', plugin: 'CrowdSec plugin' };
+export const SOURCE_LABELS = { manual: 'Manual', crowdsec: 'CrowdSec', plugin: 'CrowdSec plugin', country: 'Country policy' };
 export const LIST_ORIGIN_WARNING = 'CAPI and list origins can hold tens of thousands of decisions. Stock Caddy file mode has a finite matcher budget (BANS_MAX); prefer plugin mode for them (docs/security.md#crowdsec-plugin).';
 
 const TONE_RANK = { none: 0, ok: 1, warn: 2, crit: 3 };
@@ -183,11 +183,17 @@ const SITE = {
   plugin_unprotected: ['Plugin runs without the protected ranges', 'crit'],
 };
 
-export function siteStatus(site) {
-  const [label, tone] = SITE[site.status] || ['Unknown', 'warn'];
+const COUNTRY_SITE = {
+  imported_empty: ['Imported, country policy off', 'ok'],
+  enforced: ['Countries enforced', 'ok'],
+  enforced_pre_handler: ['Countries enforced, pre-handler present', 'warn'],
+};
+
+export function siteStatus(site, source = 'manual') {
+  const [label, tone] = source === 'country' && COUNTRY_SITE[site.status] ? COUNTRY_SITE[site.status] : SITE[site.status] || ['Unknown', 'warn'];
   const detail = {
     enforced_pre_handler: `These run before the ban check: ${(site.pre_handlers || []).join(', ')}. They do not serve the application, but they may redirect or contact an auth service first.`,
-    not_imported: 'This site does not import the ban list.',
+    not_imported: source === 'country' ? 'This site does not import the country policy.' : 'This site does not import the ban list.',
     not_loaded: 'Save & Reload to load this site into Caddy.',
     caddy_unreachable: 'The Caddy admin API did not answer, so whether this site enforces the ban list cannot be checked. The import line on disk is shown as it is.',
     management: 'The console is excluded so a ban cannot lock you out.',
@@ -242,7 +248,8 @@ export function pluginSiteActions(policy, site, plugin) {
 
 const RELOAD_UNKNOWN = ['live_mismatch', 'caddy_unreachable'];
 
-const policiesOf = (site) => Object.values(site.policies || { manual: site });
+// The country policy is not a ban list: it never counts as ban enforcement.
+const policiesOf = (site) => Object.entries(site.policies || { manual: site }).filter(([n]) => n !== 'country').map(([, p]) => p);
 
 function baseState(status, recordCount) {
   if (!status) return { tone: 'none', title: 'Loading…', body: '' };
@@ -306,3 +313,129 @@ export const recoveryActionLabel = (action) => ({
   use_previous: 'Restore the previous files and reload',
   restore_backup: 'Restore this backup',
 }[action] || action);
+
+
+// --- Client IP and country policy (spec 4.1, 4.3) ---------------------------------------
+
+export const CLIENT_IP_MODES = [
+  { id: 'direct', label: 'Direct',
+    explain: 'Visitors connect straight to Caddy. The client IP is the TCP peer, and forwarding headers are ignored, so nobody can claim another address.' },
+  { id: 'cloudflare-proxied', label: 'Cloudflare proxied DNS',
+    explain: 'Visitors reach Cloudflare, which connects to Caddy from its published edge ranges. CF-Connecting-IP is trusted only from those ranges, which the console keeps current. Your origin must accept connections only from Cloudflare.' },
+  { id: 'cloudflare-tunnel', label: 'Cloudflare Tunnel',
+    explain: 'cloudflared connects to Caddy from a private address. CF-Connecting-IP is trusted only from that address, so give it a fixed address or a narrow dedicated subnet, and publish no Caddy port.' },
+];
+export const clientIpMode = (id) => CLIENT_IP_MODES.find(m => m.id === id) || CLIENT_IP_MODES[0];
+
+/** The one-line status of the client-IP profile for the Security view. */
+export function clientIpState(info) {
+  if (!info) return { tone: 'none', title: 'Loading…', detail: '' };
+  if (info.corrupt) return { tone: 'crit', title: 'Client-IP profile file is unreadable', detail: info.corrupt };
+  if (info.hold) return { tone: 'warn', title: 'Trusted proxies file differs from state', detail: 'cloudflare-trusted-proxies.caddy was changed outside the console. Save the profile again to regenerate it.' };
+  const m = clientIpMode(info.mode);
+  if (info.mode === 'cloudflare-tunnel' && !(info.tunnel_peers || []).length) return { tone: 'warn', title: `${m.label}: no cloudflared address`, detail: 'Nothing is trusted yet. Set the tunnel peer below.' };
+  if (info.mode !== 'direct' && info.present && info.current === false) return { tone: 'warn', title: `${m.label}: trusted proxies file out of date`, detail: 'Save the profile to regenerate it.' };
+  const live = (info.live || []).length > 0 && info.live.some(s => s.matches === false);
+  if (live) return { tone: 'warn', title: `${m.label}: Caddy runs different trusted proxies`, detail: 'Import the managed file in the global servers block (see the snippets) and Save & Reload.' };
+  return { tone: 'ok', title: m.label, detail: '' };
+}
+
+/** Parse the tunnel peer field: whitespace or comma separated, empty ones dropped. */
+export const parsePeers = (text) => String(text ?? '').split(/[\s,]+/).filter(Boolean);
+
+export function clientIpPayload({ mode, peersText = '', tunnelOnly = false } = {}) {
+  if (!CLIENT_IP_MODES.some(m => m.id === mode)) throw new Error('Choose a client-IP mode.');
+  const body = { mode };
+  if (mode === 'cloudflare-tunnel') {
+    const peers = parsePeers(peersText);
+    if (!peers.length) throw new Error('Enter the cloudflared address or subnet that connects to Caddy.');
+    body.tunnel_peers = peers;
+    body.tunnel_only = !!tunnelOnly;
+  }
+  return body;
+}
+
+/** Confirmation copy for changing the mode: what Caddy will start trusting. */
+export function clientIpConfirm(payload) {
+  const m = clientIpMode(payload.mode);
+  const trust = payload.mode === 'direct' ? 'Caddy stops trusting any forwarding header.'
+    : payload.mode === 'cloudflare-proxied' ? "Caddy will trust CF-Connecting-IP from Cloudflare's edge ranges. Anyone who can reach your origin directly could claim any address unless the origin only accepts Cloudflare."
+      : `Caddy will trust CF-Connecting-IP from ${(payload.tunnel_peers || []).join(', ')}. Anyone who can connect from that address could claim any client IP.`;
+  return { title: `Switch client IP to ${m.label}?`, body: `${trust} The console regenerates the trusted proxies, ban and country files together and reloads Caddy.`, confirmLabel: 'Switch mode', danger: payload.mode !== 'direct' };
+}
+
+const DAY = 86400;
+/** "Fetched 3 days ago (official list)", from the status block's ranges. */
+export function rangesAgeText(ranges) {
+  if (!ranges) return '';
+  const src = ranges.source === 'bundled' ? 'bundled list' : 'official list';
+  const age = ranges.age_seconds;
+  if (!Number.isFinite(age)) return `Using the ${src}`;
+  const when = age < 3600 ? 'less than an hour ago' : age < DAY ? `${Math.floor(age / 3600)} h ago` : `${Math.floor(age / DAY)} days ago`;
+  return `${ranges.source === 'bundled' ? 'Bundled list, last checked' : 'Fetched'} ${when}`;
+}
+
+/** Why the last range check failed, or an overdue hint (a day is the normal cadence). */
+export function rangesNotice(ranges, mode) {
+  if (!ranges || mode !== 'cloudflare-proxied') return '';
+  if (ranges.last_error) return `The last refresh failed: ${ranges.last_error}. The previous list stays in use.`;
+  if (Number.isFinite(ranges.age_seconds) && ranges.age_seconds > 7 * DAY) return 'The list is more than a week old. Refresh it, or check that the console can reach cloudflare.com.';
+  return '';
+}
+
+export function countryName(code, names) {
+  if (code === 'XX') return 'Unknown country (XX)';
+  if (code === 'T1') return 'Tor exit nodes (T1)';
+  let n = '';
+  try { n = names ? names.of(code) : ''; } catch (e) { n = ''; }
+  return n && n !== code ? `${n} (${code})` : code;
+}
+
+/** Options for the selector: ISO countries by name, then XX/T1 flagged. `names` is an Intl.DisplayNames or null. */
+export function countryOptions(info, names) {
+  const special = new Set(info?.special_codes || ['XX', 'T1']);
+  const list = (info?.iso_codes || []).filter(c => !special.has(c))
+    .map(code => ({ code, name: countryName(code, names), special: false }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return [...list, ...[...special].sort().map(code => ({ code, name: countryName(code, names), special: true }))];
+}
+
+export const SPECIAL_WARNING = 'XX (unknown) and T1 (Tor) are not real countries. Allowing them lets traffic through that Cloudflare could not place; leave them out unless you mean it.';
+
+export function toggleCode(codes, code, on) {
+  const set = new Set(codes);
+  if (on) set.add(code); else set.delete(code);
+  return [...set].sort();
+}
+
+export function countryPayload({ enabled, countries, confirmed, shape } = {}) {
+  if (enabled && !(countries || []).length) throw new Error('Select at least one country before enabling the policy.');
+  const body = { enabled: !!enabled, countries: [...(countries || [])].sort() };
+  if (shape === 'cloudflare' || confirmed !== undefined) body.cloudflare_geolocation_confirmed = !!confirmed;
+  return body;
+}
+
+/** Selected special codes the operator should be warned about. */
+export const specialSelected = (codes, info) => (codes || []).filter(c => (info?.special_codes || ['XX', 'T1']).includes(c));
+
+/** Prefix counts and the cap/warning wording for the summary. */
+export function countryPrefixText(summary) {
+  const p = summary?.prefixes || {};
+  if (!Number.isFinite(p.total)) return '';
+  const base = `${p.v4 ?? 0} IPv4 and ${p.v6 ?? 0} IPv6 prefixes (${p.total} of ${summary.cap} allowed)`;
+  return p.total > summary.warn ? `${base}. Above ${summary.warn}, reloads and adaptation get slower; Cloudflare WAF country rules scale better.` : base;
+}
+
+export function countryState(info) {
+  if (!info) return { tone: 'none', title: 'Loading…', detail: '' };
+  const s = info.summary || {};
+  if (info.corrupt) return { tone: 'crit', title: 'Country policy file is unreadable', detail: info.corrupt };
+  if (info.hold) return { tone: 'warn', title: 'geo.caddy differs from state', detail: 'The file was changed outside the console. Save the policy again to regenerate it.' };
+  if (!info.env_enabled) return { tone: 'none', title: 'Country policy is disabled for this deployment', detail: 'Set COUNTRY_POLICY_ENABLED=true to enforce it.' };
+  if (!info.effective) return { tone: 'none', title: 'Country policy is off', detail: '' };
+  if (info.error) return { tone: 'crit', title: 'Country policy cannot be rendered', detail: info.error.message };
+  if (info.shape === 'cloudflare' && !info.cloudflare_geolocation_confirmed) return { tone: 'warn', title: 'Cloudflare IP geolocation is not confirmed', detail: 'Confirm that Cloudflare sends CF-IPCountry for this zone; until then the policy is not reported healthy.' };
+  if (s.live_ok === false) return { tone: 'warn', title: 'Caddy runs a different country policy', detail: 'Import the policy in each site (see Sites), then Save & Reload.' };
+  if (!s.healthy) return { tone: 'warn', title: 'Country policy needs attention', detail: info.present ? 'geo.caddy is out of date.' : 'geo.caddy has not been generated yet.' };
+  return { tone: 'ok', title: `Allowing ${(info.countries || []).length} ${(info.countries || []).length === 1 ? 'country' : 'countries'}`, detail: '' };
+}

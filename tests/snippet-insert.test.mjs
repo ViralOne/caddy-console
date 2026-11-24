@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const ROOT = path.join(import.meta.dirname, '..');
-const { IMPORT_AFTER, PLUGIN_IMPORT_AFTER, PLUGIN_SNIPPET, SOURCE_FILES, globToRegExp, globalOptionsBlock, importMatches, planGlobalOptionInsertion, planSiteInsertion, planTopLevelInsertion, pluginGate } = await import(path.join(ROOT, 'src', 'static', 'js', 'app', 'snippet-insert.js'));
+const { COUNTRY_FILE, COUNTRY_IMPORT_AFTER, IMPORT_AFTER, PLUGIN_IMPORT_AFTER, PLUGIN_SNIPPET, SOURCE_FILES, globToRegExp, clientIpGate, globalOptionsBlock, importMatches, planGlobalOptionInsertion, planServersInsertion, planSiteInsertion, planTopLevelInsertion, pluginGate } = await import(path.join(ROOT, 'src', 'static', 'js', 'app', 'snippet-insert.js'));
 let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
 
@@ -70,8 +70,8 @@ check('the site snippet carries the spec metadata', () => {
   });
 });
 check('scopes: ban imports insert first in a site, everything else is copy only', () => {
-  for (const s of snippets.filter(x => x.scope && x.phase !== 'plugin')) {
-    const importsBans = s.scope === 'site' && /^import \S*bans-\w+\*\.caddy\n$/.test(s.code);
+  for (const s of snippets.filter(x => x.scope && x.phase !== 'plugin' && x.phase !== 'cloudflare')) {
+    const importsBans = s.scope === 'site' && /^import \S*(bans-\w+|geo)\*\.caddy\n$/.test(s.code);
     assert.equal(s.insert, importsBans ? 'site-first' : 'copy-only', s.id);
   }
   assert.doesNotMatch(snippets.find(x => x.id === 'manual-bans-recovery').code, /^import /m);
@@ -188,5 +188,85 @@ check('plugin snippet scopes', () => {
   assert.deepEqual(['crowdsec-plugin-global-env', 'crowdsec-plugin-global-file', 'crowdsec-plugin-definition',
     'crowdsec-plugin-site', 'crowdsec-plugin-allowlist'].map(id => [byId[id].scope, byId[id].insert]),
   [['global', 'global-options'], ['global', 'global-options'], ['top-level', 'top-level'], ['site', 'site-first'], ['host', 'copy-only']]);
+});
+
+console.log('\n--- Phase 4 snippets ---');
+const GEO_T = `${DIR}/${COUNTRY_FILE}`;
+const GEO_OPTS = { target: GEO_T, managementHosts: ['console.example.com'], after: COUNTRY_IMPORT_AFTER.map(a => `${DIR}/${SOURCE_FILES[a]}`) };
+check('the old ambiguous Cloudflare Only snippet is gone and the four new ones are shipped', () => {
+  assert.equal(snippets.some(s => s.name === 'Cloudflare Only'), false);
+  assert.deepEqual(['cloudflare-proxied-real-ip', 'cloudflare-tunnel-real-ip', 'country-policy-site', 'cloudflare-origin-guard']
+    .map(id => [byId[id].scope, byId[id].insert]), [['servers', 'servers'], ['servers', 'servers'], ['site', 'site-first'], ['site', 'site-first']]);
+  assert.deepEqual(['cloudflare-proxied-real-ip', 'cloudflare-tunnel-real-ip'].map(id => byId[id].code),
+    Array(2).fill('import /etc/caddy/console/cloudflare-trusted-proxies*.caddy\nclient_ip_headers CF-Connecting-IP\n'));
+  assert.equal(byId['country-policy-site'].code, 'import /etc/caddy/console/geo*.caddy\n');
+});
+check('the origin guard matches remote_ip and never a forwarding header', () => {
+  const g = byId['cloudflare-origin-guard'].code;
+  assert.match(g, /^@not_cloudflare_origin not remote_ip 173\.245\.48\.0\/20 .*2400:cb00::\/32 .*192\.168\.1\.0\/24$/m);
+  assert.match(g, /^respond @not_cloudflare_origin 403$/m);
+  assert.doesNotMatch(g, /header|client_ip|CF-|X-Forwarded/i);
+});
+check('the country import follows the ban imports and is never inserted twice or into the console site', () => {
+  const geo = 'import /etc/caddy/console/geo*.caddy\n';
+  const p = planSiteInsertion(WITH_MANUAL, 1, geo, GEO_OPTS);
+  assert.deepEqual([p.ok, p.line, p.text], [true, 3, '\timport /etc/caddy/console/geo*.caddy\n']);
+  assert.equal(planSiteInsertion(applyPlan(WITH_MANUAL, p), 1, geo, GEO_OPTS).reason, 'duplicate');
+  assert.equal(planSiteInsertion(CF, 29, geo, GEO_OPTS).reason, 'management-site');
+});
+check('the origin guard is inserted with every line indented, once, and never into the console site', () => {
+  const guard = 'a.example.com {\n\treverse_proxy 127.0.0.1:9\n}\n';
+  const o = { marker: '@not_cloudflare_origin', managementHosts: ['console.example.com'] };
+  const p = planSiteInsertion(guard, 1, 'x\nrespond @y 403\n', o);
+  assert.equal(p.text, '\tx\n\trespond @y 403\n');
+  const code = byId['cloudflare-origin-guard'].code;
+  const once = applyPlan(guard, planSiteInsertion(guard, 1, code, o));
+  assert.match(once, /^\t@not_cloudflare_origin not remote_ip /m);
+  assert.match(once, /^\trespond @not_cloudflare_origin 403$/m);
+  assert.equal(planSiteInsertion(once, 1, code, o).reason, 'duplicate');
+  assert.equal(planSiteInsertion(CF, 29, code, o).reason, 'management-site');
+});
+const SRV_T = `${DIR}/cloudflare-trusted-proxies.caddy`;
+const SRV = byId['cloudflare-proxied-real-ip'].code;
+check('servers snippets create the global options and servers block when missing', () => {
+  const p = planServersInsertion('a.example.com {\n}\n', SRV, { target: SRV_T });
+  assert.deepEqual([p.ok, p.line], [true, 1]);
+  assert.equal(p.text, '{\n\tservers {\n\t\timport /etc/caddy/console/cloudflare-trusted-proxies*.caddy\n\t\tclient_ip_headers CF-Connecting-IP\n\t}\n}\n\n');
+  const q = planServersInsertion(CF, SRV, { target: SRV_T });
+  assert.equal(q.line, 3);
+  assert.match(applyPlan(CF, q), /\tadmin 0\.0\.0\.0:2019\n\tservers \{\n\t\timport .*\n\t\tclient_ip_headers CF-Connecting-IP\n\t\}\n\}/);
+});
+check('servers snippets add only the missing lines to an existing bare servers block, and never twice', () => {
+  const base = '{\n\tservers {\n\t\ttimeouts {\n\t\t\tidle 5m\n\t\t}\n\t}\n}\n\na.example.com {\n}\n';
+  const p = planServersInsertion(base, SRV, { target: SRV_T });
+  assert.deepEqual([p.ok, p.line], [true, 6]);
+  const done = applyPlan(base, p);
+  assert.match(done, /\t\t\}\n\t\timport .*cloudflare-trusted-proxies\*\.caddy\n\t\tclient_ip_headers CF-Connecting-IP\n\t\}/);
+  assert.equal(planServersInsertion(done, SRV, { target: SRV_T }).reason, 'duplicate');
+  const partial = '{\n\tservers {\n\t\tclient_ip_headers CF-Connecting-IP\n\t}\n}\n';
+  const r = planServersInsertion(partial, SRV, { target: SRV_T });
+  assert.equal(r.text, '\t\timport /etc/caddy/console/cloudflare-trusted-proxies*.caddy\n');
+});
+check('a named servers block is left alone', () => {
+  const named = '{\n\tservers :8443 {\n\t\tprotocols h1\n\t}\n}\n';
+  assert.equal(planServersInsertion(named, SRV, { target: SRV_T }).line, 5);
+});
+check('the client-IP gate matches the snippet to the saved profile', () => {
+  const proxied = byId['cloudflare-proxied-real-ip'], tunnel = byId['cloudflare-tunnel-real-ip'], guard = byId['cloudflare-origin-guard'];
+  const ctx = { mode: 'cloudflare-proxied', current: true, peers: ['1.0.0.0/8'] };
+  assert.equal(clientIpGate(proxied, ctx), null);
+  assert.equal(clientIpGate(guard, ctx), null);
+  assert.equal(clientIpGate(proxied, null), 'client-ip-unavailable');
+  assert.equal(clientIpGate(tunnel, ctx), 'client-ip-mode');
+  assert.equal(clientIpGate(proxied, { ...ctx, mode: 'direct' }), 'client-ip-mode');
+  assert.equal(clientIpGate(proxied, { ...ctx, current: false }), 'client-ip-stale');
+  assert.equal(clientIpGate(tunnel, { mode: 'cloudflare-tunnel', current: true, peers: [] }), 'client-ip-peer');
+  assert.equal(clientIpGate(tunnel, { mode: 'cloudflare-tunnel', current: true, peers: ['172.18.0.5'] }), null);
+  assert.equal(clientIpGate(byId['country-policy-site'], null), null);
+});
+check('COUNTRY constants mirror src/bans/render.py', () => {
+  const py = fs.readFileSync(path.join(ROOT, 'src', 'bans', 'render.py'), 'utf8');
+  assert.match(py, new RegExp(`COUNTRY = PolicySource\\("country", "${COUNTRY_FILE}"`));
+  assert.match(py, new RegExp(`COUNTRY_AFTER = \\(${COUNTRY_IMPORT_AFTER.map(a => `"${a}"`).join(', ')}\\)`));
 });
 console.log(`\n${passed} passed`);

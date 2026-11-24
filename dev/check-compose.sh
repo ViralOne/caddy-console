@@ -11,7 +11,7 @@ for f in docker-compose.prod.yaml docker-compose.tunnel.yaml docker-compose.inte
   out=$(docker compose -f "$f" config 2>/dev/null)
   if grep -qi crowdsec <<<"$out"; then echo "$f mentions CrowdSec" >&2; exit 1; fi
   # The dev stack pins its own BANS_ENABLED/BANS_DIR; the baseline stacks pass all four.
-  names="BANS_ENABLED BANS_DIR BANS_MAX BANS_NEVER"
+  names="BANS_ENABLED BANS_DIR BANS_MAX BANS_NEVER CLIENT_IP_MODE COUNTRY_POLICY_ENABLED COUNTRY_MAX_PREFIXES"
   if [ "$f" = docker-compose.dev.yaml ]; then names="BANS_ENABLED BANS_DIR"; fi
   for name in $names; do
     grep -q "$name" <<<"$out" || { echo "$f does not pass $name" >&2; exit 1; }

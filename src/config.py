@@ -116,3 +116,18 @@ CROWDSEC_POLL_INTERVAL = bounded_int("CROWDSEC_POLL_INTERVAL", 10, 5, 300)
 # caddy-admin address. Both are validated by src/bans/plugin.py at startup.
 CROWDSEC_PLUGIN_BOUNCER_KEY_FILE = os.environ.get("CROWDSEC_PLUGIN_BOUNCER_KEY_FILE", "").strip()
 CADDY_ADMIN_ADDRESS = os.environ.get("CADDY_ADMIN_ADDRESS", "").strip() or "0.0.0.0:2019"
+
+# Phase 4, Cloudflare trust profiles (docs/security.md#client-ip-profiles).
+# CLIENT_IP_MODE is the default profile until an operator saves one in Security;
+# src/bans/profile.py validates it at startup. Direct mode never contacts Cloudflare.
+CLIENT_IP_MODE = os.environ.get("CLIENT_IP_MODE", "direct").strip().lower() or "direct"
+CLOUDFLARE_RANGES_AUTO_UPDATE = os.environ.get(
+    "CLOUDFLARE_RANGES_AUTO_UPDATE", "true").lower() not in ("0", "false", "no")
+
+# Phase 4 country allowlist (docs/security.md, spec 4.3). Off until configured.
+# Measured against stock Caddy (docs/security.md, tests/integration/country_benchmark.py):
+# 20000 direct prefixes stay inside the budget (adapt 2 s, reload 3 s, +150 MiB, +2 ms p95),
+# so it is both the default and the highest accepted value. The warning threshold (10000)
+# lives in src/bans/country.py.
+COUNTRY_POLICY_ENABLED = os.environ.get("COUNTRY_POLICY_ENABLED", "false").lower() in ("1", "true", "yes")
+COUNTRY_MAX_PREFIXES = bounded_int("COUNTRY_MAX_PREFIXES", 20000, 1, 20000)

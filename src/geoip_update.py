@@ -26,7 +26,8 @@ import threading
 import maxminddb
 import requests
 
-from .config import GEOIP_AUTO_UPDATE, GEOIP_DIR
+from .bans import countrydata
+from .config import BANS_ENABLED, COUNTRY_POLICY_ENABLED, GEOIP_AUTO_UPDATE, GEOIP_DIR
 from .geoip import ASN_FILE, CITY_FILE, DOWNLOADING_MARKER, VERSION_FILE
 
 log = logging.getLogger(__name__)
@@ -201,10 +202,115 @@ def update_once(directory=GEOIP_DIR, today=None, session=None):
         lock.close()
 
 
+# --- DB-IP Country Lite: the range dataset behind the direct country policy ----------------
+# A CSV of `start,end,CC` rows, converted once to canonical CIDRs (src/bans/countrydata.py).
+# It is a separate step with its own bounds and its own meta keys: a failure here never
+# touches the City/ASN files, and a failure there never touches this dataset.
+COUNTRY_URL = "https://download.db-ip.com/free/dbip-country-lite-{month}.csv.gz"
+COUNTRY_MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024        # the real file is about 5 MB compressed
+COUNTRY_MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024   # and about 25 MB of CSV
+COUNTRY_MAX_LINE = 256                               # a real row is under 80 bytes
+
+
+def _country_lines(url, session, gz_path):
+    """Download `url` to gz_path under the compressed limit, then yield decoded lines
+    under the uncompressed limit. Raises NotPublished on 404."""
+    with session.get(url, stream=True, timeout=TIMEOUT) as res:
+        if res.status_code == 404:
+            raise NotPublished(url)
+        res.raise_for_status()
+        total = 0
+        with open(gz_path, "wb") as out:
+            for chunk in res.iter_content(1024 * 1024):
+                total += len(chunk)
+                if total > COUNTRY_MAX_DOWNLOAD_BYTES:
+                    raise ValueError(f"{url} is larger than {COUNTRY_MAX_DOWNLOAD_BYTES} bytes")
+                out.write(chunk)
+    read = 0
+    with gzip.open(gz_path, "rb") as src:
+        while True:
+            raw = src.readline(COUNTRY_MAX_LINE + 1)     # never buffers more than one bounded piece
+            if not raw:
+                break
+            if len(raw) > COUNTRY_MAX_LINE and not raw.endswith(b"\n"):
+                raise ValueError(f"{url} has a line longer than {COUNTRY_MAX_LINE} bytes")
+            read += len(raw)
+            if read > COUNTRY_MAX_UNCOMPRESSED_BYTES:
+                raise ValueError(f"{url} expands beyond {COUNTRY_MAX_UNCOMPRESSED_BYTES} bytes")
+            try:
+                yield raw.decode("ascii")
+            except UnicodeDecodeError:
+                raise countrydata.DatasetError("the dataset is not plain ASCII") from None
+
+
+def _download_country(directory, month, session):
+    gz_path = os.path.join(directory, f".country.{month}.csv.gz.part")
+    tmp = os.path.join(directory, f".{countrydata.FILE}.{month}.part")
+    try:
+        prefixes = countrydata.parse_csv(_country_lines(COUNTRY_URL.format(month=month), session, gz_path))
+        with open(tmp, "wb") as out:
+            out.write(countrydata.dumps(prefixes, month))
+            out.flush()
+            os.fsync(out.fileno())
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, countrydata.path(directory))
+        return len(prefixes)
+    finally:
+        for leftover in (gz_path, tmp):
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
+
+
+def update_country_once(directory=GEOIP_DIR, today=None, session=None):
+    """One check of the country dataset: 'current', 'updated', 'not-published', 'busy'
+    or 'failed'. Any error keeps the previous dataset. Never holds caddyfile_lock()."""
+    today = today or datetime.datetime.now(datetime.timezone.utc).date()
+    session = session or requests.Session()
+    os.makedirs(directory, exist_ok=True)
+    lock = open(os.path.join(directory, LOCK_FILE), "w")
+    try:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "busy"
+        installed = countrydata.info(directory)["month"]
+        months = candidates(installed, today)
+        if not months:
+            return "current"
+        meta = _read_meta(directory)
+        meta["country_checked_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        try:
+            for month in months:
+                try:
+                    count = _download_country(directory, month, session)
+                except NotPublished:
+                    continue
+                meta.update(country_month=month, country_prefixes=count, country_last_error=None)
+                _write_meta(directory, meta)
+                log.info("GeoIP: installed DB-IP Country Lite %s (%d prefixes)", month, count)
+                return "updated"
+            meta["country_last_error"] = None
+            _write_meta(directory, meta)
+            return "not-published"
+        except Exception as e:  # noqa: BLE001 — any failure keeps the old dataset
+            meta["country_last_error"] = f"{type(e).__name__}: {e}"[:300]
+            _write_meta(directory, meta)
+            log.warning("GeoIP: country dataset update failed, keeping the current one: %s", e)
+            return "failed"
+    finally:
+        lock.close()
+
+
 def _loop(directory, stop):
     while True:
         try:
             outcome = update_once(directory)
+            if BANS_ENABLED and COUNTRY_POLICY_ENABLED:
+                country_outcome = update_country_once(directory)
+                if country_outcome == "failed":
+                    outcome = "failed"
         except Exception:  # noqa: BLE001 — the thread must survive anything
             log.exception("GeoIP: update check crashed")
             outcome = "failed"

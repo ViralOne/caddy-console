@@ -24,7 +24,35 @@ def _is_marker(node, marker) -> bool:
     return isinstance(node, dict) and node.get("handler") == "vars" and str(node.get(marker, "")) == "1"
 
 
+COUNTRY_MARKER = "caddy_console_country_policy"
+COUNTRY_SHAPES = ("off", "direct", "cloudflare")
+
+
+def _is_country_marker(node) -> bool:
+    return (isinstance(node, dict) and node.get("handler") == "vars"
+            and str(node.get(COUNTRY_MARKER, "")) in COUNTRY_SHAPES)
+
+
+def country_shapes(config) -> list:
+    """Every country policy shape (off, direct, cloudflare) a live config's
+    vars handlers carry. The marker's value is the shape, not "1", and
+    matcher names do not survive adaptation, so this is how the live config
+    shows which shape Caddy loaded."""
+    found, stack = [], [config]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if _is_country_marker(node):
+                found.append(str(node[COUNTRY_MARKER]))
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return found
+
+
 def marker_present(config, marker) -> bool:
+    if marker == COUNTRY_MARKER:
+        return bool(country_shapes(config))
     stack = [config]
     while stack:
         node = stack.pop()
@@ -272,4 +300,73 @@ def plugin_site_statuses(config, *, expected_exclusions=None) -> list:
                 continue
             hosts = [h for m in route.get("match") or [] if isinstance(m, dict) for h in (m.get("host") or [])]
             out.append(_plugin_status(route, hosts[0] if hosts else (listen or name), hosts, name, expected))
+    return out
+
+
+COUNTRY_UNMATCHED = ("The running configuration has the country policy marker but not the denial handler that "
+                     "belongs to it. Check the reload state.")
+
+
+def _is_country_denial(route) -> bool:
+    """geo.caddy's denial: a 403 behind a `not` matcher. Matcher names do not
+    survive adaptation, so this is the shape the file always renders."""
+    return _has_403(route.get("handle")) and any(isinstance(m, dict) and m.get("not") for m in route.get("match") or [])
+
+
+def _country_status(route, label, hosts, server, expected) -> SiteStatus:
+    events = []
+    _events(route, events, id(route))
+    s = SiteStatus(label, hosts, server, "not_imported")
+    at = next((i for i, (k, v, _, _) in enumerate(events) if k == "handler" and _is_country_marker(v)), None)
+    if at is None:
+        return s
+    shape = str(events[at][1][COUNTRY_MARKER])
+    if expected is not None and shape != expected:
+        s.status = "unknown"
+        s.detail = (f"The running configuration has the {shape} country policy, but the current settings render "
+                    f"{expected}. Save and reload to apply them.")
+        return s
+    if shape == "off":
+        s.status = "imported_empty"
+        return s
+    scope = events[at][2]
+    deny_at = next((i for i, (k, v, sc, _) in enumerate(events)
+                    if i > at and k == "route" and sc == scope and _is_country_denial(v)), None)
+    if deny_at is None:
+        s.status, s.detail = "unknown", COUNTRY_UNMATCHED
+        return s
+    pre, unknown = [], []
+    for kind, h, _, shielded in events[:deny_at]:
+        if kind != "handler" or shielded or _is_country_marker(h):
+            continue
+        verdict, name = classify(h)
+        bucket = pre if verdict == "pre" else unknown if verdict == "unknown" else None
+        if bucket is not None and name not in bucket:
+            bucket.append(name)
+    if unknown:
+        s.status, s.pre_handlers = "unknown", pre + unknown
+        s.detail = ("Handlers run before the country check that could answer the request first: "
+                    + ", ".join(unknown) + ".")
+    elif pre:
+        s.status, s.pre_handlers = "enforced_pre_handler", pre
+    else:
+        s.status = "enforced"
+    return s
+
+
+def country_site_statuses(config, *, expected_shape=None) -> list:
+    """Per site, is the country policy marker live with its denial handler?
+    Same iteration as site_statuses, so rows align. `expected_shape`: the shape
+    the current settings render (off, direct, cloudflare)."""
+    servers = (((config or {}).get("apps") or {}).get("http") or {}).get("servers") or {}
+    out = []
+    for name, srv in sorted(servers.items()):
+        if not isinstance(srv, dict):
+            continue
+        listen = (srv.get("listen") or [""])[0]
+        for route in srv.get("routes") or []:
+            if not isinstance(route, dict):
+                continue
+            hosts = [h for m in route.get("match") or [] if isinstance(m, dict) for h in (m.get("host") or [])]
+            out.append(_country_status(route, hosts[0] if hosts else (listen or name), hosts, name, expected_shape))
     return out

@@ -4,9 +4,9 @@ Caddy Console can block clients by IP address or CIDR range on the sites you
 choose. This page covers manual file mode, which works with the stock
 `caddy:2.11.9-alpine` image and needs no extra service. CrowdSec file sync is
 an optional overlay, described in
-[CrowdSec file sync (optional)](#crowdsec-file-sync-optional). Cloudflare trust
-profiles and country policy are later additions and are not part of this
-release.
+[CrowdSec file sync (optional)](#crowdsec-file-sync-optional). Cloudflare
+client-IP profiles and the country policy are described in
+[Cloudflare client IPs and country policy](#cloudflare-client-ips-and-country-policy).
 
 ## How it works
 
@@ -681,6 +681,118 @@ no handler is not counted as protected.
   here. The plugin pulls every origin; `CROWDSEC_ORIGINS` limits only the
   console's file sync and its display.
 
+## Cloudflare client IPs and country policy
+
+Two Security sections, **Client IP** and **Country policy**, decide who a visitor
+is and which countries may reach a site. Everything below uses documentation
+addresses and `example.com`.
+
+### Client IP profiles
+
+Pick the profile that matches how traffic reaches Caddy. Bans, the country
+policy, Explore and logs all use the address it produces.
+
+| Profile | Use when | Trusted for `CF-Connecting-IP` / `CF-IPCountry` |
+|---|---|---|
+| **Direct** (default) | Visitors connect to Caddy themselves, or an upstream you do not control sits in front. | Nobody. `client_ip` is the TCP peer; every forwarding and Cloudflare header is ignored. |
+| **Cloudflare proxied DNS** | Orange cloud, Caddy reachable from the internet. | Only Cloudflare's published edge ranges. |
+| **Cloudflare Tunnel** | `cloudflared` runs next to Caddy and no Caddy port is published. | Only the fixed `cloudflared` address you enter (`172.18.0.5`, or a dedicated subnet no wider than /24 for IPv4 or /64 for IPv6). |
+
+The console renders the trusted peers into `cloudflare-trusted-proxies.caddy`.
+Import it from the global `servers` block with the snippets **Cloudflare
+proxied DNS: real client IP** or **Cloudflare Tunnel: real client IP**:
+
+```caddyfile
+{
+	servers {
+		import /etc/caddy/console/cloudflare-trusted-proxies*.caddy
+		client_ip_headers CF-Connecting-IP
+	}
+}
+```
+
+Trusting a header is only as safe as the network path:
+
+- **Proxied DNS needs an origin lock.** A client that connects to the origin
+  directly cannot forge its address (its headers are ignored), but it skips
+  Cloudflare's WAF and rate limits. Add the **Cloudflare origin guard** snippet or
+  a firewall rule that accepts connections only from Cloudflare's ranges and your
+  LAN. The guard checks the connecting address, never a header.
+- **Tunnel mode needs one fixed peer.** Give `cloudflared` a fixed address on a
+  dedicated Docker network and enter it. The console refuses `private_ranges`
+  unless you confirm that the listener is reachable only from the tunnel network:
+  trusting a broad range lets any container or LAN host forge the client IP.
+- Proxied mode adds the edge ranges to the protected set, so a ban or country
+  rule can never lock Cloudflare itself out.
+
+**Range auto-update.** In proxied mode the console fetches
+`https://www.cloudflare.com/ips-v4` and `/ips-v6` daily
+(`CLOUDFLARE_RANGES_AUTO_UPDATE`, **Refresh ranges** does it on demand) and
+validates every line: canonical public networks, bounded size, and at least half
+of the previous address space kept. A valid change regenerates the trusted
+proxies, the protected set and the country file in one journaled transaction and
+reloads Caddy once. A failed or implausible fetch keeps the last good list and
+Security shows its age. Direct and tunnel mode never contact Cloudflare.
+
+### Country policy
+
+An allowlist: clients outside the selected countries get `403`. Protected
+addresses (loopback, private and your LAN, plus the edge ranges in proxied mode)
+and the management session are always allowed. Enable it with
+`COUNTRY_POLICY_ENABLED=true`, choose countries in Security and import it per
+site with **Country policy: protect this site**:
+
+```caddyfile
+example.com {
+	import /etc/caddy/console/geo*.caddy
+	reverse_proxy app:8080
+}
+```
+
+It has two shapes, chosen by the client-IP profile:
+
+| Shape | Profile | How a client is matched |
+|---|---|---|
+| **Direct** | Direct | The resolved address is checked against the country's CIDR ranges from the DB-IP Country Lite dataset (CC-BY 4.0, refreshed monthly with the other GeoIP files, `GEOIP_AUTO_UPDATE`). Stock Caddy has no country matcher, so the ranges are written into `geo.caddy`. |
+| **Cloudflare** | Proxied or Tunnel | The `CF-IPCountry` header, honored only when the connection comes from a trusted Cloudflare peer. A missing header, or the header from any other peer, is denied for public clients. |
+
+- **Confirm Cloudflare IP Geolocation.** Cloudflare sends `CF-IPCountry` only
+  with IP Geolocation on for the zone (Network settings). Security asks you to
+  confirm it; without it every public visitor would be denied.
+- **XX and T1** are Cloudflare's "unknown" and "Tor" values. They are allowed
+  only when you name them in the selection.
+- **Switching profiles regenerates the file** for the new shape in the same
+  transaction as the profile change.
+- **Prefix cap.** A direct policy that needs more than `COUNTRY_MAX_PREFIXES`
+  (default and maximum `20000`) prefixes is refused with
+  `country_prefix_cap_exceeded` before anything is written: `geo.caddy`,
+  `country-policy.json` and the running Caddy stay as they were. Above 10,000
+  prefixes Security shows a warning. Large selections scale better as
+  **Cloudflare WAF custom rules**.
+
+**Recommendation.** Where Cloudflare fronts the site, enforce country rules in a
+Cloudflare WAF custom rule (`ip.src.country in {"CN" "RU"}` with action Block)
+so unwanted traffic never reaches your origin or your Caddy reloads. Use the
+console's policy as defense in depth, or where there is no Cloudflare.
+
+**Measured cost (direct shape).** Apple M1 Pro, Docker 29.2.0, stock Caddy
+2.11.9, 8 sites importing `geo.caddy`, 80 % IPv4 and 20 % IPv6 generated
+prefixes, medians of three runs against a clean Caddy, the p95 of the worst allowed
+client (last prefix in the file) and of a denied client. Budgets as for bans:
+adapt at most 2 s, reload at most 3 s, at most +150 MiB RSS and +2 ms p95.
+
+| Prefixes | File | Adapt | Reload | Caddy RSS | p95 allowed | p95 denied | Within budget |
+|---:|---:|---:|---:|---:|---:|---:|:---|
+| 0 | 0 KiB | 0.01 s | 0.01 s | 48 MiB | 1.01 ms | 0.89 ms | yes |
+| 1,000 | 16 KiB | 0.04 s | 0.06 s | 55 MiB | 0.98 ms | 0.82 ms | yes |
+| 10,000 | 163 KiB | 0.32 s | 0.51 s | 82 MiB | 1.13 ms | 0.97 ms | yes |
+| 20,000 | 333 KiB | 0.63 s | 0.98 s | 128 MiB | 1.11 ms | 0.99 ms | yes |
+
+All sizes are within budget, so the cap is 20,000, the largest size measured;
+the warning starts at 10,000. Reproduce with
+`tests/integration/country_benchmark.py`, and check the behavior with
+`./dev/country-it.sh`.
+
 ## Host recovery
 
 If a ban locks you out of a site, recover from the host without the console.
@@ -756,6 +868,10 @@ Recovery never needs port 2019 published.
 | `BANS_DIR` | `/etc/caddy/console` | Directory for generated Caddy files, inside the Caddyfile directory. |
 | `BANS_MAX` | `10000` | Maximum prefixes rendered into Caddy (measured above). |
 | `BANS_NEVER` | empty | Extra protected IPs/CIDRs, comma or space separated. An invalid entry stops startup. |
+| `CLIENT_IP_MODE` | `direct` | Default client-IP profile (`direct`, `cloudflare-proxied`, `cloudflare-tunnel`) until one is saved in Security. |
+| `CLOUDFLARE_RANGES_AUTO_UPDATE` | `true` | Daily refresh of Cloudflare's edge ranges in proxied mode. |
+| `COUNTRY_POLICY_ENABLED` | `false` | Allows the country policy to be enforced. |
+| `COUNTRY_MAX_PREFIXES` | `20000` | Direct country policy prefix cap (1-20000, measured above). |
 | `BANS_SYNC_INTERVAL` | `30` | Minimum seconds between CrowdSec-driven reloads (10-3600). |
 | `CROWDSEC_URL` | empty | LAPI URL; empty disables CrowdSec. The overlay sets `http://crowdsec:8080`. |
 | `CROWDSEC_CONSOLE_BOUNCER_KEY` | empty | Read-only bouncer key used only by the console. `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE` reads it from a mounted file instead. |

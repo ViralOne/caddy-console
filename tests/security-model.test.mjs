@@ -206,7 +206,7 @@ check('overall state counts any enforcing source and any held file', () => {
 });
 
 console.log('\n--- no HTML sinks ---');
-for (const f of ['security.js', 'security-crowdsec.js', 'security-plugin.js', 'security-model.js', 'ban-dialog.js', 'ip-popover.js', 'snippet-insert.js', 'panels.js', 'ui/dialog.js']) {
+for (const f of ['security.js', 'security-crowdsec.js', 'security-plugin.js', 'security-client-ip.js', 'security-country.js', 'security-model.js', 'ban-dialog.js', 'ip-popover.js', 'snippet-insert.js', 'panels.js', 'ui/dialog.js']) {
   const p = path.join(APP, f);
   if (!fs.existsSync(p)) continue;
   check(`${f} never writes HTML`, () =>
@@ -301,4 +301,93 @@ check('a refused or held plugin shows in the overall verdict', () => {
 });
 check('SOURCE_LABELS name the plugin', () => assert.equal(M.SOURCE_LABELS.plugin, 'CrowdSec plugin'));
 
+
+console.log('\n--- Phase 4: client IP ---');
+check('every mode has a plain-language explanation and unknown ids fall back to direct', () => {
+  assert.deepEqual(M.CLIENT_IP_MODES.map(m => m.id), ['direct', 'cloudflare-proxied', 'cloudflare-tunnel']);
+  for (const m of M.CLIENT_IP_MODES) assert.ok(m.explain.length > 40, m.id);
+  assert.equal(M.clientIpMode('nope').id, 'direct');
+});
+check('clientIpPayload validates the mode and the tunnel peer', () => {
+  assert.deepEqual(M.clientIpPayload({ mode: 'direct', peersText: '10.0.0.1' }), { mode: 'direct' });
+  assert.deepEqual(M.clientIpPayload({ mode: 'cloudflare-proxied' }), { mode: 'cloudflare-proxied' });
+  assert.deepEqual(M.clientIpPayload({ mode: 'cloudflare-tunnel', peersText: ' 172.18.0.5, 172.18.1.0/24 ', tunnelOnly: true }),
+    { mode: 'cloudflare-tunnel', tunnel_peers: ['172.18.0.5', '172.18.1.0/24'], tunnel_only: true });
+  assert.throws(() => M.clientIpPayload({ mode: 'cloudflare-tunnel', peersText: '  ' }), /cloudflared address/);
+  assert.throws(() => M.clientIpPayload({ mode: 'bogus' }), /Choose/);
+});
+check('the confirmation names what Caddy will trust', () => {
+  assert.match(M.clientIpConfirm({ mode: 'cloudflare-tunnel', tunnel_peers: ['172.18.0.5'] }).body, /172\.18\.0\.5/);
+  assert.equal(M.clientIpConfirm({ mode: 'direct' }).danger, false);
+  assert.equal(M.clientIpConfirm({ mode: 'cloudflare-proxied' }).danger, true);
+  assert.match(M.clientIpConfirm({ mode: 'direct' }).body, /stops trusting/);
+});
+check('range age, source and overdue notices', () => {
+  assert.equal(M.rangesAgeText({ source: 'official', age_seconds: 3 * 86400 }), 'Fetched 3 days ago');
+  assert.equal(M.rangesAgeText({ source: 'official', age_seconds: 5 * 3600 }), 'Fetched 5 h ago');
+  assert.equal(M.rangesAgeText({ source: 'bundled', age_seconds: null }), 'Using the bundled list');
+  assert.equal(M.rangesNotice({ age_seconds: 10 * 86400 }, 'cloudflare-proxied') !== '', true);
+  assert.match(M.rangesNotice({ last_error: 'timeout', age_seconds: 5 }, 'cloudflare-proxied'), /timeout/);
+  assert.equal(M.rangesNotice({ age_seconds: 10 * 86400 }, 'direct'), '');
+});
+check('client-IP state: corrupt, hold, missing peer, stale file, live mismatch, ok', () => {
+  const ok = { mode: 'cloudflare-proxied', present: true, current: true, live: [{ matches: true }] };
+  assert.equal(M.clientIpState(ok).tone, 'ok');
+  assert.equal(M.clientIpState({ ...ok, corrupt: 'bad' }).tone, 'crit');
+  assert.equal(M.clientIpState({ ...ok, hold: 'x' }).tone, 'warn');
+  assert.equal(M.clientIpState({ ...ok, current: false }).tone, 'warn');
+  assert.equal(M.clientIpState({ ...ok, live: [{ matches: false }] }).tone, 'warn');
+  assert.match(M.clientIpState({ mode: 'cloudflare-tunnel', tunnel_peers: [] }).title, /no cloudflared/);
+  assert.equal(M.clientIpState({ mode: 'direct', present: false, live: [] }).tone, 'ok');
+});
+
+console.log('\n--- Phase 4: country policy ---');
+const names = { of: (c) => ({ RO: 'Romania', DE: 'Germany' }[c] || c) };
+const INFO = { iso_codes: ['RO', 'DE', 'ZZ'], special_codes: ['XX', 'T1'] };
+check('country options are named, sorted, fall back to the code and put XX/T1 last', () => {
+  const o = M.countryOptions(INFO, names);
+  assert.deepEqual(o.map(x => x.code), ['DE', 'RO', 'ZZ', 'T1', 'XX']);
+  assert.deepEqual(o.map(x => x.name), ['Germany (DE)', 'Romania (RO)', 'ZZ', 'Tor exit nodes (T1)', 'Unknown country (XX)']);
+  assert.deepEqual(o.map(x => x.special), [false, false, false, true, true]);
+  assert.equal(M.countryOptions(INFO, null)[0].name, 'DE');
+  assert.equal(M.countryName('RO', { of: () => { throw new RangeError('x'); } }), 'RO');
+});
+check('toggling keeps a sorted unique list and special codes are flagged', () => {
+  assert.deepEqual(M.toggleCode(['RO'], 'DE', true), ['DE', 'RO']);
+  assert.deepEqual(M.toggleCode(['DE', 'RO'], 'DE', false), ['RO']);
+  assert.deepEqual(M.toggleCode(['RO'], 'RO', true), ['RO']);
+  assert.deepEqual(M.specialSelected(['RO', 'XX'], INFO), ['XX']);
+  assert.match(M.SPECIAL_WARNING, /XX.*T1/);
+});
+check('countryPayload needs a country to enable and carries the Cloudflare confirmation', () => {
+  assert.throws(() => M.countryPayload({ enabled: true, countries: [] }), /at least one/);
+  assert.deepEqual(M.countryPayload({ enabled: false, countries: [] }), { enabled: false, countries: [] });
+  assert.deepEqual(M.countryPayload({ enabled: true, countries: ['RO', 'DE'], confirmed: true, shape: 'cloudflare' }),
+    { enabled: true, countries: ['DE', 'RO'], cloudflare_geolocation_confirmed: true });
+  assert.deepEqual(M.countryPayload({ enabled: true, countries: ['RO'], shape: 'direct' }), { enabled: true, countries: ['RO'] });
+});
+check('prefix counts, warning and cap wording', () => {
+  const s = { prefixes: { v4: 800, v6: 200, total: 1000 }, cap: 20000, warn: 10000 };
+  assert.equal(M.countryPrefixText(s), '800 IPv4 and 200 IPv6 prefixes (1000 of 20000 allowed)');
+  assert.match(M.countryPrefixText({ ...s, prefixes: { v4: 9000, v6: 2000, total: 11000 } }), /Above 10000.*Cloudflare WAF/);
+  assert.equal(M.countryPrefixText({ prefixes: {} }), '');
+});
+check('country state: off, not enabled here, unconfirmed Cloudflare, live mismatch, healthy', () => {
+  const base = { env_enabled: true, effective: true, shape: 'direct', countries: ['RO'], present: true, summary: { healthy: true, live_ok: true } };
+  assert.deepEqual([M.countryState(base).tone, M.countryState(base).title], ['ok', 'Allowing 1 country']);
+  assert.equal(M.countryState({ ...base, env_enabled: false }).tone, 'none');
+  assert.equal(M.countryState({ ...base, effective: false }).title, 'Country policy is off');
+  assert.equal(M.countryState({ ...base, shape: 'cloudflare', cloudflare_geolocation_confirmed: false, summary: { healthy: false } }).title, 'Cloudflare IP geolocation is not confirmed');
+  assert.equal(M.countryState({ ...base, summary: { healthy: false, live_ok: false } }).title, 'Caddy runs a different country policy');
+  assert.equal(M.countryState({ ...base, error: { message: 'dataset missing' } }).tone, 'crit');
+  assert.equal(M.countryState({ ...base, corrupt: 'bad json' }).tone, 'crit');
+});
+check('country rows have their own labels and never count as ban enforcement', () => {
+  assert.equal(M.siteStatus({ status: 'enforced' }, 'country').label, 'Countries enforced');
+  assert.equal(M.siteStatus({ status: 'imported_empty' }, 'country').label, 'Imported, country policy off');
+  assert.equal(M.siteStatus({ status: 'imported_empty' }).label, 'Imported, no active bans');
+  assert.match(M.siteStatus({ status: 'not_imported' }, 'country').detail, /country policy/);
+  const only = { available: true, caddy: { reachable: true }, sources: {}, sites: [{ policies: { manual: { status: 'not_imported' }, country: { status: 'enforced' } } }] };
+  assert.equal(M.overallState(only, 0).title, 'No site imports the ban list');
+});
 console.log(`\n${passed} passed`);
