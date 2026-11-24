@@ -107,6 +107,13 @@ CROWDSEC_CONSOLE_BOUNCER_KEY = os.environ.get("CROWDSEC_CONSOLE_BOUNCER_KEY", ""
 CROWDSEC_CONSOLE_BOUNCER_KEY_FILE = os.environ.get("CROWDSEC_CONSOLE_BOUNCER_KEY_FILE", "").strip()
 CROWDSEC_ORIGINS = os.environ.get("CROWDSEC_ORIGINS", "crowdsec,cscli")
 CROWDSEC_POLL_INTERVAL = bounded_int("CROWDSEC_POLL_INTERVAL", 10, 5, 300)
+# Optional machine (watcher) login, only for deleting CrowdSec decisions from
+# Security (src/bans/lapimachine.py). Unset means read-only. The password is
+# read at use time, never logged, returned or audited.
+CROWDSEC_MACHINE_ID = os.environ.get("CROWDSEC_MACHINE_ID", "")
+CROWDSEC_MACHINE_ID_FILE = os.environ.get("CROWDSEC_MACHINE_ID_FILE", "").strip()
+CROWDSEC_MACHINE_PASSWORD = os.environ.get("CROWDSEC_MACHINE_PASSWORD", "")
+CROWDSEC_MACHINE_PASSWORD_FILE = os.environ.get("CROWDSEC_MACHINE_PASSWORD_FILE", "").strip()
 
 # Phase 3, CrowdSec plugin mode (docs/security.md#crowdsec-plugin). The plugin's
 # own key (CROWDSEC_PLUGIN_BOUNCER_KEY) belongs to the Caddy container and is

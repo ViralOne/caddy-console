@@ -23,7 +23,7 @@ import requests as http_client
 from .. import audit, config, locks
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
-from . import addr, cfranges, country, countrydata, detect, fsio, lapi, plugin, pluginpolicy, profile, protected, render, scan, store, syncstate, txn
+from . import addr, cfranges, country, countrydata, detect, fsio, lapi, lapimachine, plugin, pluginpolicy, profile, protected, render, scan, store, syncstate, txn
 from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
@@ -578,6 +578,53 @@ def remove_ban(record_id, actor, remote_addr):
         return Mutation({"removed": r.id, "value": r.value, "still_covered_by": still}, 200,
                         [("ban_removed", f"{r.value} id={r.id}")])
     return _transact(actor, _verified_client(remote_addr), mutate)
+
+
+def delete_crowdsec_decision(decision_id, actor, remote_addr):
+    """Delete one CrowdSec decision in LAPI (machine login), then drop its
+    stored record through the shared transaction so bans-crowdsec.caddy
+    updates now instead of at the next sync. Only the id of a currently synced
+    record is accepted, never an address. No lock is held during the LAPI call."""
+    if not lapimachine.valid_decision_id(decision_id):
+        return _error("invalid_decision_id", "A CrowdSec decision ID is a positive integer.", 400)
+    if not lapi.enabled():
+        return _error("crowdsec_not_enabled", "CrowdSec sync is not enabled.", 409)
+    creds, problem = lapimachine.read_credentials()
+    if creds is None:
+        return _error("crowdsec_write_not_configured", problem or "Add CrowdSec machine credentials "
+                      "(CROWDSEC_MACHINE_ID and CROWDSEC_MACHINE_PASSWORD) to unban here.", 409)
+    try:
+        state = store.load()
+    except store.StateCorrupt as e:
+        return _error("state_degraded", f"{e}. Open Security to recover.", 503, recovery=True)
+    if not any(r.source == "crowdsec" and r.source_id == decision_id for r in state.records):
+        return _error("decision_not_found", "No synced CrowdSec decision with that ID.", 404)
+    gone = False
+    try:
+        lapimachine.delete_decision(decision_id, creds)
+    except lapimachine.DecisionGone:
+        gone = True
+    except lapi.LapiAuthError as e:
+        return _error("crowdsec_auth_failed", f"CrowdSec refused the machine credentials ({e}).", 502)
+    except lapi.LapiMalformed as e:
+        return _error("crowdsec_bad_response", f"CrowdSec sent an unusable response ({e}).", 502)
+    except lapi.LapiUnavailable as e:
+        return _error("crowdsec_unreachable", f"CrowdSec is unreachable ({e}).", 503)
+    detail = f"id={decision_id}"
+
+    def mutate(st, now, version):
+        r = next((x for x in st.records if x.source == "crowdsec" and x.source_id == decision_id), None)
+        if r is not None:
+            st.records.remove(r)
+        return Mutation({"deleted": decision_id, "already_gone": gone}, 200, [("crowdsec_decision_deleted", detail)])
+    body, status = _transact(actor, _verified_client(remote_addr), mutate, source="crowdsec_unban",
+                             affects=("crowdsec",))
+    if status >= 400:                       # deleted in CrowdSec; the sync drops the stored copy
+        audit.log_action("crowdsec_decision_deleted", actor, detail)
+        return {"ok": True, "code": "deleted_pending_sync", "deleted": decision_id, "already_gone": gone,
+                "message": f"Deleted in CrowdSec. The console removes it within {config.BANS_SYNC_INTERVAL} "
+                           "seconds."}, 200
+    return body, status
 
 
 def _aux_active(name) -> bool:
@@ -1400,7 +1447,9 @@ def _crowdsec_status(now) -> dict:
             stale = True
         key, _ = lapi.read_key()
         doc = _scrub(doc, key)
-    return {"enabled": enabled, "origins": origins,
+    creds, write_problem = lapimachine.read_credentials() if enabled else (None, None)
+    return {"enabled": enabled, "origins": origins, "write_configured": creds is not None,
+            "write_problem": write_problem,
             "list_origins": [o for o in origins if o in lapi.LIST_ORIGINS], "sync": doc, "stale": stale}
 
 

@@ -5,6 +5,7 @@ after _bans.FakeCaddy: GETs that are not for URL go to the previous requests.get
 so both fakes work in one test. Empty lists are sent as null, as LAPI does.
 """
 import json
+import json as _json
 from datetime import timedelta
 from unittest import mock
 
@@ -14,6 +15,8 @@ from src import config
 
 URL = "http://crowdsec.invalid:8080"
 KEY = "console-test-key-6f1d0c2a9b"
+MACHINE_ID = "caddy-console-writer"
+MACHINE_PASSWORD = "machine-test-password-41c7e9"
 
 
 def enable(test, **extra):
@@ -54,6 +57,10 @@ class FakeLapi:
         self.response = None                 # returned as is in "response" mode
         self.calls = []
         self._seq = 100
+        self.machines = {MACHINE_ID: MACHINE_PASSWORD}   # watcher logins LAPI accepts
+        self.tokens = set()                              # JWTs LAPI currently honours
+        self.write_mode = "ok"                           # ok | down
+        self.writes = []                                 # login and delete calls, as sent
 
     def add(self, value, *, scope="Ip", type="ban", origin="crowdsec", scenario="crowdsecurity/http-probing",
             duration="3h59m58.5s", id=None):
@@ -96,9 +103,49 @@ class FakeLapi:
             return self.response
         return FakeStreamResponse(200, self._body((params or {}).get("startup") == "true"))
 
+    def revoke_tokens(self):
+        self.tokens.clear()
+
+    def _post(self, url, data=None, json=None, headers=None, timeout=None, **kw):
+        if not url.startswith(URL):
+            return self._prev_post(url, data=data, json=json, headers=headers, timeout=timeout, **kw)
+        self.writes.append({"method": "POST", "path": url[len(URL):], "json": json, "headers": dict(headers or {}),
+                            "timeout": timeout, "allow_redirects": kw.get("allow_redirects")})
+        if self.write_mode == "down":
+            raise requests.ConnectionError("fake lapi is down")
+        if url[len(URL):] != "/v1/watchers/login":
+            return FakeStreamResponse(404, b'{"message":"not found"}')
+        body = json or {}
+        if self.machines.get(body.get("machine_id")) != body.get("password") or not body.get("password"):
+            return FakeStreamResponse(401, b'{"code":401,"message":"incorrect Username or Password"}')
+        self._seq += 1
+        token = f"jwt-{self._seq}"
+        self.tokens.add(token)
+        return FakeStreamResponse(200, _json.dumps({"code": 200, "expire": "2999-01-01T00:00:00Z",
+                                                    "token": token}).encode())
+
+    def _delete(self, url, headers=None, timeout=None, **kw):
+        if not url.startswith(URL):
+            return self._prev_delete(url, headers=headers, timeout=timeout, **kw)
+        self.writes.append({"method": "DELETE", "path": url[len(URL):], "headers": dict(headers or {}),
+                            "timeout": timeout, "allow_redirects": kw.get("allow_redirects")})
+        if self.write_mode == "down":
+            raise requests.ConnectionError("fake lapi is down")
+        auth = (headers or {}).get("Authorization", "")
+        if not auth.startswith("Bearer ") or auth[7:] not in self.tokens:
+            return FakeStreamResponse(401, b'{"code":401,"message":"Token is expired"}')
+        did = url[len(URL) + len("/v1/decisions/"):]
+        if did not in self.current:
+            msg = f"decision with id '{did}' doesn't exist: unable to delete"
+            return FakeStreamResponse(500, _json.dumps({"message": msg}).encode())
+        self.delete(did)
+        return FakeStreamResponse(200, b'{"nbDeleted":"1"}')
+
     def install(self, test):
-        self._prev = requests.get
-        p = mock.patch.object(requests, "get", self._get)
-        p.start()
-        test.addCleanup(p.stop)
+        self._prev, self._prev_post = requests.get, requests.post
+        self._prev_delete = getattr(requests, "delete")
+        for name, fn in (("get", self._get), ("post", self._post), ("delete", self._delete)):
+            p = mock.patch.object(requests, name, fn)
+            p.start()
+            test.addCleanup(p.stop)
         return self

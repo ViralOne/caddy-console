@@ -48,6 +48,11 @@ services:
       CROWDSEC_ORIGINS: ${CROWDSEC_ORIGINS:-crowdsec,cscli}
       CROWDSEC_POLL_INTERVAL: ${CROWDSEC_POLL_INTERVAL:-10}
       BANS_SYNC_INTERVAL: ${BANS_SYNC_INTERVAL:-30}
+      # Optional: a CrowdSec machine login, so Security can unban CrowdSec
+      # decisions (docs/security.md#removing-a-decision). Unset = read-only.
+      CROWDSEC_MACHINE_ID: ${CROWDSEC_MACHINE_ID:-}
+      CROWDSEC_MACHINE_PASSWORD: ${CROWDSEC_MACHINE_PASSWORD:-}
+      CROWDSEC_MACHINE_PASSWORD_FILE: ${CROWDSEC_MACHINE_PASSWORD_FILE:-}
     networks:
       - crowdsec-lapi
 

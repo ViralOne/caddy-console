@@ -76,6 +76,12 @@ def remove_ban(record_id):
     return _reply(service.remove_ban(record_id, _actor(), request.remote_addr))
 
 
+@security_bp.route("/api/security/crowdsec/decisions/<decision_id>", methods=["DELETE"])
+@login_required
+def delete_crowdsec_decision(decision_id):
+    return _reply(service.delete_crowdsec_decision(decision_id, _actor(), request.remote_addr))
+
+
 @security_bp.route("/api/security/client-ip-profile", methods=["GET"])
 @login_required
 def client_ip_profile_get():

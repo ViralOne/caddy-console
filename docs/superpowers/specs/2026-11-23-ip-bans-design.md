@@ -52,6 +52,7 @@ file or the operator adds the CrowdSec handler to that site.
 - Writing manual console bans back to CrowdSec LAPI. Manual bans remain local in
   this design. Two-way machine credentials can be designed separately after the
   read-only integration is stable.
+  Amendment (2026-11-24): deleting a single CrowdSec decision from Security, with optional machine credentials, is now in scope; nothing else is written to LAPI.
 - Per-site ban storage. A site chooses whether to import the shared effective
   list.
 - Terminating existing WebSocket or other long-lived connections. A reload

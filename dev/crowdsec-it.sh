@@ -8,6 +8,9 @@ cd "$(dirname "$0")/.."
 export CADDY_CONSOLE_UID="$(id -u)" CADDY_CONSOLE_GID="$(id -g)" BUILDX_BUILDER="${BUILDX_BUILDER:-default}"
 # One key for the whole run: every compose call below renders the same value.
 export CROWDSEC_CONSOLE_BOUNCER_KEY="${CROWDSEC_CONSOLE_BOUNCER_KEY:-$(python3 -c 'import secrets; print(secrets.token_hex(24))')}"
+# Machine login for the console's Unban (created below; never a bouncer key).
+export CROWDSEC_MACHINE_ID=caddy-console-writer
+export CROWDSEC_MACHINE_PASSWORD="${CROWDSEC_MACHINE_PASSWORD:-$(python3 -c 'import secrets; print(secrets.token_hex(24))')}"
 BASE=(docker compose -f docker-compose.dev.yaml)
 COMPOSE=(docker compose -f docker-compose.dev.yaml -f docker-compose.crowdsec.yaml)
 IPS="203.0.113.60 203.0.113.61 203.0.113.62 203.0.113.63 203.0.113.70 203.0.113.71"
@@ -41,6 +44,7 @@ cscli bouncers delete caddy_console >/dev/null 2>&1 || true
 "${COMPOSE[@]}" restart crowdsec >/dev/null
 "${COMPOSE[@]}" up -d --wait --wait-timeout 300 crowdsec caddy-console
 cscli bouncers list -o json | grep -q '"caddy_console"'
+cscli machines add "$CROWDSEC_MACHINE_ID" --password "$CROWDSEC_MACHINE_PASSWORD" -f /dev/null --force >/dev/null
 forget
 it prepare
 
@@ -74,6 +78,12 @@ t0=$(date +%s); cscli decisions add --ip 203.0.113.70 --duration 1h --reason cad
 it wait-enforced 203.0.113.70 "$t0" 60 403
 it check-records 203.0.113.70 cscli
 t0=$(date +%s); cscli decisions delete --ip 203.0.113.70 >/dev/null
+it wait-enforced 203.0.113.70 "$t0" 60 200
+
+# Unban from the console: the decision is gone from LAPI and the file stops enforcing within 60 s.
+cscli decisions add --ip 203.0.113.70 --duration 1h --reason caddy-console-it >/dev/null
+it wait-enforced 203.0.113.70 "$(date +%s)" 60 403
+t0=$(date +%s); it console-unban 203.0.113.70
 it wait-enforced 203.0.113.70 "$t0" 60 200
 
 # LAPI outage keeps the last list; recovery starts with startup=true.

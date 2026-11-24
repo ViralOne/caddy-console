@@ -191,6 +191,33 @@ def cmd_wait_enforced(ip, t0, seconds, expect):
     print(f"{ip}: HTTP {expect} after {elapsed:.0f}s")
 
 
+CONSOLE = "http://127.0.0.1:9090"
+CONSOLE_AUTH = {"Cf-Access-Authenticated-User-Email": "dev@local"}
+
+
+def cmd_console_unban(ip):
+    """Unban the synced decision for ip through the console API (machine login)."""
+    with open(STATE, encoding="utf-8") as f:
+        ids = [r["source_id"] for r in json.load(f)["records"] if r["source"] == "crowdsec" and r["value"] == ip]
+    if len(ids) != 1:
+        fail(f"expected one synced record for {ip}, found {ids}")
+    s = requests.Session()
+    s.headers.update(CONSOLE_AUTH)
+    page = s.get(CONSOLE + "/", timeout=10).text
+    s.headers["X-CSRF-Token"] = re.search(r'name="csrf-token" content="([^"]+)"', page).group(1)
+    sec = s.get(CONSOLE + "/api/security", timeout=20).json()
+    if not sec["sources"]["crowdsec"].get("write_configured"):
+        fail("the console does not report CrowdSec write access")
+    r = s.delete(f"{CONSOLE}/api/security/crowdsec/decisions/{ids[0]}", timeout=30)
+    if r.status_code != 200 or not r.json().get("ok"):
+        fail(f"unban answered {r.status_code}: {r.text[:300]}")
+    if os.environ.get("CROWDSEC_MACHINE_PASSWORD", "\0") in r.text:
+        fail("the unban response carries the machine password")
+    if decisions(ip):
+        fail(f"{ip} is still decided in LAPI after the unban")
+    print(f"{ip}: decision {ids[0]} deleted through the console")
+
+
 def cmd_check_records(ip, origin):
     with open(STATE, encoding="utf-8") as f:
         records = json.load(f)["records"]

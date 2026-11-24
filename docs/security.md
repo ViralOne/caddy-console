@@ -373,13 +373,29 @@ automatic apply pauses and Security shows the counts by origin.
 
 ### Removing a decision
 
-CrowdSec decisions are read-only in the console. Security shows a copyable
-command for each one; run it inside the CrowdSec container:
+By default the console only reads CrowdSec. Security shows a copyable command
+for each decision; run it inside the CrowdSec container:
 
 ```bash
 docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml exec crowdsec \
   cscli decisions delete --id 42
 ```
+
+To unban from Security instead, give the console a CrowdSec machine login once
+(`-f /dev/null` keeps cscli from overwriting CrowdSec's own credentials file):
+
+```bash
+python -c 'import secrets; print(secrets.token_hex(32))' > secrets/crowdsec_machine_password
+docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml exec -T crowdsec \
+  cscli machines add caddy-console-writer --password "$(cat secrets/crowdsec_machine_password)" -f /dev/null
+```
+
+Then set `CROWDSEC_MACHINE_ID=caddy-console-writer` and
+`CROWDSEC_MACHINE_PASSWORD` (or `CROWDSEC_MACHINE_PASSWORD_FILE`, which wins) for
+the console and recreate it. **Unban** deletes exactly one decision by ID
+(`DELETE /v1/decisions/<id>` after `POST /v1/watchers/login`) and the policy file
+updates at once. The password must differ from the bouncer key and is never
+logged, returned or audited.
 
 **Reset CrowdSec decisions** in Security only clears the stored copy; decisions
 that are still active in CrowdSec return within `BANS_SYNC_INTERVAL`.
