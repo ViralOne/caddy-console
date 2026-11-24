@@ -3,6 +3,7 @@
 Run with:  uv run --frozen python -m unittest tests.test_bans_config -v
 """
 import os
+import re
 import unittest
 from unittest import mock
 
@@ -37,3 +38,13 @@ class BansConfigTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BansMaxDocumentedTest(unittest.TestCase):
+    def test_default_matches_docs_security(self):
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, "docs", "security.md"), encoding="utf-8") as f:
+            text = f.read()
+        m = re.search(r"\| `BANS_MAX` \| `(\d+)` \|", text)
+        self.assertIsNotNone(m, "docs/security.md has no BANS_MAX row")
+        self.assertEqual(config.BANS_MAX, int(m.group(1)))

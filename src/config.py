@@ -85,7 +85,7 @@ def bounded_int(name: str, default: int, low: int, high: int) -> int:
 # visible at the same absolute path in the Caddy container.
 BANS_ENABLED = os.environ.get("BANS_ENABLED", "true").lower() not in ("0", "false", "no")
 BANS_DIR = os.environ.get("BANS_DIR", "/etc/caddy/console").rstrip("/") or "/etc/caddy/console"
-# Total prefixes rendered into stock Caddy. Task 16's benchmark sets the default.
+# Measured by tests/integration/bans_benchmark.py; see docs/security.md.
 BANS_MAX = bounded_int("BANS_MAX", 10000, 1, 100000)
 # Extra protected IPs/CIDRs, comma or space separated. Parsed by src/bans/protected.py
 # at app start; one invalid token refuses startup.

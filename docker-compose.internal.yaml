@@ -67,6 +67,10 @@ services:
       - AUDIT_LOG_MAX_BYTES
       - GEOIP_DIR
       - GEOIP_AUTO_UPDATE
+      - BANS_ENABLED
+      - BANS_DIR
+      - BANS_MAX
+      - BANS_NEVER
       - GUNICORN_WORKERS
       - GUNICORN_THREADS
       - GUNICORN_TIMEOUT

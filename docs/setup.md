@@ -444,6 +444,13 @@ copy) when you open an event's original line. Paste the Ray ID into the
 Cloudflare dashboard to see what Cloudflare did with that request. Without these
 lines nothing changes: no facet, no extra fields.
 
+## IP bans (optional)
+
+Ban an IP or range from the **Security** view or the Explore IP popover; stock
+Caddy enforces it on the sites that import the managed file. Setup, the
+protected ranges, capacity and host recovery are in
+[docs/security.md](security.md). No extra service is required.
+
 ## Environment variables
 
 | Variable | Required | Default | Description |
@@ -470,6 +477,10 @@ lines nothing changes: no facet, no extra fields.
 | `CADDY_EXPLORE_MAX_EVENTS` | no | `200000` | Events held in memory per range; ~38 B each |
 | `GEOIP_DIR` | no | `/data/geoip` | Where the DB-IP Lite databases live |
 | `GEOIP_AUTO_UPDATE` | no | `true` | Download a new DB-IP release monthly. `false` for air-gapped hosts |
+| `BANS_ENABLED` | no | `true` | IP bans: Security API, background job and view. Sites are unchanged until they import the file |
+| `BANS_DIR` | no | `/etc/caddy/console` | Generated Caddy files; inside the Caddyfile directory |
+| `BANS_MAX` | no | `10000` | Maximum prefixes rendered into Caddy |
+| `BANS_NEVER` | no | empty | Extra protected IPs/CIDRs, comma or space separated; invalid entry stops startup |
 | `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
 | `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
 

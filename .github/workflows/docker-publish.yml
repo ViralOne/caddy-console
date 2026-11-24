@@ -64,6 +64,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Baseline Compose files render without CrowdSec
+        run: ./dev/check-compose.sh
+
       - name: Stock Caddy integration (IP bans)
         run: ./dev/bans-it.sh
 
