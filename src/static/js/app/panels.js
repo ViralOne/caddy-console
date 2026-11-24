@@ -138,7 +138,8 @@ export function insertSiteFirst(s, cursorLine) {
   editorView.dispatch({ changes: { from, insert: plan.text } });
   setDot('yellow');
   closePanel('snippets');
-  toast(`Inserted "${s.name}" at line ${plan.line}. Review it, then Save & Reload.`, { kind: 'ok' });
+  const note = s.id === 'cloudflare-origin-guard' ? ' Replace the placeholder LAN range 192.168.1.0/24 with your own first.' : '';
+  toast(`Inserted "${s.name}" at line ${plan.line}. Review it, then Save & Reload.${note}`, { kind: s.id === 'cloudflare-origin-guard' ? 'warn' : 'ok' });
   return true;
 }
 
@@ -172,7 +173,8 @@ function insertServers(s, ctx) {
   editorView.dispatch({ changes: { from: doc.line(plan.line).from, insert: plan.text } });
   setDot('yellow');
   closePanel('snippets');
-  toast(`Inserted "${s.name}" at line ${plan.line}. Review it, then Save & Reload.`, { kind: 'ok' });
+  const note = s.id === 'cloudflare-origin-guard' ? ' Replace the placeholder LAN range 192.168.1.0/24 with your own first.' : '';
+  toast(`Inserted "${s.name}" at line ${plan.line}. Review it, then Save & Reload.${note}`, { kind: s.id === 'cloudflare-origin-guard' ? 'warn' : 'ok' });
   return true;
 }
 

@@ -315,6 +315,29 @@ class CountryIT(unittest.TestCase):
             self.ok(self.set_country(["DE", "US"]))
         self.assertEqual(get({"X-Forwarded-For": US_IP6}, 8080)[0], 200)
 
+    # -- the origin guard ----------------------------------------------------
+    def guard_code(self, lan):
+        with open(os.path.join(os.path.dirname(config.__file__), "snippets.json"), encoding="utf-8") as f:
+            code = next(x["code"] for x in json.load(f) if x.get("id") == "cloudflare-origin-guard")
+        return code.replace("192.168.1.0/24", lan)
+
+    def test_origin_guard_covers_sites_built_on_handle(self):
+        """A bare `respond` would run after `handle`; the matcher-specific handle runs first."""
+        def site(lan):
+            guard = "".join("\t" + l + "\n" for l in self.guard_code(lan).splitlines())
+            return (f"http://{HOST} {{\n{guard}\thandle /api/* {{\n\t\trespond \"api\" 200\n\t}}\n"
+                    "\thandle {\n\t\trespond \"app\" 200\n\t}\n}\n")
+        base = "{\n\tadmin 0.0.0.0:2019\n}\n\n"
+        try:
+            for lan, want in (("192.0.2.0/24", 403), (f"{self.me}/32", 200)):
+                r = caddy_admin.load(base + site(lan))
+                self.assertEqual(r.status, "applied", r.message)
+                self.assertEqual(get()[0], want, lan)
+                self.assertEqual(requests.get(f"http://{itenv.DATA_URL.split('//')[1].split(':')[0]}/api/x",
+                                              headers={"Host": HOST}, timeout=5).status_code, want, lan)
+        finally:
+            reload()
+
 
 def detect_marker():
     """The shape marker in the live config: direct or cloudflare."""

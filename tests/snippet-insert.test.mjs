@@ -204,7 +204,9 @@ check('the old ambiguous Cloudflare Only snippet is gone and the four new ones a
 check('the origin guard matches remote_ip and never a forwarding header', () => {
   const g = byId['cloudflare-origin-guard'].code;
   assert.match(g, /^@not_cloudflare_origin not remote_ip 173\.245\.48\.0\/20 .*2400:cb00::\/32 .*192\.168\.1\.0\/24$/m);
-  assert.match(g, /^respond @not_cloudflare_origin 403$/m);
+  assert.match(g, /^handle @not_cloudflare_origin \{\n\trespond 403\n\}\n$/m);
+  assert.doesNotMatch(g, /^respond /m, 'a bare respond runs after handle');
+  assert.match(byId['cloudflare-origin-guard'].description, /WARNING: 192\.168\.1\.0\/24 is a placeholder/);
   assert.doesNotMatch(g, /header|client_ip|CF-|X-Forwarded/i);
 });
 check('the country import follows the ban imports and is never inserted twice or into the console site', () => {
@@ -217,12 +219,12 @@ check('the country import follows the ban imports and is never inserted twice or
 check('the origin guard is inserted with every line indented, once, and never into the console site', () => {
   const guard = 'a.example.com {\n\treverse_proxy 127.0.0.1:9\n}\n';
   const o = { marker: '@not_cloudflare_origin', managementHosts: ['console.example.com'] };
-  const p = planSiteInsertion(guard, 1, 'x\nrespond @y 403\n', o);
-  assert.equal(p.text, '\tx\n\trespond @y 403\n');
+  const p = planSiteInsertion(guard, 1, 'x\nhandle @y {\n\trespond 403\n}\n', o);
+  assert.equal(p.text, '\tx\n\thandle @y {\n\t\trespond 403\n\t}\n');
   const code = byId['cloudflare-origin-guard'].code;
   const once = applyPlan(guard, planSiteInsertion(guard, 1, code, o));
   assert.match(once, /^\t@not_cloudflare_origin not remote_ip /m);
-  assert.match(once, /^\trespond @not_cloudflare_origin 403$/m);
+  assert.match(once, /^\thandle @not_cloudflare_origin \{\n\t\trespond 403\n\t\}$/m);
   assert.equal(planSiteInsertion(once, 1, code, o).reason, 'duplicate');
   assert.equal(planSiteInsertion(CF, 29, code, o).reason, 'management-site');
 });
