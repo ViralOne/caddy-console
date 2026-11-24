@@ -84,7 +84,7 @@ export function banState(lookup) {
   };
 }
 
-export const SOURCE_LABELS = { manual: 'Manual', crowdsec: 'CrowdSec' };
+export const SOURCE_LABELS = { manual: 'Manual', crowdsec: 'CrowdSec', plugin: 'CrowdSec plugin' };
 export const LIST_ORIGIN_WARNING = 'CAPI and list origins can hold tens of thousands of decisions. Stock Caddy file mode has a finite matcher budget (BANS_MAX); prefer plugin mode for them once it is available.';
 
 const TONE_RANK = { none: 0, ok: 1, warn: 2, crit: 3 };
@@ -180,6 +180,7 @@ const SITE = {
   unknown: ['Enforcement not verified', 'warn'],
   management: ['Console site, never banned', 'none'],
   management_imported: ['Console site imports the ban list: lockout risk', 'crit'],
+  plugin_unprotected: ['Plugin runs without the protected ranges', 'crit'],
 };
 
 export function siteStatus(site) {
@@ -191,6 +192,7 @@ export function siteStatus(site) {
     caddy_unreachable: 'The Caddy admin API did not answer, so whether this site enforces the ban list cannot be checked. The import line on disk is shown as it is.',
     management: 'The console is excluded so a ban cannot lock you out.',
     management_imported: 'A ban that matches your address would block the console itself. Remove the import line from this site in the editor, then Save & Reload.',
+    plugin_unprotected: 'The crowdsec handler runs here without import protect_crowdsec, so private, Docker and BANS_NEVER addresses reach the plugin. Replace the crowdsec line with import protect_crowdsec, then Save & Reload.',
   }[site.status] || site.detail || '';
   return { label, tone, detail };
 }
@@ -199,6 +201,43 @@ export function siteActions(site) {
   if (['enforced', 'enforced_pre_handler', 'imported_empty', 'management', 'management_imported'].includes(site.status)) return [];
   if (site.import?.present) return [];
   return site.source === 'external' ? ['copy'] : ['insert', 'copy'];
+}
+
+const ENFORCES = ['enforced', 'enforced_pre_handler', 'imported_empty'];
+
+export function pluginState(p) {
+  if (!p?.enabled) return null;
+  if (p.refused) return { tone: 'crit', title: 'Plugin mode refused: the admin API would be exposed', detail: p.admin?.message || '' };
+  if (p.module === false) return { tone: 'warn', title: 'The running Caddy has no crowdsec module', detail: 'Start the plugin image with docker-compose.crowdsec-plugin.yaml; stored files stay as they are.' };
+  const d = p.definition || {};
+  if (d.hold) return { tone: 'warn', title: 'Protected route differs from state', detail: 'crowdsec-plugin-protect.caddy was changed outside the console. Re-apply the plugin route.' };
+  if (!d.present || !d.current) return { tone: 'warn', title: 'Protected route definition is out of date', detail: 'Re-apply the plugin route so the protected ranges match the current settings.' };
+  if (!p.app) return { tone: 'none', title: 'Plugin app not loaded', detail: 'Insert "CrowdSec plugin: global app" and "load protected route definition" in the editor, then Save & Reload.' };
+  if (p.app.key_form === 'literal') return { tone: 'crit', title: 'Bouncer key written into the Caddyfile', detail: `Anyone who can read Caddy's config sees it. Use api_key ${p.placeholder} and rotate the key.` };
+  if (p.app.key_form === 'missing') return { tone: 'crit', title: 'The crowdsec app has no bouncer key', detail: `Use api_key ${p.placeholder}.` };
+  if (p.app.key_form === 'placeholder') return { tone: 'warn', title: 'Bouncer key placeholder does not match this deployment', detail: `Caddy uses ${p.app.key_placeholder}; this deployment expects ${p.placeholder}.` };
+  if (!p.app.streaming) return { tone: 'warn', title: 'Live mode: every request asks CrowdSec', detail: 'Remove disable_streaming from the crowdsec global options.' };
+  return { tone: 'ok', title: `Near-real-time without reload, polling every ${p.app.ticker_interval || p.ticker_interval}`, detail: '' };
+}
+
+export function crowdsecPath(site) {
+  const pol = site?.policies || {};
+  if (!pol.plugin) return null;
+  if (pol.plugin.status === 'plugin_unprotected') return { text: 'CrowdSec decisions: plugin without the protected ranges', tone: 'crit' };
+  const file = ENFORCES.includes(pol.crowdsec?.status);
+  const plug = ENFORCES.includes(pol.plugin.status);
+  if (file && plug) return { text: 'CrowdSec decisions: file sync and plugin (redundant, both enforce)', tone: 'warn' };
+  if (plug) return { text: 'CrowdSec decisions: plugin', tone: 'ok' };
+  if (file) return { text: 'CrowdSec decisions: file sync', tone: 'ok' };
+  return { text: 'CrowdSec decisions: not enforced', tone: 'none' };
+}
+
+export function pluginSiteActions(policy, site, plugin) {
+  const base = siteActions({ ...policy, source: site.source });
+  const ready = plugin?.enabled && !plugin.refused && plugin.module !== false && plugin.app
+    && plugin.definition?.imported && plugin.definition?.current;
+  if (!ready) return [];
+  return base;
 }
 
 const RELOAD_UNKNOWN = ['live_mismatch', 'caddy_unreachable'];
@@ -219,16 +258,20 @@ function baseState(status, recordCount) {
     return { tone: 'crit', title: 'Caddy unreachable, enforcement unknown', body: status.caddy.message || 'The Caddy admin API did not answer, so the running configuration could not be checked.' };
   }
   const held = Object.entries(status.sources || {}).filter(([, s]) => s?.hold).map(([n]) => SOURCE_LABELS[n] || n);
+  if (status.plugin?.definition?.hold) held.push('CrowdSec plugin route');
   if (held.length) {
     return { tone: 'warn', title: 'Policy differs from state', body: `The ${held.join(' and ')} ban file was changed outside the console. Fix the records, then Re-apply.` };
   }
   if ((status.sites || []).some(s => policiesOf(s).some(p => p.status === 'management_imported'))) {
     return { tone: 'crit', title: 'Console site imports the ban list: lockout risk', body: 'Remove the import line from the console site in the editor, then Save & Reload.' };
   }
+  const ps = pluginState(status.plugin);
+  if (ps && status.plugin.refused) return { tone: 'crit', title: ps.title, body: ps.detail };
   const cs = status.sources?.crowdsec;
   if (cs?.enabled && crowdsecState(cs).tone === 'crit') {
     return { tone: 'warn', title: 'CrowdSec sync needs attention', body: crowdsecState(cs).title };
   }
+  if (ps && ps.tone === 'crit') return { tone: 'warn', title: 'CrowdSec plugin needs attention', body: ps.title };
   const ENFORCING = ['enforced', 'enforced_pre_handler', 'imported_empty'];
   const n = (status.sites || []).filter(s => policiesOf(s).some(p => ENFORCING.includes(p.status))).length;
   if (n) return { tone: 'ok', title: `Enforced on ${n} ${n === 1 ? 'site' : 'sites'}`, body: '' };

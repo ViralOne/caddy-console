@@ -201,7 +201,7 @@ check('overall state counts any enforcing source and any held file', () => {
 });
 
 console.log('\n--- no HTML sinks ---');
-for (const f of ['security.js', 'security-crowdsec.js', 'security-model.js', 'ban-dialog.js', 'ip-popover.js', 'snippet-insert.js', 'panels.js', 'ui/dialog.js']) {
+for (const f of ['security.js', 'security-crowdsec.js', 'security-plugin.js', 'security-model.js', 'ban-dialog.js', 'ip-popover.js', 'snippet-insert.js', 'panels.js', 'ui/dialog.js']) {
   const p = path.join(APP, f);
   if (!fs.existsSync(p)) continue;
   check(`${f} never writes HTML`, () =>
@@ -237,5 +237,63 @@ check('synced decisions that are not applied yet read as applying, not active', 
   const cap = { ...pending, sync: { ...pending.sync, apply_state: 'capacity_exceeded', apply_message: 'too many' } };
   assert.equal(M.crowdsecState(cap, NOW).title, 'Over capacity: automatic apply paused');
 });
+
+console.log('\n--- CrowdSec plugin ---');
+const PLUG = {
+  enabled: true, module: true, refused: false, admin: null, key_mode: 'env', key_file: null,
+  placeholder: '{env.CROWDSEC_PLUGIN_BOUNCER_KEY}', ticker_interval: '10s',
+  app: { api_url: 'http://crowdsec:8080', ticker_interval: '10s', streaming: true, hard_fails: false, key_form: 'expected', key_placeholder: null },
+  definition: { file: '/etc/caddy/console/crowdsec-plugin-protect.caddy', import_line: 'import /etc/caddy/console/crowdsec-plugin-protect*.caddy',
+    site_import: 'import protect_crowdsec', present: true, hash: '0123456789ab', current: true, hold: false, hold_reason: null, imported: true },
+  allowlist: 'cscli allowlists add caddy_console_protected 127.0.0.0/8\n', check_command: 'crowdsec/check-plugin-isolation.sh -- ...',
+};
+check('plugin health wording, worst problem first', () => {
+  assert.equal(M.pluginState({ enabled: false }), null);
+  assert.deepEqual([M.pluginState(PLUG).tone, M.pluginState(PLUG).title], ['ok', 'Near-real-time without reload, polling every 10s']);
+  const refused = M.pluginState({ ...PLUG, refused: true, admin: { code: 'admin_wildcard', message: 'listens on every interface' } });
+  assert.deepEqual([refused.tone, refused.title, refused.detail], ['crit', 'Plugin mode refused: the admin API would be exposed', 'listens on every interface']);
+  assert.equal(M.pluginState({ ...PLUG, module: false }).title, 'The running Caddy has no crowdsec module');
+  assert.equal(M.pluginState({ ...PLUG, app: { ...PLUG.app, key_form: 'literal' } }).tone, 'crit');
+  assert.doesNotMatch(M.pluginState({ ...PLUG, app: { ...PLUG.app, key_form: 'literal' } }).detail, /[0-9a-f]{16}/);
+  assert.match(M.pluginState({ ...PLUG, app: { ...PLUG.app, key_form: 'placeholder', key_placeholder: '{file./run/secrets/x}' } }).detail, /\{file\.\/run\/secrets\/x\}.*\{env\.CROWDSEC_PLUGIN_BOUNCER_KEY\}/);
+  assert.equal(M.pluginState({ ...PLUG, app: null }).title, 'Plugin app not loaded');
+  assert.equal(M.pluginState({ ...PLUG, definition: { ...PLUG.definition, current: false } }).title, 'Protected route definition is out of date');
+  assert.equal(M.pluginState({ ...PLUG, definition: { ...PLUG.definition, hold: true, hold_reason: 'differs' } }).title, 'Protected route differs from state');
+  assert.equal(M.pluginState({ ...PLUG, app: { ...PLUG.app, streaming: false } }).tone, 'warn');
+});
+const pol = (crowdsec, plugin) => ({ policies: { manual: { status: 'enforced' }, crowdsec: { status: crowdsec }, plugin: { status: plugin } } });
+check('each site says which path CrowdSec decisions take', () => {
+  assert.deepEqual(M.crowdsecPath(pol('enforced', 'not_imported')), { text: 'CrowdSec decisions: file sync', tone: 'ok' });
+  assert.deepEqual(M.crowdsecPath(pol('imported_empty', 'enforced')), { text: 'CrowdSec decisions: file sync and plugin (redundant, both enforce)', tone: 'warn' });
+  assert.deepEqual(M.crowdsecPath(pol('not_imported', 'enforced')), { text: 'CrowdSec decisions: plugin', tone: 'ok' });
+  assert.deepEqual(M.crowdsecPath(pol('not_imported', 'not_imported')), { text: 'CrowdSec decisions: not enforced', tone: 'none' });
+  assert.deepEqual(M.crowdsecPath(pol('not_imported', 'plugin_unprotected')), { text: 'CrowdSec decisions: plugin without the protected ranges', tone: 'crit' });
+  assert.equal(M.crowdsecPath({ policies: { manual: {} } }), null, 'no plugin rows: nothing to say');
+});
+check('a bare crowdsec handler is critical and offers no insert', () => {
+  const s = M.siteStatus({ status: 'plugin_unprotected', detail: 'x' });
+  assert.deepEqual([s.label, s.tone], ['Plugin runs without the protected ranges', 'crit']);
+  assert.match(s.detail, /import protect_crowdsec/);
+});
+check('the plugin site import is offered only when the plugin is ready', () => {
+  const site = { source: 'main' };
+  const p = { status: 'not_imported', import: { present: false } };
+  assert.deepEqual(M.pluginSiteActions(p, site, PLUG), ['insert', 'copy']);
+  assert.deepEqual(M.pluginSiteActions(p, { source: 'external' }, PLUG), ['copy']);
+  assert.deepEqual(M.pluginSiteActions(p, site, { ...PLUG, app: null }), []);
+  assert.deepEqual(M.pluginSiteActions(p, site, { ...PLUG, refused: true }), []);
+  assert.deepEqual(M.pluginSiteActions(p, site, { ...PLUG, definition: { ...PLUG.definition, imported: false } }), []);
+  assert.deepEqual(M.pluginSiteActions({ ...p, status: 'enforced' }, site, PLUG), []);
+});
+check('a refused or held plugin shows in the overall verdict', () => {
+  const base = { available: true, degraded: null, caddy: { reachable: true }, sources: { manual: {} }, sites: [{ policies: { manual: { status: 'enforced' } } }] };
+  assert.equal(M.overallState({ ...base, plugin: PLUG }).tone, 'ok');
+  const refused = M.overallState({ ...base, plugin: { ...PLUG, refused: true, admin: { code: 'admin_wildcard', message: 'm' } } });
+  assert.deepEqual([refused.tone, refused.title], ['crit', 'Plugin mode refused: the admin API would be exposed']);
+  const held = M.overallState({ ...base, plugin: { ...PLUG, definition: { ...PLUG.definition, hold: true } } });
+  assert.equal(held.title, 'Policy differs from state');
+  assert.match(held.body, /CrowdSec plugin route/);
+});
+check('SOURCE_LABELS name the plugin', () => assert.equal(M.SOURCE_LABELS.plugin, 'CrowdSec plugin'));
 
 console.log(`\n${passed} passed`);

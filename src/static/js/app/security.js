@@ -9,9 +9,10 @@ import { confirmDialog } from './ui/dialog.js';
 import { toast } from './ui/toast.js';
 import { requestJson as call } from './security-api.js';
 import { CrowdSecSection } from './security-crowdsec.js';
+import { PluginSection } from './security-plugin.js';
 import {
-  DURATIONS, SOURCE_LABELS, banPayload, capacityText, createdCell, errorMessage, expiryLabel, outcomeText, overallState, staleNotice, HOST_RECOVERY_URL,
-  protectedLabel, recoveryActionLabel, siteActions, siteStatus,
+  DURATIONS, SOURCE_LABELS, banPayload, capacityText, createdCell, crowdsecPath, errorMessage, expiryLabel, outcomeText, overallState, staleNotice,
+  HOST_RECOVERY_URL, pluginSiteActions, protectedLabel, recoveryActionLabel, siteActions, siteStatus,
 } from './security-model.js';
 
 const html = htm.bind(h);
@@ -92,17 +93,19 @@ function BanList({ records, onDone }) {
     </table>`;
 }
 
-function Sites({ sites, sources }) {
+function Sites({ sites, sources, plugin }) {
   if (!sites.length) return html`<p class="metrics-hint">No sites in the running configuration.</p>`;
   const names = Object.keys(sources);
   return html`
     <ul class="sec-sites">${sites.map(s => html`
       <li key=${s.label + ':' + (s.line || '')}>
         <span class="mono">${s.label}</span>
+        ${(() => { const cp = crowdsecPath(s); return cp && html`<span class=${'sec-path tone-' + cp.tone}>${cp.text}</span>`; })()}
         ${names.map(name => {
-          const p = s.policies?.[name] || s;
+          const p = s.policies?.[name] || (name === 'plugin' ? null : s);
+          if (!p) return null;
           const st = siteStatus(p);
-          const acts = siteActions({ ...p, source: s.source });
+          const acts = name === 'plugin' ? pluginSiteActions(p, s, plugin) : siteActions({ ...p, source: s.source });
           return html`
             <div class=${'sec-policy tone-' + st.tone} key=${name}>
               ${names.length > 1 && html`<span class="sec-src">${SOURCE_LABELS[name] || name}</span>`}
@@ -196,6 +199,13 @@ function App() {
   // A source that is not enabled has no policy file to show (CrowdSec off).
   const active = Object.fromEntries(Object.entries(status.sources).filter(([, s]) => s.enabled !== false));
   const writable = status.available && !status.degraded;
+  const plug = status.plugin?.enabled ? status.plugin : null;
+  const siteSources = plug ? { ...active, plugin: { import_line: plug.definition.site_import } } : active;
+  const reapplyPlugin = async () => {
+    const r = await call('/api/security/reapply', 'POST', { source: 'plugin' });
+    toast(r.ok ? 'Plugin route re-applied.' : errorMessage(r.body, r.status), { kind: r.ok ? 'ok' : 'error' });
+    load();
+  };
   return html`
     <div class="page sec">
       <${Verdict} status=${status} records=${manualRecords.length} stale=${error ? loadedAt : null} recoveryShown=${!!status.recovery?.required} />
@@ -207,10 +217,11 @@ function App() {
         ${bans?.error ? html`<p class="metrics-hint error">${bans.error}</p>` : html`<${BanList} records=${manualRecords} onDone=${load} />`}
       </section>
       ${cs?.enabled && html`<${CrowdSecSection} src=${cs} records=${crowdsecRecords} onCopy=${copy} />`}
+      ${plug && html`<${PluginSection} plugin=${plug} onCopy=${copy} onReapply=${reapplyPlugin} />`}
       <section aria-labelledby="sec-sites-h">
         <div class="h-sec"><h2 id="sec-sites-h">Sites</h2><p>Proven from Caddy's running configuration.</p></div>
         ${Object.entries(active).map(([n, s]) => html`<p class="sec-import" key=${n}>${SOURCE_LABELS[n] || n} import line: <code>${s.import_line}</code></p>`)}
-        <${Sites} sites=${status.sites} sources=${active} />
+        <${Sites} sites=${status.sites} sources=${siteSources} plugin=${plug} />
       </section>
       <section aria-labelledby="sec-prot-h">
         <div class="h-sec"><h2 id="sec-prot-h">Never banned</h2><p>Refused at input and excluded again by the generated policy.</p></div>
