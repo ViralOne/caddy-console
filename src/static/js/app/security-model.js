@@ -85,7 +85,7 @@ export function banState(lookup) {
 }
 
 export const SOURCE_LABELS = { manual: 'Manual', crowdsec: 'CrowdSec', plugin: 'CrowdSec plugin' };
-export const LIST_ORIGIN_WARNING = 'CAPI and list origins can hold tens of thousands of decisions. Stock Caddy file mode has a finite matcher budget (BANS_MAX); prefer plugin mode for them once it is available.';
+export const LIST_ORIGIN_WARNING = 'CAPI and list origins can hold tens of thousands of decisions. Stock Caddy file mode has a finite matcher budget (BANS_MAX); prefer plugin mode for them (docs/security.md#crowdsec-plugin).';
 
 const TONE_RANK = { none: 0, ok: 1, warn: 2, crit: 3 };
 const LAPI_STATES = {

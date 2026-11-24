@@ -642,7 +642,7 @@ def apply_crowdsec(desired, *, snapshot=False, ignored=None, now=None) -> SyncAp
                               f"({_counts_text(e.by_source)}; CrowdSec by origin: {_counts_text(result.by_origin)}); "
                               f"the limit (BANS_MAX) is {e.limit}. The last applied CrowdSec policy stays enforced "
                               "and automatic apply is paused. Restrict CROWDSEC_ORIGINS, raise BANS_MAX after "
-                              "measuring (docs/security.md#capacity), or use plugin mode once it is available.")
+                              "measuring (docs/security.md#capacity), or use plugin mode (docs/security.md#crowdsec-plugin).")
             return result
         events = _expired_events(expired)
         all_ignored = ignored + collections.Counter({f"protected:{k}": v for k, v in prot_counts.items()})

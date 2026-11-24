@@ -450,10 +450,11 @@ port 2019 again.
 
 The tunnel stack already gives `caddy-admin` this subnet. The prod, internal and
 NAS stacks do not, so take the stack down once (no `-v`, volumes stay) and let
-Compose recreate the network with the overlay:
+Compose recreate the network with the overlay. Name every file the stack is
+running with, so the CrowdSec container and its networks go too:
 
 ```bash
-docker compose -f docker-compose.prod.yaml down
+docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml down
 ```
 
 ### Start it
@@ -475,10 +476,11 @@ the running Caddy has the module, and a site import needs that definition.
 
    `CROWDSEC_CONSOLE_BOUNCER_KEY` stays as set up for
    [CrowdSec file sync](#crowdsec-file-sync-optional). Keep both keys in `.env`.
-2. In the editor insert **CrowdSec plugin: global app** inside the global
+2. Wait until Security shows the protected route definition as current: the
+   editor refuses the definition import until then.
+3. In the editor insert **CrowdSec plugin: global app** inside the global
    options block and **CrowdSec plugin: load protected route definition** at
    top level, then **Save & Reload**.
-3. Wait until Security shows the protected route definition as current.
 4. Per site, insert **CrowdSec plugin: protect this site** (or use **Add import
    in editor** in Security), then **Save & Reload**.
 

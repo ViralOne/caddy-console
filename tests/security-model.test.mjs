@@ -12,6 +12,11 @@ let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
 const NOW = Date.parse('2026-11-23T20:00:00Z');
 
+check('the list-origin warning points at plugin mode, which exists now', () => {
+  assert.ok(M.LIST_ORIGIN_WARNING.includes('docs/security.md#crowdsec-plugin'));
+  assert.ok(!M.LIST_ORIGIN_WARNING.includes('once it is available'));
+});
+
 console.log('\n--- durations and expiry ---');
 check('durations are exactly the four spec values', () =>
   assert.deepEqual(M.DURATIONS.map(d => d.id), ['4h', '24h', '7d', 'permanent']));

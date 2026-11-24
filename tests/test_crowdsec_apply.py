@@ -144,6 +144,8 @@ class ApplyTest(ApplyCase):
         self.assertEqual(r.capacity, {"count": 4, "limit": 3, "by_source": {"manual": 1, "crowdsec": 3}})
         self.assertEqual(r.by_origin, {"crowdsec": 2, "cscli": 1})
         self.assertIn("CROWDSEC_ORIGINS", r.message)
+        self.assertIn("docs/security.md#crowdsec-plugin", r.message)       # plugin mode exists now
+        self.assertNotIn("once it is available", r.message)
         self.assertEqual((fsio.read_bytes(CS.path), fsio.read_bytes(store.STATE_PATH)), before)
 
     def test_capacity_counts_non_local_origins_too(self):
