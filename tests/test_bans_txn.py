@@ -267,6 +267,84 @@ class ApplyTest(unittest.TestCase):
                 outcome, _ = txn._adapt_load_verify(text)
                 self.assertEqual((outcome.ok, outcome.code, outcome.http_status), (False, code, status))
 
+    def _failing_audit(self, failing_action):
+        real = audit.log_action
+
+        def log_action(action, user, detail=""):
+            if action == failing_action:
+                raise OSError(28, "No space left on device")
+            real(action, user, detail)
+        return mock.patch.object(audit, "log_action", log_action)
+
+    def test_audit_failure_after_commit_never_rolls_back_a_reload(self):
+        changes = _bans.manual_changes("203.0.113.7")
+        with self._failing_audit("ban_created"), self.assertLogs(txn.log, "WARNING"):
+            out = _bans.apply(changes, audit=[("ban_created", "203.0.113.7"), ("ban_note", "x")])
+        self.assertEqual((out.ok, out.reload_status, out.enforcement), (True, "applied", "enforced"))
+        self.assertEqual(fsio.read_bytes(MANUAL.path), changes[0].data)
+        self.assertEqual(fsio.read_bytes(store.STATE_PATH), changes[1].data)
+        self.assertIn("ban_note", actions())                 # later events still written
+        self.assertIn("bans_policy_applied", actions())
+        self.assert_clean()
+
+    def test_audit_failure_after_commit_never_rolls_back_without_reload(self):
+        _bans.reset("example.com {\n\trespond 200\n}\n")
+        changes = _bans.manual_changes("203.0.113.7")
+        with self._failing_audit("ban_created"), self.assertLogs(txn.log, "WARNING"):
+            out = _bans.apply(changes, audit=[("ban_created", "203.0.113.7")])
+        self.assertEqual((out.ok, out.reload_status), (True, "not_required"))
+        self.assertEqual(fsio.read_bytes(MANUAL.path), changes[0].data)
+        self.assertEqual(fsio.read_bytes(store.STATE_PATH), changes[1].data)
+        self.assert_clean()
+
+    def test_policy_applied_audit_failure_still_reports_applied(self):
+        with self._failing_audit("bans_policy_applied"), self.assertLogs(txn.log, "WARNING"):
+            out = _bans.apply(_bans.manual_changes("203.0.113.7"))
+        self.assertEqual((out.ok, out.reload_status), (True, "applied"))
+        self.assert_clean()
+
+    def _journal_gone_before_rmtree(self):
+        real, seen = txn.shutil.rmtree, []
+
+        def rmtree(path, *a, **kw):
+            if os.path.dirname(path) == txn.TXN_ROOT:
+                seen.append(os.path.exists(txn.JOURNAL_PATH))
+            real(path, *a, **kw)
+        patcher = mock.patch.object(txn.shutil, "rmtree", rmtree)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return seen
+
+    def test_journal_is_removed_before_backups_on_commit(self):
+        seen = self._journal_gone_before_rmtree()
+        self.assertTrue(_bans.apply(_bans.manual_changes("203.0.113.7")).ok)
+        self.assertEqual(seen, [False])
+
+    def test_journal_is_removed_before_backups_on_rollback(self):
+        self.baseline()
+        seen = self._journal_gone_before_rmtree()
+        self.caddy.load_mode = "reject"
+        self.assertEqual(_bans.apply(_bans.manual_changes("198.51.100.0/24")).code, "reload_rejected")
+        self.assertEqual(seen, [False])
+
+    def test_journal_is_removed_before_backups_on_discard(self):
+        seen = self._journal_gone_before_rmtree()
+        real = fsio.fsync_dir
+
+        def failing(directory):                      # fails right after the journal is written
+            if directory == env.BACKUP_DIR and os.path.exists(txn.JOURNAL_PATH) and not seen:
+                raise OSError(5, "I/O error")
+            real(directory)
+        with mock.patch.object(fsio, "fsync_dir", failing):
+            out = _bans.apply(_bans.manual_changes("203.0.113.7"))
+        self.assertEqual(out.code, "write_failed")
+        self.assertEqual(seen, [False])
+        self.assert_clean()
+
+    def test_txn_root_is_private(self):
+        self.assertTrue(_bans.apply(_bans.manual_changes("203.0.113.7")).ok)
+        self.assertEqual(mode(txn.TXN_ROOT), 0o700)
+
     def test_requires_a_resolved_journal(self):
         fsio.atomic_write(txn.JOURNAL_PATH, b'{"version": 1, "entries": []}', 0o600)
         with self.assertRaises(RuntimeError):

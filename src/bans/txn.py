@@ -18,6 +18,7 @@ when the change commits: here, or later by recovery when Caddy is found running
 the candidate. A change that rolls back is never audited as made.
 """
 import json
+import logging
 import os
 import shutil
 import uuid
@@ -39,6 +40,8 @@ STATE_MODE = 0o600
 POLICY_MODE = 0o644
 MAX_ENTRIES = 16
 MAX_AUDIT_EVENTS = 64
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -152,35 +155,52 @@ def _finish_candidate(journal) -> None:
         _remove_quietly(e["temp_path"])
 
 
-def _cleanup(journal) -> None:
+def _remove_debris(journal) -> None:
+    """Temps and the transaction directory. Called only once the journal is
+    gone: a journal must never name backups that no longer exist, while
+    orphaned backups and hidden temps are harmless (the sweep removes them)."""
     for e in journal.get("entries", []):
         _remove_quietly(e.get("temp_path"))
     shutil.rmtree(os.path.join(TXN_ROOT, journal.get("id", "")), ignore_errors=True)
+
+
+def _cleanup(journal) -> None:
     _remove_quietly(JOURNAL_PATH)
     fsio.fsync_dir(BACKUP_DIR)
+    _remove_debris(journal)
+
+
+def _audit_quietly(action, actor, detail) -> None:
+    """Post-commit audit: a failing audit log must not undo a committed change."""
+    try:
+        audit.log_action(action, actor, detail)
+    except OSError as e:
+        log.warning("Could not write audit event %s: %s", action, e)
 
 
 def _commit(journal) -> bool:
     """Verify every final file is the candidate, mark the journal committed,
     emit the mutation's audit events, then clean up. Shared by apply_locked
     and the recovery paths, so audit events appear wherever a change commits.
-    Raises OSError if the committed journal cannot be written; the journal is
-    then still pending and recovery commits it later."""
+
+    Only an OSError from writing the committed journal means "not committed";
+    it propagates and the journal stays pending for recovery. After that write
+    the change is committed: audit and cleanup failures are logged, never raised."""
     if any(fsio.sha256_tag(fsio.read_bytes(e["path"])) != e["candidate_hash"] for e in journal["entries"]):
         return False
     journal["phase"] = "committed"
     _write_journal(journal)
     for action, detail in journal.get("audit") or []:
-        audit.log_action(action, journal["actor"], detail)
-    _cleanup(journal)
+        _audit_quietly(action, journal["actor"], detail)
+    try:
+        _cleanup(journal)
+    except OSError as e:
+        log.warning("Could not clean up committed ban transaction %s: %s", journal.get("id"), e)
     return True
 
 
 def _discard(journal) -> None:
     """Undo a preparation that never replaced a final path."""
-    for e in journal["entries"]:
-        _remove_quietly(e["temp_path"])
-    shutil.rmtree(os.path.join(TXN_ROOT, journal["id"]), ignore_errors=True)
     current = None
     try:
         current = read_journal()
@@ -188,6 +208,8 @@ def _discard(journal) -> None:
         pass
     if current and current.get("id") == journal["id"]:
         _remove_quietly(JOURNAL_PATH)
+        fsio.fsync_dir(BACKUP_DIR)
+    _remove_debris(journal)
 
 
 def _rollback(journal, code, message, http_status, reload_status) -> Outcome:
@@ -306,6 +328,7 @@ def apply_locked(changes, *, actor: str, source: str, audit_events=()) -> Outcom
 
     # Steps 6-8: temps, backups and candidate copies, then the journal.
     try:
+        os.makedirs(TXN_ROOT, mode=0o700, exist_ok=True)
         os.makedirs(txdir, mode=0o700)
         previous = []
         for i, c in enumerate(changes):
@@ -352,7 +375,7 @@ def apply_locked(changes, *, actor: str, source: str, audit_events=()) -> Outcom
     if not journal["reload_required"]:
         try:
             committed = _commit(journal)
-        except OSError as e:
+        except OSError as e:               # the committed journal was never written
             return _rollback(journal, "write_failed", f"Could not commit the change: {e}.", 500, "not_attempted")
         if not committed:
             return _rollback(journal, "write_failed", "A managed file changed during the update.", 500, "not_attempted")
@@ -382,17 +405,19 @@ def apply_locked(changes, *, actor: str, source: str, audit_events=()) -> Outcom
         # Spec steps 11 and 14: nothing new is running, so restore every entry.
         return _rollback(journal, failure.code, failure.message, failure.http_status, failure.reload_status)
 
+    applied_detail = f"{source}: " + ", ".join(os.path.basename(e["path"]) for e in journal["entries"])
     try:
         committed = _commit(journal)
     except OSError as e:
-        # Caddy runs the candidate and the files are the candidate; the journal
-        # still says "adapted" with a matching hash, so recovery commits it.
+        # The committed journal was never written. Caddy runs the candidate and
+        # the files are the candidate; the journal still says "adapted" with a
+        # matching hash, so recovery commits it (and emits its audit events).
+        _audit_quietly("bans_policy_applied", actor, applied_detail)
         return Outcome(True, None, "applied", "enforced",
-                       f"Applied; Caddy reloaded. Clearing the transaction journal failed ({e}); "
+                       f"Applied; Caddy reloaded. Recording the commit failed ({e}); "
                        "it is settled before the next change.")
     if not committed:
         return _hold_ambiguous(journal, Outcome(False, "reload_unknown", "unknown", "unknown",
                                                 "A managed file changed during the reload.", 504))
-    audit.log_action("bans_policy_applied", actor,
-                     f"{source}: " + ", ".join(os.path.basename(e["path"]) for e in journal["entries"]))
+    _audit_quietly("bans_policy_applied", actor, applied_detail)
     return Outcome(True, None, "applied", "enforced", "Applied; Caddy reloaded.")
