@@ -71,6 +71,52 @@ class ApplyTest(unittest.TestCase):
         self.assertTrue(os.path.exists(MANUAL.path))
         self.assert_clean()
 
+    def test_creating_the_policy_reloads_when_an_included_file_may_import_it(self):
+        # The import lives in an included file and the policy did not exist at
+        # the last Caddy load, so the live config has no marker yet.
+        _bans.reset()
+        _bans.write_caddyfile(_bans.write_included_site())
+        self.assertFalse(txn.marker_present(self.caddy.live, MANUAL.marker))
+        out = _bans.apply(_bans.manual_changes("203.0.113.7"))
+        self.assertEqual((out.ok, out.reload_status, out.enforcement), (True, "applied", "enforced"), out.message)
+        self.assertIn("load", [c[0] for c in self.caddy.calls])
+        self.assertTrue(txn.marker_present(self.caddy.live, MANUAL.marker))
+        self.assert_clean()
+
+    def test_creating_the_policy_without_any_file_import_needs_no_reload(self):
+        _bans.reset("example.com {\n\timport snippet_name\n\trespond 200\n}\n")
+        out = _bans.apply(_bans.manual_changes("203.0.113.7"))
+        self.assertEqual(out.reload_status, "not_required")
+        self.assertNotIn("load", [c[0] for c in self.caddy.calls])
+
+    def test_forced_reload_loads_unchanged_files(self):
+        _bans.reset()
+        _bans.write_caddyfile(_bans.write_included_site())
+        changes = _bans.manual_changes("203.0.113.7")
+        with mock.patch.object(txn, "_could_import", lambda *a: False):
+            out = _bans.apply(changes)                 # policy written, Caddy never reloaded
+        self.assertEqual(out.reload_status, "not_required")
+        self.assertFalse(txn.marker_present(self.caddy.live, MANUAL.marker))
+        self.caddy.calls.clear()
+        out = _bans.apply(changes, audit=[("bans_reapply", "manual")])
+        self.assertEqual(out.reload_status, "not_required")    # nothing changed, nothing forced
+        out = _bans.apply(changes, audit=[("bans_reapply", "manual")], force_reload=True)
+        self.assertEqual((out.ok, out.reload_status, out.enforcement), (True, "applied", "enforced"), out.message)
+        self.assertEqual([c[0] for c in self.caddy.calls][-3:], ["adapt", "load", "config"])
+        self.assertTrue(txn.marker_present(self.caddy.live, MANUAL.marker))
+        self.assertEqual(actions().count("bans_reapply"), 2)
+        self.assert_clean()
+
+    def test_forced_reload_of_unchanged_files_reports_a_rejected_load(self):
+        _bans.reset()
+        _bans.write_caddyfile(_bans.write_included_site())
+        changes = _bans.manual_changes("203.0.113.7")
+        self.assertTrue(_bans.apply(changes).ok)
+        self.caddy.load_mode = "reject"
+        out = _bans.apply(changes, force_reload=True)
+        self.assertEqual((out.ok, out.code), (False, "reload_rejected"))
+        self.assert_clean()
+
     def test_live_marker_alone_requires_reload(self):
         _bans.reset("example.com {\n\trespond 200\n}\n")
         self.caddy.live = {"x": [{"handler": "vars", MANUAL.marker: "1"}]}

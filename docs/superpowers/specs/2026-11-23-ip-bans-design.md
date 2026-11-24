@@ -311,7 +311,11 @@ A manual mutation uses this sequence:
 10. Determine reload need from the on-disk import plus the current adapted/live
     source marker for every changed policy. If no changed file is imported, mark
     the journal committed without a Caddy reload and return
-    `enforcement: not_enabled` for that source.
+    `enforcement: not_enabled` for that source. A policy file that is being
+    created also needs a reload whenever the Caddyfile imports any file: an
+    import inside an included file is invisible to the console, and the live
+    config has no marker while the file did not exist. Re-apply reloads even
+    when no file changes.
 11. Ask the running Caddy build to adapt the current on-disk Caddyfile while the
     candidates are present. Adaptation checks Caddyfile syntax, imports and module
     names, not runtime provisioning. Store the normalized candidate JSON hash in

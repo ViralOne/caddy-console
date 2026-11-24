@@ -35,6 +35,7 @@ def reset(caddyfile=None):
                 os.remove(path)
     shutil.rmtree(os.path.join(env.BACKUP_DIR, ".policy-transactions"), ignore_errors=True)
     shutil.rmtree(env.BANS_DIR, ignore_errors=True)
+    shutil.rmtree(os.path.join(os.path.dirname(env.CADDYFILE), "sites-itest"), ignore_errors=True)
     os.makedirs(env.BANS_DIR)
     write_caddyfile(caddyfile if caddyfile is not None else MANUAL_SITE.format(bans_dir=env.BANS_DIR))
 
@@ -93,17 +94,24 @@ class FakeCaddy:
     def adapt_text(self, text):
         routes = []
         if not self.hide_imports:
-            for pattern in _IMPORT_RE.findall(text):
-                for path in sorted(glob.glob(pattern)):
-                    with open(path, encoding="utf-8") as f:
-                        body = f.read()
-                    handlers = [{"handler": "vars", m.group(1): m.group(2)} for m in _MARKER_RE.finditer(body)]
-                    handlers.append({"handler": "fake_import", "path": path, "body": body})
-                    routes.append({"handle": handlers})
+            self._resolve_imports(text, routes, depth=0)
         routes.append({"handle": [{"handler": "fake_caddyfile", "body": text}]})
         return {"apps": {"http": {"servers": {"srv0": {"listen": [":80"], "routes": [
             {"match": [{"host": ["example.com"]}],
              "handle": [{"handler": "subroute", "routes": routes}], "terminal": True}]}}}}}
+
+    def _resolve_imports(self, text, routes, depth):
+        """Absolute import globs, followed into imported files like Caddy does."""
+        if depth > 4:
+            return
+        for pattern in _IMPORT_RE.findall(text):
+            for path in sorted(glob.glob(pattern)):
+                with open(path, encoding="utf-8") as f:
+                    body = f.read()
+                handlers = [{"handler": "vars", m.group(1): m.group(2)} for m in _MARKER_RE.finditer(body)]
+                handlers.append({"handler": "fake_import", "path": path, "body": body})
+                routes.append({"handle": handlers})
+                self._resolve_imports(body, routes, depth + 1)
 
     def _post(self, url, data=None, headers=None, timeout=None, **kw):
         if self.down:
@@ -177,11 +185,22 @@ def manual_changes(*values):
             txn.Change(store.STATE_PATH, "state", store.dumps(state), owns=(src.filename,))]
 
 
-def apply(changes, audit=()):
+def apply(changes, audit=(), **kw):
     from src.bans import txn
     from src.routes.editor import caddyfile_lock
     with caddyfile_lock():
-        return txn.apply_locked(changes, actor="t@example.com", source="manual", audit_events=audit)
+        return txn.apply_locked(changes, actor="t@example.com", source="manual", audit_events=audit, **kw)
+
+
+def write_included_site(name="site.caddy"):
+    """A site defined in a file the main Caddyfile imports, which itself imports
+    the ban glob: the main text never mentions the policy file."""
+    sites = os.path.join(os.path.dirname(env.CADDYFILE), "sites-itest")
+    shutil.rmtree(sites, ignore_errors=True)
+    os.makedirs(sites)
+    with open(os.path.join(sites, name), "w", encoding="utf-8") as f:
+        f.write(MANUAL_SITE.format(bans_dir=env.BANS_DIR))
+    return f"import {sites}/*.caddy\n"
 
 
 AUTH = {"Cf-Access-Authenticated-User-Email": "admin@example.com"}

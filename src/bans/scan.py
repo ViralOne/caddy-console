@@ -98,6 +98,12 @@ def mentions_import(text, path) -> bool:
     return any(glob_matches(token, path) for _, token in import_targets(text))
 
 
+def imports_files(text) -> bool:
+    """True when the Caddyfile imports any file, which may in turn import a
+    managed policy: the console cannot follow those includes."""
+    return any(token.startswith("/") or "/" in token or "." in token for _, token in import_targets(text))
+
+
 def _is_policy_import(line, path) -> bool:
     m = _IMPORT.match(line)
     return bool(m and glob_matches(m.group(1), path))

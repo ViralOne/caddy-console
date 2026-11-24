@@ -234,7 +234,7 @@ def _after_commit(corrupt) -> None:
         store.clear_error()
 
 
-def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt=False):
+def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt=False, force_reload=False):
     """mutate(state, now, version) edits state in place and returns a Mutation,
     or raises BanError. Everything between load and apply runs under the lock.
     The mutation's audit events travel in the transaction journal, so txn
@@ -272,7 +272,7 @@ def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt
             return _error("capacity_exceeded", f"This would render {e.count} prefixes; the limit (BANS_MAX) "
                           f"is {e.limit}. Remove or merge bans first.", 409, count=e.count, limit=e.limit)
         outcome = txn.apply_locked(changes, actor=actor, source=source,
-                                   audit_events=_expired_events(expired) + result.audit)
+                                   audit_events=_expired_events(expired) + result.audit, force_reload=force_reload)
         if outcome.ok:
             _after_commit(corrupt)
     body = {**_outcome_body(outcome), **result.body}
@@ -353,7 +353,10 @@ def reapply(payload, actor, remote_addr):
 
     def mutate(state, now, version):
         return Mutation({"source": source}, 200, [("bans_reapply", source)])
-    return _transact(actor, _verified_client(remote_addr), mutate, force=(source,), source="reapply")
+    # Re-apply also reloads unchanged files: Caddy may never have loaded the
+    # policy (an import in an included file, added before the file existed).
+    return _transact(actor, _verified_client(remote_addr), mutate, force=(source,), source="reapply",
+                     force_reload=True)
 
 
 def reset(payload, actor, remote_addr):

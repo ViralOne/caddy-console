@@ -308,6 +308,18 @@ class HoldTest(ServiceCase):
         self.assertIn(b"client_ip 192.0.2.1 203.0.113.7", policy())
         self.assertFalse(service.status("127.0.0.1")["sources"]["manual"]["hold"])
 
+    def test_reapply_reloads_caddy_even_when_the_files_are_unchanged(self):
+        # The site lives in an included file; Caddy last loaded it before the
+        # policy existed, so its running config has no ban route.
+        _bans.write_caddyfile(_bans.write_included_site())
+        self.ban("203.0.113.7")
+        self.caddy.live = {"apps": {}}
+        self.caddy.calls.clear()
+        body, code = service.reapply({"source": "manual"}, "op@example.com", None)
+        self.assertEqual((code, body["reload_status"]), (200, "applied"), body)
+        self.assertIn("load", [c[0] for c in self.caddy.calls])
+        self.assertTrue(txn.marker_present(self.caddy.live, MANUAL.marker))
+
     def test_missing_state_with_an_existing_policy_is_a_hold(self):
         fsio.atomic_write(MANUAL.path, b"vars caddy_console_manual_policy 1\n", 0o644)
         self.assertEqual(service.recovery_info()["kind"], "policy_hold")

@@ -31,7 +31,7 @@ from ..config import BACKUP_DIR, CADDYFILE
 from . import caddy as caddy_admin
 from . import fsio
 from .detect import marker_present
-from .scan import mentions_import
+from .scan import imports_files, mentions_import
 from .store import iso, utc_now
 
 JOURNAL_PATH = os.path.join(BACKUP_DIR, "bans-transaction.json")
@@ -287,9 +287,55 @@ def _adapt_load_verify(text: str, on_adapted=None):
     return None, expected
 
 
-def apply_locked(changes, *, actor: str, source: str, audit_events=()) -> Outcome:
+def _could_import(live, caddyfile_text, change, created) -> bool:
+    """Whether Caddy may load this policy, so the change needs a reload. The
+    console only reads the main Caddyfile: an import in an included file is
+    invisible to it, and the live config has no marker while the policy file
+    did not exist at the last load. Creating the file therefore reloads once
+    whenever the Caddyfile imports any file."""
+    return (marker_present(live, change.marker) or mentions_import(caddyfile_text, change.path)
+            or (created and imports_files(caddyfile_text)))
+
+
+def _reload_unchanged(changes, actor, source, audit_events) -> Outcome:
+    """Re-apply with nothing to write: adapt, /load and verify the unchanged
+    files, so Caddy picks up a policy it never loaded. No journal is needed,
+    because no file changes; a failed or ambiguous /load leaves the files as
+    they were and the next change or status check reads Caddy again."""
+    try:
+        live = caddy_admin.live_config()
+        with open(CADDYFILE, encoding="utf-8", newline="") as f:
+            caddyfile_text = f.read()
+    except caddy_admin.CaddyUnavailable as e:
+        return Outcome(False, "caddy_unreachable", "not_attempted", "unknown",
+                       f"The Caddy admin API is unreachable ({e}); nothing was changed.", 503)
+    except FileNotFoundError:
+        caddyfile_text = ""
+    except (OSError, UnicodeError) as e:
+        return Outcome(False, "write_failed", "not_attempted", "unchanged", f"Cannot read the Caddyfile: {e}", 500)
+    if not any(_could_import(live, caddyfile_text, c, True) for c in changes if c.kind == "policy"):
+        for action, detail in audit_events:
+            audit.log_action(action, actor, detail)
+        return Outcome(True, None, "not_required", "not_enabled",
+                       "Nothing to change, and no site imports this policy, so Caddy was not reloaded.")
+    failure, _ = _adapt_load_verify(caddyfile_text)
+    if failure is not None:
+        if failure.code == "adaptation_failed":
+            audit.log_action("bans_adapt_rejected", actor, f"{source}: {failure.message[:200]}")
+        elif failure.code == "reload_rejected":
+            audit.log_action("bans_reload_rejected", actor, f"{source}: {failure.message[:200]}")
+        return failure
+    for action, detail in audit_events:
+        _audit_quietly(action, actor, detail)
+    _audit_quietly("bans_policy_applied", actor, f"{source}: reloaded unchanged files")
+    return Outcome(True, None, "applied", "enforced", "Re-applied; Caddy reloaded.")
+
+
+def apply_locked(changes, *, actor: str, source: str, audit_events=(), force_reload=False) -> Outcome:
     """Spec 1.5 steps 5-15. audit_events is a sequence of (action, detail) pairs
-    for this mutation, written to the audit log only when the change commits."""
+    for this mutation, written to the audit log only when the change commits.
+    force_reload (Re-apply) reloads Caddy even when no file changes, as long as
+    the Caddyfile could import a managed policy."""
     if read_journal() is not None:
         raise RuntimeError("apply_locked() needs resolve_pending() to clear the journal first")
     if len(changes) > MAX_ENTRIES:
@@ -297,7 +343,10 @@ def apply_locked(changes, *, actor: str, source: str, audit_events=()) -> Outcom
     if len(audit_events) > MAX_AUDIT_EVENTS:
         raise ValueError("too many audit events in one transaction")
     _check_embedded_hashes(changes)
+    all_changes = changes
     changes = [c for c in changes if fsio.read_bytes(c.path) != c.data]
+    if not changes and force_reload:
+        return _reload_unchanged(all_changes, actor, source, audit_events)
     if not changes:
         for action, detail in audit_events:
             audit.log_action(action, actor, detail)
@@ -322,7 +371,7 @@ def apply_locked(changes, *, actor: str, source: str, audit_events=()) -> Outcom
         "version": JOURNAL_VERSION, "id": txid, "phase": "preparing", "actor": actor, "source": source,
         "created_at": iso(utc_now()), "entries": [], "replaced_paths": [],
         "previous_live_hash": caddy_admin.config_hash(live), "candidate_live_hash": None,
-        "reload_required": any(marker_present(live, c.marker) or mentions_import(caddyfile_text, c.path)
+        "reload_required": any(_could_import(live, caddyfile_text, c, force_reload or fsio.read_bytes(c.path) is None)
                                for c in changes if c.kind == "policy"),
         "audit": [[str(action), str(detail)] for action, detail in audit_events],
     }
