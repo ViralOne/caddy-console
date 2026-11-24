@@ -71,7 +71,20 @@ check('site actions: external is copy only, enforced and console sites get none'
   assert.deepEqual(M.siteActions(site('not_imported', { source: 'external' })), ['copy']);
   assert.deepEqual(M.siteActions(site('enforced')), []);
   assert.deepEqual(M.siteActions(site('management')), []);
+  assert.deepEqual(M.siteActions(site('management_imported', { import: { present: true } })), []);
+  assert.deepEqual(M.siteActions(site('management_imported', { source: 'external' })), []);
   assert.deepEqual(M.siteActions(site('not_loaded', { import: { present: true } })), []);
+});
+check('a console site that imports the ban list is a critical lockout risk, never "safe"', () => {
+  const s = M.siteStatus(site('management_imported'));
+  assert.equal(s.tone, 'crit');
+  assert.match(s.label, /lockout/i);
+  assert.match(s.detail, /[Rr]emove the import/);
+  assert.doesNotMatch(s.label + s.detail, /never banned/);
+  assert.equal(M.siteStatus(site('management')).label, 'Console site, never banned');
+  const v = M.overallState({ available: true, sources: { manual: {} }, sites: [site('enforced'), site('management_imported')] }, 1);
+  assert.equal(v.tone, 'crit');
+  assert.match(v.title, /lockout/i);
 });
 check('protected labels', () => {
   assert.equal(M.protectedLabel('private'), 'private network');

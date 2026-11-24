@@ -501,18 +501,33 @@ def _site_rows(live, text, prefixes, held) -> list:
             else next((b for b in blocks if s.label in b.addresses), None)
         if block is not None:
             seen.add(block.start)
-        rows.append({"label": s.label, "hosts": s.hosts,
-                     "status": "management" if set(s.hosts) & management else s.status,
+        imp = scan.block_import_state(text, block, src.path) if block else None
+        status = s.status
+        if set(s.hosts) & management:
+            status = _management_status(s.status, imp)
+        rows.append({"label": s.label, "hosts": s.hosts, "status": status,
                      "pre_handlers": s.pre_handlers, "detail": s.detail,
                      "source": "main" if block else "external", "line": block.start if block else None,
-                     "import": scan.block_import_state(text, block, src.path) if block else None})
+                     "import": imp})
     for b in blocks:
         if b.start not in seen:
+            imp = scan.block_import_state(text, b, src.path)
             rows.append({"label": b.hosts[0] if b.hosts else b.addresses[0], "hosts": b.hosts,
-                         "status": "management" if set(b.hosts) & management else "not_loaded",
+                         "status": _management_status("not_loaded", imp) if set(b.hosts) & management
+                         else "not_loaded",
                          "pre_handlers": [], "detail": "This site block is not in Caddy's running configuration.",
-                         "source": "main", "line": b.start, "import": scan.block_import_state(text, b, src.path)})
+                         "source": "main", "line": b.start, "import": imp})
     return rows
+
+
+def _management_status(live_status, imp) -> str:
+    """A console site is only "never banned" while it neither enforces the ban
+    list (live) nor imports it (on disk, applied by the next reload). The
+    snippet guard is advisory, so a hand-typed import is reported as the
+    lockout risk it is, never as safe."""
+    if live_status in ("not_imported", "not_loaded") and not (imp and imp.get("present")):
+        return "management"
+    return "management_imported"
 
 
 def _last_apply():

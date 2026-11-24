@@ -67,6 +67,7 @@ Security proves enforcement from Caddy's running configuration, per site:
 | Enforcement not verified | Something that can answer the request runs first (`invoke`, a custom global `order`, an unknown handler, or a `handle` placed above the import). Move the import up, or use the strict layout. |
 | Not enforced | The site does not import the file. |
 | Console site, never banned | The console's own hostname (`SERVER_URL`) or a site block marked `# caddy-console: management`. Never offered the import. |
+| Console site imports the ban list: lockout risk | The console's own site imports (or Caddy already enforces) the ban list, for example through a hand-typed import. A ban that matches your address would lock you out of the console. Remove the import line from that site and Save & Reload. |
 
 `handle`, `handle_path` and `route` blocks in the site cannot run before the
 ban check, because the generated file uses a matcher-specific `handle`.

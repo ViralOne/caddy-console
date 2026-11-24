@@ -412,6 +412,24 @@ class StatusTest(ServiceCase):
         self.caddy.live = FIXTURES["simple_proxy"]
         _bans.write_caddyfile("other.example.com {\n\trespond 200\n}\n")
         self.assertEqual(service.status(None)["sites"][0]["source"], "external")
+        self.caddy.live = FIXTURES["not_imported"]
+        _bans.write_caddyfile("a.example.com { # caddy-console: management\n\treverse_proxy 127.0.0.1:9\n}\n")
+        self.assertEqual(service.status(None)["sites"][0]["status"], "management")
+
+    def test_console_site_that_imports_the_ban_list_is_a_lockout_risk(self):
+        # Live: the console host's route carries the ban list (hand-typed import).
+        self.ban()
+        self.ban("198.51.100.0/24")
+        self.caddy.live = FIXTURES["simple_proxy"]
+        _bans.write_caddyfile(f"a.example.com {{ # caddy-console: management\n"
+                              f"\timport {env.BANS_DIR}/bans-manual*.caddy\n\treverse_proxy 127.0.0.1:9\n}}\n")
+        self.assertEqual(service.status(None)["sites"][0]["status"], "management_imported")
+
+    def test_unloaded_console_site_with_the_import_on_disk_is_a_lockout_risk(self):
+        self.caddy.live = {"apps": {}}
+        _bans.write_caddyfile(f"a.example.com {{ # caddy-console: management\n"
+                              f"\timport {env.BANS_DIR}/bans-manual*.caddy\n\treverse_proxy 127.0.0.1:9\n}}\n")
+        self.assertEqual(service.status(None)["sites"][0]["status"], "management_imported")
         _bans.write_caddyfile("a.example.com { # caddy-console: management\n\treverse_proxy 127.0.0.1:9\n}\n")
         self.assertEqual(service.status(None)["sites"][0]["status"], "management")
 

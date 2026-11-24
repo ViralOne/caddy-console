@@ -36,7 +36,6 @@ class BansConfigTest(unittest.TestCase):
             self.assertEqual(config.bounded_int("X_TEST", 5, 1, 10), 5)
 
 
-
 class BansMaxDocumentedTest(unittest.TestCase):
     def test_default_matches_docs_security(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

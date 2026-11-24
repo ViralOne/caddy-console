@@ -565,7 +565,7 @@ details.raw[open]{flex-basis:100%}
 .sec-sites{list-style:none;margin:0;padding:0}
 .sec-sites li{display:grid;grid-template-columns:minmax(160px,1fr) minmax(160px,auto) auto;gap:4px 12px;padding:10px 0;border-bottom:1px solid var(--line)}
 .sec-sites li .muted{grid-column:1/-1}
-.sec-sites .tone-ok .sec-state{color:var(--good)} .sec-sites .tone-warn .sec-state{color:var(--warn)}
+.sec-sites .tone-ok .sec-state{color:var(--good)} .sec-sites .tone-warn .sec-state{color:var(--warn)} .sec-sites .tone-crit .sec-state{color:var(--crit)}
 .sec-protected{display:grid;gap:8px;margin:0}
 .sec-protected div{display:grid;grid-template-columns:220px 1fr;gap:12px}
 .sec-protected dt{color:var(--ink-3)} .sec-protected dd{margin:0;overflow-wrap:anywhere}

@@ -85,6 +85,7 @@ const SITE = {
   not_loaded: ['Not loaded yet', 'none'],
   unknown: ['Enforcement not verified', 'warn'],
   management: ['Console site, never banned', 'none'],
+  management_imported: ['Console site imports the ban list: lockout risk', 'crit'],
 };
 
 export function siteStatus(site) {
@@ -94,12 +95,13 @@ export function siteStatus(site) {
     not_imported: 'This site does not import the ban list.',
     not_loaded: 'Save & Reload to load this site into Caddy.',
     management: 'The console is excluded so a ban cannot lock you out.',
+    management_imported: 'A ban that matches your address would block the console itself. Remove the import line from this site in the editor, then Save & Reload.',
   }[site.status] || site.detail || '';
   return { label, tone, detail };
 }
 
 export function siteActions(site) {
-  if (['enforced', 'enforced_pre_handler', 'imported_empty', 'management'].includes(site.status)) return [];
+  if (['enforced', 'enforced_pre_handler', 'imported_empty', 'management', 'management_imported'].includes(site.status)) return [];
   if (site.import?.present) return [];
   return site.source === 'external' ? ['copy'] : ['insert', 'copy'];
 }
@@ -121,6 +123,9 @@ function baseState(status, recordCount) {
   }
   if (status.sources?.manual?.hold) {
     return { tone: 'warn', title: 'Policy differs from state', body: 'The ban file was changed outside the console. Fix the records, then Re-apply.' };
+  }
+  if ((status.sites || []).some(s => s.status === 'management_imported')) {
+    return { tone: 'crit', title: 'Console site imports the ban list: lockout risk', body: 'Remove the import line from the console site in the editor, then Save & Reload.' };
   }
   const n = (status.sites || []).filter(s => ['enforced', 'enforced_pre_handler', 'imported_empty'].includes(s.status)).length;
   if (n) return { tone: 'ok', title: `Enforced on ${n} ${n === 1 ? 'site' : 'sites'}`, body: '' };
