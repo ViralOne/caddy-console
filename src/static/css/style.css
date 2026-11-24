@@ -572,3 +572,5 @@ details.raw[open]{flex-basis:100%}
 .sec-recovery{padding:14px 18px;border-radius:var(--r-md);border:1px solid color-mix(in srgb,var(--crit) 25%,transparent);margin-bottom:20px}
 .sec-recovery .acts{display:flex;gap:8px;flex-wrap:wrap}
 @media (max-width:640px){.sec-table thead{display:none}.sec-table td{display:block;border:0;padding:2px 0}.sec-table tr{display:block;padding:8px 0;border-bottom:1px solid var(--line)}.sec-protected div,.sec-sites li{grid-template-columns:1fr}}
+.sec-stale{font-weight:600;color:var(--warn)}
+.verdict a{color:inherit;text-decoration:underline}

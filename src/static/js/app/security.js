@@ -8,7 +8,7 @@ import { confirmDialog } from './ui/dialog.js';
 import { toast } from './ui/toast.js';
 import { requestJson as call } from './security-api.js';
 import {
-  DURATIONS, banPayload, errorMessage, expiryLabel, outcomeText, overallState,
+  DURATIONS, banPayload, errorMessage, expiryLabel, outcomeText, overallState, staleNotice, HOST_RECOVERY_URL,
   protectedLabel, recoveryActionLabel, siteActions, siteStatus,
 } from './security-model.js';
 
@@ -22,12 +22,16 @@ function copy(text, what) {
     () => toast('Could not copy to the clipboard', { kind: 'error' }));
 }
 
-function Verdict({ status, records }) {
-  const v = overallState(status, records);
+function Verdict({ status, records, stale, recoveryShown }) {
+  const v = overallState(status, records, { stale });
   return html`
     <section class=${'verdict sev-' + SEV[v.tone]} role=${v.tone === 'crit' ? 'alert' : 'status'} aria-labelledby="sec-h">
       <h1 id="sec-h">${v.title}</h1>
       ${v.body && html`<p>${v.body}</p>`}
+      ${stale && html`<p class="sec-stale" role="alert">${staleNotice(stale, absoluteTime)}</p>`}
+      ${v.recoveryHint && (recoveryShown
+        ? html`<p><a href="#sec-recovery">Recovery options</a></p>`
+        : html`<p><a href=${HOST_RECOVERY_URL} target="_blank" rel="noopener noreferrer">Host recovery steps</a></p>`)}
     </section>`;
 }
 
@@ -137,7 +141,7 @@ function Recovery({ info, onDone }) {
     if (ok) finish(await call('/api/security/reset', 'POST', { source: 'manual', version: info.state_version, confirm: true }), 'Manual bans reset.');
   };
   return html`
-    <section class="sec-recovery" aria-labelledby="sec-rec-h">
+    <section class="sec-recovery" id="sec-recovery" aria-labelledby="sec-rec-h">
       <h2 id="sec-rec-h"><${Icon} name="warning" size=${16} />Recovery</h2>
       <p>${info.summary}</p>
       ${info.files.length > 0 && html`<p class="muted small">Files: ${info.files.join(', ')}</p>`}
@@ -159,10 +163,12 @@ function App() {
   const [status, setStatus] = useState(null);
   const [bans, setBans] = useState(null);
   const [error, setError] = useState(null);
+  const [loadedAt, setLoadedAt] = useState(null);
   const load = async () => {
     const [s, b] = await Promise.all([call('/api/security'), call('/api/bans')]);
     if (!s.ok) { setError(errorMessage(s.body, s.status)); return; }
     setError(null);
+    setLoadedAt(Date.now());
     setStatus(s.body);
     setBans(b.ok ? b.body : { records: [], error: errorMessage(b.body, b.status) });
   };
@@ -181,7 +187,7 @@ function App() {
   const writable = status.available && !status.degraded;
   return html`
     <div class="page sec">
-      <${Verdict} status=${status} records=${records.length} />
+      <${Verdict} status=${status} records=${records.length} stale=${error ? loadedAt : null} recoveryShown=${!!status.recovery?.required} />
       <${Recovery} info=${status.recovery} onDone=${load} />
       <section aria-labelledby="sec-bans-h">
         <div class="h-sec"><h2 id="sec-bans-h">Manual bans</h2>

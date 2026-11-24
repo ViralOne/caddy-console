@@ -89,7 +89,7 @@ export function siteActions(site) {
 
 const RELOAD_UNKNOWN = ['live_mismatch', 'caddy_unreachable'];
 
-export function overallState(status, recordCount = 0) {
+function baseState(status, recordCount) {
   if (!status) return { tone: 'none', title: 'Loading…', body: '' };
   if (!status.available) return { tone: 'crit', title: 'Unavailable, not enforced', body: status.unavailable?.message || '' };
   const d = status.degraded;
@@ -110,6 +110,28 @@ export function overallState(status, recordCount = 0) {
   if (recordCount > 0) return { tone: 'warn', title: 'Stored but not imported', body: 'No site imports the ban list, so these bans are not enforced yet.' };
   return { tone: 'none', title: 'No site imports the ban list', body: 'Add the import line to a site to enforce bans there.' };
 }
+
+// Tones for which enforcement cannot be confirmed, so the operator is pointed at
+// recovery (spec 1.8) even when the console has no recovery action to offer.
+const NEEDS_RECOVERY_HINT = new Set([
+  'Unavailable, not enforced', 'Reload state unknown', 'Degraded', 'Caddy unreachable, enforcement unknown',
+]);
+
+/** `stale` is true when the latest refresh failed: the data is the last known
+ * good one, so it must never read as a current "all enforced". */
+export function overallState(status, recordCount = 0, { stale = false } = {}) {
+  const v = baseState(status, recordCount);
+  const recoveryHint = NEEDS_RECOVERY_HINT.has(v.title);
+  if (stale && status && (v.tone === 'ok' || v.tone === 'none')) {
+    return { tone: 'warn', title: 'Status may be out of date', body: `Last known: ${v.title}.`, recoveryHint };
+  }
+  return { ...v, recoveryHint };
+}
+
+export const staleNotice = (loadedAt, format = (t) => new Date(t).toISOString()) =>
+  `Could not refresh security status${loadedAt ? ` \u2014 last known state from ${format(loadedAt)}` : ''}.`;
+
+export const HOST_RECOVERY_URL = 'https://github.com/ViralOne/caddy-console/blob/master/docs/security.md#host-recovery';
 
 export const recoveryActionLabel = (action) => ({
   use_candidate: 'Keep the new files and reload',

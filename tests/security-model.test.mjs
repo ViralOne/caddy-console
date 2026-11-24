@@ -78,6 +78,33 @@ check('protected labels', () => {
   assert.equal(M.protectedLabel('nope'), 'protected range');
 });
 
+console.log('\n--- recovery hint, stale data, network failure ---');
+check('unknown-enforcement states carry a recovery hint; healthy ones do not', () => {
+  const down = { available: true, caddy: { reachable: false }, sources: { manual: {} }, sites: [] };
+  assert.equal(M.overallState(down).recoveryHint, true);
+  assert.equal(M.overallState({ available: true, degraded: { reason: 'live_mismatch', message: 'm' } }).recoveryHint, true);
+  assert.equal(M.overallState({ available: false, unavailable: {} }).recoveryHint, true);
+  assert.equal(M.overallState({ available: true, sources: { manual: {} }, sites: [site('enforced')] }, 1).recoveryHint, false);
+});
+check('a stale refresh never shows an ok verdict', () => {
+  const ok = { available: true, sources: { manual: {} }, sites: [site('enforced')] };
+  assert.equal(M.overallState(ok, 1).tone, 'ok');
+  const s = M.overallState(ok, 1, { stale: true });
+  assert.equal(s.tone, 'warn');
+  assert.match(s.body, /Enforced on 1 site/);
+  assert.equal(M.overallState({ available: false, unavailable: {} }, 0, { stale: true }).tone, 'crit');
+  assert.match(M.staleNotice(1000, () => 'T'), /Could not refresh security status .* last known state from T/);
+});
+{
+  const { requestJson } = await import(path.join(APP, 'security-api.js'));
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  try { assert.deepEqual(await requestJson('/api/security'), { ok: false, status: 0, body: null }); }
+  finally { globalThis.fetch = realFetch; }
+  assert.equal(M.errorMessage(null, 0), 'Request failed.');
+  passed++; console.log('  ok  requestJson turns a network failure into status 0');
+}
+
 console.log('\n--- no HTML sinks ---');
 for (const f of ['security.js', 'security-model.js', 'ban-dialog.js', 'ip-popover.js', 'snippet-insert.js', 'panels.js', 'ui/dialog.js']) {
   const p = path.join(APP, f);
