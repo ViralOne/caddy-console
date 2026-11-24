@@ -18,8 +18,9 @@ export function siteBlocks(text) {
   String(text).split('\n').forEach((raw, i) => {
     const line = raw.replace(/(^|\s)#.*$/, '').trim();
     if (!line) return;
-    // `{` alone opens the global options; `(name) {` opens a snippet.
-    if (depth === 0 && line.endsWith('{') && line !== '{' && !line.startsWith('(')) {
+    // `{` alone opens the global options; `(name) {` opens a snippet and
+    // `&(name) {` opens a named route (invoke).
+    if (depth === 0 && line.endsWith('{') && line !== '{' && !line.startsWith('(') && !line.startsWith('&(')) {
       const addresses = line.slice(0, -1).split(/[\s,]+/).filter(Boolean);
       current = { addresses, hosts: addresses.map(hostOf).filter(Boolean), start: i + 1, end: i + 1 };
       blocks.push(current);

@@ -5,7 +5,7 @@ import './csrf.js';  // patches window.fetch before init() issues any request
 import { closePreview, restoreFromPreview, rollbackFromPreview } from './backups.js';
 import { init, showView, syncViewFromUrl } from './caddyfile.js';
 import { revealLine, revealSite } from './core.js';
-import { closeAllPanels, closePanel, togglePanel } from './panels.js';
+import { closeAllPanels, closePanel, insertBanImportAtLine, togglePanel } from './panels.js';
 import { interceptLinks, onNavigate } from './router.js';
 import { closeSearch, doSearch, replaceAll, replaceOne, searchNext, searchPrev, toggleSearch } from './search.js';
 import { doSave, doValidate, resolveSaveModal } from './validate.js';
@@ -78,10 +78,10 @@ document.addEventListener('app:open-site', (e) => {
   revealSite(e.detail.host);
 });
 
-// Security "Add import in editor": Task 14 turns this into a context-aware insertion.
-document.addEventListener('app:insert-ban-import', (e) => {
+// Security "Add import in editor": insert in the editor buffer only; on a refusal, show the site.
+document.addEventListener('app:insert-ban-import', async (e) => {
   showView('editor');
-  revealLine(e.detail.line);
+  if (!(await insertBanImportAtLine(e.detail.line))) revealLine(e.detail.line);
 });
 
 syncViewFromUrl();

@@ -38,4 +38,6 @@ check('commented-out and unknown hosts are not found', () => {
 });
 check('sitesForLines names each touched block once', () => assert.deepEqual(
   sitesForLines(CF, [10, 14, 15, 2]), ['nas.example.com', 'a.example.com']));
+check('named routes are not site blocks', () =>
+  assert.deepEqual(siteBlocks('&(app) {\n\trespond 200\n}\na.example.com {\n}\n').map(b => b.hosts), [['a.example.com']]));
 console.log(`\n${passed} passed`);
