@@ -53,6 +53,13 @@ check('glob matching follows Caddy', () => {
   assert.equal(globToRegExp('/a/b?.caddy').test('/a/bx.caddy'), true);
 });
 
+check('management hosts compare case-insensitively', () =>
+  assert.equal(planSiteInsertion(CF, 29, CODE, { target: T, managementHosts: ['Console.Example.COM'] }).reason, 'management-site'));
+check('a site opened on the last line (no trailing newline) appends after it', () => {
+  const p = planSiteInsertion('a.example.com {', 1, CODE, OPTS);
+  assert.deepEqual([p.ok, p.line, p.text], [true, 2, '\n\timport /etc/caddy/console/bans-manual*.caddy']);
+  assert.equal(p.atEnd, true);
+});
 const snippets = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'snippets.json'), 'utf8'));
 check('the site snippet carries the spec metadata', () => {
   const s = snippets.find(x => x.id === 'manual-bans-site');

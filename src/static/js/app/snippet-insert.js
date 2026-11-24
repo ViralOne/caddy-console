@@ -30,7 +30,8 @@ export function planSiteInsertion(text, cursorLine, code, { target, managementHo
   const lines = String(text).split('\n');
   const block = siteBlocks(text).find(b => cursorLine >= b.start && cursorLine <= b.end);
   if (!block) return { ok: false, reason: 'outside-site' };
-  if (block.hosts.some(h => managementHosts.includes(h))) return { ok: false, reason: 'management-site', block };
+  const mgmt = managementHosts.map(h => String(h).toLowerCase());
+  if (block.hosts.some(h => mgmt.includes(h))) return { ok: false, reason: 'management-site', block };
   // Interior lines are block.start + 1 .. block.end - 1 (1-based); lines[] is 0-based.
   for (let n = block.start + 1; n <= block.end - 1; n++) {
     const m = stripComment(lines[n - 1]).match(/^import\s+(\S+)/);
@@ -38,5 +39,8 @@ export function planSiteInsertion(text, cursorLine, code, { target, managementHo
   }
   const firstChild = lines.slice(block.start, block.end - 1).find(l => stripComment(l));
   const indent = (firstChild && firstChild.match(/^\s*/)[0]) || '\t';
-  return { ok: true, block, line: block.start + 1, text: indent + String(code).trim() + '\n' };
+  const body = indent + String(code).trim();
+  // The opening line is the last line of the buffer: there is no line below to insert before.
+  if (block.start >= lines.length) return { ok: true, block, line: block.start + 1, text: '\n' + body, atEnd: true };
+  return { ok: true, block, line: block.start + 1, text: body + '\n' };
 }

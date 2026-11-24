@@ -39,10 +39,11 @@ async function loadSnippetData() {
 
 export async function loadSnippets() {
   const list = document.getElementById('snippets-list');
-  snippetData = null;            // the console site list comes from the file on disk; refresh on open
   let data;
-  try { data = await loadSnippetData(); }
-  catch (e) { snippetData = null; showError(list, 'Could not load snippets', e); return; }
+  // Refresh on open (the console site list comes from the file on disk), but keep
+  // the old data until the new fetch succeeds: the console-site guard needs it.
+  try { data = await fetchJson('/api/snippets'); snippetData = data; }
+  catch (e) { showError(list, 'Could not load snippets', e); return; }
   list.textContent = '';
   data.snippets.forEach((s) => {
     const card = document.createElement('button');
@@ -72,7 +73,12 @@ function copySnippet(s) {
 
 /** Insert a site-scoped snippet first in the site under cursorLine. Returns whether the buffer changed. */
 export function insertSiteFirst(s, cursorLine) {
-  const ctx = snippetData?.context || {};
+  const ctx = snippetData?.context;
+  if (!ctx) {   // fail closed: without the console site list the guard cannot work
+    toast('Snippet settings are not loaded yet, so the import was not inserted.',
+      { kind: 'warn', action: { label: 'Copy', run: () => copySnippet(s) } });
+    return false;
+  }
   const plan = planSiteInsertion(editorView.state.doc.toString(), cursorLine, s.code, {
     target: `${ctx.bans_dir || '/etc/caddy/console'}/bans-manual.caddy`,
     managementHosts: ctx.management_hosts || [],
@@ -81,7 +87,9 @@ export function insertSiteFirst(s, cursorLine) {
     toast(REFUSED[plan.reason], { kind: 'warn', action: { label: 'Copy', run: () => copySnippet(s) } });
     return false;
   }
-  editorView.dispatch({ changes: { from: editorView.state.doc.line(plan.line).from, insert: plan.text } });
+  const doc = editorView.state.doc;
+  const from = plan.atEnd ? doc.length : doc.line(plan.line).from;
+  editorView.dispatch({ changes: { from, insert: plan.text } });
   setDot('yellow');
   closePanel('snippets');
   toast(`Inserted "${s.name}" at line ${plan.line}. Review it, then Save & Reload.`, { kind: 'ok' });
