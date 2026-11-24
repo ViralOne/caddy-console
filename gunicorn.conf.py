@@ -27,3 +27,9 @@ def when_ready(server):
     updater_log.setLevel(logging.INFO)
     updater_log.propagate = False
     start_background()
+
+
+def post_worker_init(worker):
+    # Per worker, after fork; see src/bans/jobs.py for why never in the master.
+    from src.bans.jobs import start_background as start_bans_jobs
+    start_bans_jobs()
