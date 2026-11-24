@@ -68,5 +68,8 @@ networks:
     ipam:
       config:
         - subnet: 172.30.250.0/29
+          # Dynamic leases (the console) come from .4-.7 only, so they
+          # never take Caddy's fixed .2 before Caddy starts.
+          ip_range: 172.30.250.4/30
   crowdsec-lapi:
     internal: true

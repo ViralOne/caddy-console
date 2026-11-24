@@ -4,6 +4,7 @@
 
 VARIANT is crowdsec or crowdsec-cloudflare (the image the stack must use).
 """
+import ipaddress
 import json
 import re
 import sys
@@ -44,6 +45,10 @@ def main(caddy, console, variant):
     subnets = [c.get("subnet") for c in ((admin.get("ipam") or {}).get("config") or [])]
     if subnets != [SUBNET]:
         problems.append(f"caddy-admin subnet is {subnets}, expected [{SUBNET}]")
+    ranges = [c.get("ip_range") for c in ((admin.get("ipam") or {}).get("config") or [])]
+    if not ranges or not all(r and ipaddress.ip_address(ADMIN_IP) not in ipaddress.ip_network(r, strict=False)
+                             for r in ranges):
+        problems.append(f"caddy-admin needs an ip_range that excludes {ADMIN_IP}, so a dynamic lease cannot take it")
     env, cenv, senv = cd.get("environment") or {}, co.get("environment") or {}, cs.get("environment") or {}
     for k, v in (("CADDY_ADMIN_ADDRESS", ADMIN_ADDR), ("CADDY_ADMIN_SUBNET", SUBNET)):
         if env.get(k) != v:
