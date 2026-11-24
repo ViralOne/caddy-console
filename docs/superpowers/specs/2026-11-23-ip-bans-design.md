@@ -830,6 +830,14 @@ The first contains stock Caddy plus only the CrowdSec HTTP module. The second al
 contains `caddy-dns/cloudflare` for operators who need DNS-01. Using Cloudflare as
 a reverse proxy or Tunnel does not itself require the DNS plugin.
 
+Expected non-standard modules (`caddy list-modules --skip-standard`, checked by
+`dev/check-plugin-modules.py`): `admin.api.crowdsec`, `crowdsec`,
+`http.handlers.appsec`, `http.handlers.crowdsec`, plus five `github.com/mholt/caddy-l4`
+v0.1.2 modules the bouncer's `http` package pulls in through
+`internal/servername` (`caddy.listeners.layer4`, `layer4`, `layer4.matchers.local_ip`,
+`layer4.matchers.not`, `layer4.matchers.remote_ip`; nothing configures a layer4
+app), and `dns.providers.cloudflare` in the Cloudflare variant.
+
 The build uses the exact module path:
 
 ```text

@@ -452,7 +452,8 @@ protected ranges, capacity and host recovery are in
 [docs/security.md](security.md). No extra service is required. For automatic
 bans from CrowdSec, add the optional overlay described in
 [CrowdSec file sync](security.md#crowdsec-file-sync-optional); the quick start
-above needs nothing from it.
+above needs nothing from it. For enforcement without reloads, see
+[CrowdSec plugin](security.md#crowdsec-plugin).
 
 ## Environment variables
 
