@@ -83,3 +83,27 @@ def bundled() -> dict:
 
 def networks(ranges: dict) -> list:
     return [ipaddress.ip_network(x) for fam in ("v4", "v6") for x in (ranges or {}).get(fam) or ()]
+
+
+TIMEOUT = 10
+
+
+def _get_text(session, url) -> str:
+    with session.get(url, stream=True, timeout=TIMEOUT, allow_redirects=False) as res:
+        if res.status_code != 200:
+            raise RangeError(f"{url} answered HTTP {res.status_code}")
+        body = b""
+        for chunk in res.iter_content(4096):
+            body += chunk
+            if len(body) > MAX_BYTES:
+                raise RangeError(f"{url} is larger than {MAX_BYTES} bytes")
+    try:
+        return body.decode("ascii")
+    except UnicodeDecodeError:
+        raise RangeError(f"{url} is not plain ASCII") from None
+
+
+def fetch(session) -> dict:
+    """Both official lists over HTTPS, parsed. Raises RangeError or a requests
+    error. Never called while caddyfile_lock() is held."""
+    return {fam: parse_list(_get_text(session, URLS[fam]), fam) for fam in ("v4", "v6")}

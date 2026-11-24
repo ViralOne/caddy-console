@@ -7,6 +7,7 @@ lock is held (flock is per fd, not re-entrant).
 """
 import collections
 import dataclasses
+import fcntl
 import ipaddress
 import json
 import logging
@@ -17,6 +18,8 @@ import threading
 import time
 from dataclasses import dataclass, field
 from datetime import timedelta
+
+import requests as http_client
 
 from .. import audit, config
 from ..geoip import geoip
@@ -427,7 +430,10 @@ def _locked_transaction(prepare, *, background=False, allow_corrupt=False):
             return None, plan, None
         outcome = txn.apply_locked(plan.changes, actor=plan.actor, source=plan.source,
                                    audit_events=plan.audit_events, force_reload=plan.force_reload)
-        if outcome.ok:
+        # Only a transaction that rewrote bans.json may snapshot it or clear a
+        # corrupt-state report: a profile or country change on a corrupt state
+        # leaves bans.json (and its degraded mode) exactly as they were.
+        if outcome.ok and any(c.path == store.STATE_PATH for c in plan.changes):
             _after_commit(corrupt)
     return None, plan, outcome
 
@@ -687,8 +693,103 @@ def set_client_ip_profile(payload, actor):
                                force=("cloudflare",))
 
 
+RANGES_CHECK_PATH = os.path.join(config.BACKUP_DIR, "cloudflare-ranges-check.json")
+RANGES_LOCK_PATH = os.path.join(config.BACKUP_DIR, "cloudflare-ranges.lock")
+RANGES_CHECK_INTERVAL = 24 * 3600
+RANGES_RETRY_INTERVAL = 3600
+RANGES_MANUAL_INTERVAL = 60          # POST /api/security/cloudflare-ranges/refresh
+
+
 def _ranges_check_meta() -> dict:
-    return {}
+    """Health metadata of the last range check. Not transaction state: it owns
+    no policy, and a lost or damaged copy only makes the next check run early."""
+    try:
+        with open(RANGES_CHECK_PATH, "rb") as f:
+            doc = json.loads(f.read(16 * 1024).decode("utf-8"))
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError, RecursionError):
+        return {}
+
+
+def _write_ranges_check(result, error=None) -> None:
+    doc = {"checked_at": store.iso(store.utc_now()), "result": result, "last_error": (str(error)[:300] if error else None)}
+    try:
+        fsio.atomic_write(RANGES_CHECK_PATH, json.dumps(doc, sort_keys=True).encode(), 0o600)
+    except OSError as e:
+        log.warning("Could not record the Cloudflare range check: %s", e)
+
+
+def _seconds_since_check(meta) -> float:
+    try:
+        return (store.utc_now() - store.parse_iso(meta["checked_at"])).total_seconds()
+    except (KeyError, TypeError, ValueError):
+        return float("inf")
+
+
+def ranges_due() -> bool:
+    meta = _ranges_check_meta()
+    wait = RANGES_RETRY_INTERVAL if meta.get("last_error") else RANGES_CHECK_INTERVAL
+    return _seconds_since_check(meta) >= wait
+
+
+def refresh_cloudflare_ranges(actor="system", *, manual=False, session=None):
+    """Fetch the official lists (outside caddyfile_lock()), validate them and,
+    when they changed, commit the new list with every dependent file in one
+    journaled transaction (spec 4.2). A failure keeps the last good list."""
+    if manual and _seconds_since_check(_ranges_check_meta()) < RANGES_MANUAL_INTERVAL:
+        return _error("rate_limited", f"The ranges were checked less than {RANGES_MANUAL_INTERVAL} seconds ago; "
+                      "try again shortly.", 429)
+    try:
+        before = profile.load()
+    except profile.Corrupt as e:
+        return _error("state_degraded", f"{e}. Reset the Cloudflare profile in Security.", 503, recovery=True)
+    try:
+        fetched = cfranges.fetch(session or http_client.Session())
+        problem = cfranges.plausible(before.ranges, fetched)
+        if problem:
+            raise cfranges.RangeError(f"refusing the new list: {problem}")
+    except (cfranges.RangeError, http_client.RequestException) as e:
+        _write_ranges_check("failed", e)
+        audit.log_action("cloudflare_ranges_refused", actor, str(e)[:200])
+        return _error("ranges_refused", f"The Cloudflare ranges were not updated ({e}); the last good list stays.", 502)
+    if fetched == before.ranges and before.ranges_source == "cloudflare":
+        _write_ranges_check("unchanged")
+        return {"ok": True, "code": None, "message": "The Cloudflare ranges are current.", "reload_status": "not_required",
+                "enforcement": "unchanged", "changed": False}, 200
+    candidate = dataclasses.replace(before, ranges=fetched, ranges_source="cloudflare",
+                                    ranges_fetched_at=store.iso(store.utc_now()), stored=True)
+    added = sum(len(set(fetched[f]) - set(before.ranges.get(f, ()))) for f in ("v4", "v6"))
+    removed = sum(len(set(before.ranges.get(f, ())) - set(fetched[f])) for f in ("v4", "v6"))
+
+    def unchanged_since(state):
+        if profile.load_or_default().ranges != before.ranges:
+            return _error("version_conflict", "The Cloudflare profile changed during the refresh; try again.", 409)
+        return None
+    body, status = _policy_transaction(actor, "cloudflare-ranges",
+                                       [("cloudflare_ranges_updated", f"{added} added, {removed} removed")],
+                                       prof=candidate, check=unchanged_since, background=not manual)
+    _write_ranges_check("updated" if body.get("ok") else "failed", None if body.get("ok") else body.get("message"))
+    return {**body, "changed": bool(body.get("ok"))}, status
+
+
+def ranges_tick(session=None) -> str:
+    """The daily background refresh: proxied mode only (direct mode never
+    contacts Cloudflare), one worker at a time, never under caddyfile_lock()."""
+    if not (config.BANS_ENABLED and config.CLOUDFLARE_RANGES_AUTO_UPDATE):
+        return "disabled"
+    if profile.load_or_default().mode != "cloudflare-proxied":
+        return "not_needed"
+    if not ranges_due():
+        return "current"
+    with open(RANGES_LOCK_PATH, "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return "busy"
+        if not ranges_due():
+            return "current"
+        body, _ = refresh_cloudflare_ranges(session=session)
+        return "updated" if body.get("changed") else ("current" if body.get("ok") else "failed")
 
 
 def _reset_country(actor):
@@ -1151,7 +1252,13 @@ def _plugin_status(live, state, holds, text) -> dict:
 def _profile_status(live, holds, text) -> dict:
     info = client_ip_profile_info()
     prof = profile.load_or_default()
-    return {**info, "active": _profile_active(), "hold": holds.get("cloudflare"),
+    deps = []
+    for path in (render.PROFILE.path, *(s.path for s in render.SOURCES.values()), render.COUNTRY.path,
+                 render.PLUGIN.path):
+        data = fsio.read_bytes(path)
+        if data is not None:
+            deps.append({"file": os.path.basename(path), "hash": fsio.sha256_tag(data)[7:19]})
+    return {**info, "active": _profile_active(), "hold": holds.get("cloudflare"), "dependencies": deps,
             "imported": scan.mentions_import(text, render.PROFILE.path),
             "live": _live_trust(live, prof) if live is not None else None}
 

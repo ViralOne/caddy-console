@@ -71,10 +71,14 @@ class SyncThreadTest(unittest.TestCase):
         return names
 
     def test_sync_thread_only_when_crowdsec_is_configured(self):
-        self.assertEqual(self.started_names(), ["bans-expiry"])
-        jobs._started = False
-        _crowdsec.enable(self)
-        self.assertEqual(self.started_names(), ["bans-expiry", "bans-sync"])
+        with mock.patch.object(jobs.config, "CLOUDFLARE_RANGES_AUTO_UPDATE", False):
+            self.assertEqual(self.started_names(), ["bans-expiry"])
+            jobs._started = False
+            _crowdsec.enable(self)
+            self.assertEqual(self.started_names(), ["bans-expiry", "bans-sync"])
+
+    def test_cloudflare_range_thread_follows_its_switch(self):
+        self.assertEqual(self.started_names(), ["bans-expiry", "cloudflare-ranges"])
 
     def run_loop(self, leads, steps_before_stop=2, crash=False):
         stop, steps = threading.Event(), []

@@ -82,6 +82,12 @@ def client_ip_profile_get():
     return jsonify(service.client_ip_profile_info())
 
 
+@security_bp.route("/api/security/cloudflare-ranges/refresh", methods=["POST"])
+@login_required
+def cloudflare_ranges_refresh():
+    return _reply(service.refresh_cloudflare_ranges(_actor(), manual=True))
+
+
 @security_bp.route("/api/security/client-ip-profile", methods=["PUT"])
 @login_required
 def client_ip_profile_put():

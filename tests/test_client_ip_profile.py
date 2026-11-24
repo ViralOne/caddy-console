@@ -186,6 +186,20 @@ class ProfileApiTest(_bans.ApiCase):
         self.assertEqual(json.loads(read(profile.PATH))["mode"], "direct")
         self.assertNotIn("trusted_proxies static", read(render.PROFILE.path).replace("no trusted proxies", ""))
 
+    def test_reset_on_a_corrupt_ban_state_keeps_it_degraded(self):
+        self.post("/api/bans", {"value": "203.0.113.7", "duration": "4h", "reason": ""})
+        self.put({"mode": "cloudflare-proxied"})
+        snapshots = store.list_snapshots()
+        with open(store.STATE_PATH, "w") as f:
+            f.write("{broken")
+        r = self.post("/api/security/reset", {"source": "cloudflare", "confirm": True})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(json.loads(read(profile.PATH))["mode"], "direct")
+        self.assertEqual(read(store.STATE_PATH), "{broken", "bans.json is never rewritten here")
+        self.assertIsNotNone(store.read_error(), "the corrupt-state report stays")
+        self.assertEqual(store.list_snapshots(), snapshots, "corrupt bytes are never kept as a good backup")
+        self.assertEqual(self.get("/api/security").get_json()["recovery"]["kind"], "state_corrupt")
+
     def test_status_compares_the_live_servers(self):
         self.put({"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
         self.caddy.live = {"apps": {"http": {"servers": {"srv0": {
