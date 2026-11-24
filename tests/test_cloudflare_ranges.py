@@ -165,6 +165,37 @@ class RefreshTest(_bans.ApiCase):
         with mock.patch.object(config, "CLOUDFLARE_RANGES_AUTO_UPDATE", False):
             self.assertEqual(service.ranges_tick(session=session), "disabled")
 
+    def test_concurrent_mode_change_between_fetch_and_commit_wins(self):
+        real = cfranges.fetch
+
+        def fetch_then_switch(session):
+            out = real(session)
+            r = self.put("/api/security/client-ip-profile",
+                         {"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
+            self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+            return out
+        with mock.patch.object(cfranges, "fetch", fetch_then_switch):
+            body, status = self.refresh(FakeSession(v4=V4_LESS))
+        self.assertEqual((status, body["code"]), (409, "version_conflict"))
+        doc = json.loads(fsio.read_bytes(profile.PATH))
+        self.assertEqual((doc["mode"], doc["tunnel_peers"], doc["ranges_source"]),
+                         ("cloudflare-tunnel", ["172.31.0.2/32"], "bundled"))
+        self.assertIn(DROPPED, doc["ranges"]["v4"])
+        self.assertIn("172.31.0.2/32", fsio.read_bytes(render.PROFILE.path).decode())
+
+    def test_concurrent_peer_change_is_not_overwritten(self):
+        self.put("/api/security/client-ip-profile", {"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
+        real = cfranges.fetch
+
+        def fetch_then_edit(session):
+            out = real(session)
+            self.put("/api/security/client-ip-profile", {"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.3"]})
+            return out
+        with mock.patch.object(cfranges, "fetch", fetch_then_edit):
+            body, status = self.refresh(FakeSession(v4=V4_LESS), manual=True)
+        self.assertEqual((status, body["code"]), (409, "version_conflict"))
+        self.assertEqual(json.loads(fsio.read_bytes(profile.PATH))["tunnel_peers"], ["172.31.0.3/32"])
+
     def test_failed_check_retries_after_an_hour(self):
         self.assertEqual(service.ranges_tick(session=FakeSession(status=500)), "failed")
         self.assertFalse(service.ranges_due())

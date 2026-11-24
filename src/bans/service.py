@@ -428,12 +428,16 @@ def _locked_transaction(prepare, *, background=False, allow_corrupt=False):
         plan = prepare(state, corrupt)
         if not isinstance(plan, _Plan):
             return None, plan, None
+        state_change = next((c for c in plan.changes if c.path == store.STATE_PATH), None)
+        state_before = fsio.read_bytes(store.STATE_PATH)
         outcome = txn.apply_locked(plan.changes, actor=plan.actor, source=plan.source,
                                    audit_events=plan.audit_events, force_reload=plan.force_reload)
-        # Only a transaction that rewrote bans.json may snapshot it or clear a
-        # corrupt-state report: a profile or country change on a corrupt state
-        # leaves bans.json (and its degraded mode) exactly as they were.
-        if outcome.ok and any(c.path == store.STATE_PATH for c in plan.changes):
+        # Only a transaction that actually rewrote bans.json with its candidate
+        # may snapshot it or clear a corrupt-state report: a profile or country
+        # change on a corrupt state leaves bans.json (and its degraded mode)
+        # exactly as they were, and so does one whose state bytes were unchanged.
+        if (outcome.ok and state_change is not None and state_before != state_change.data
+                and fsio.read_bytes(store.STATE_PATH) == state_change.data):
             _after_commit(corrupt)
     return None, plan, outcome
 
@@ -762,7 +766,17 @@ def refresh_cloudflare_ranges(actor="system", *, manual=False, session=None):
     removed = sum(len(set(before.ranges.get(f, ())) - set(fetched[f])) for f in ("v4", "v6"))
 
     def unchanged_since(state):
-        if profile.load_or_default().ranges != before.ranges:
+        # Under the lock: the candidate was built from `before`, read before the
+        # fetch. Any concurrent profile change (mode, tunnel peers, tunnel_only,
+        # ranges) wins; this refresh never overwrites it.
+        try:
+            now = profile.load() if profile.exists() else None
+        except profile.Corrupt as e:
+            return _error("state_degraded", f"{e}. Reset the Cloudflare profile in Security.", 503, recovery=True)
+        if now is not None and now.mode != "cloudflare-proxied" and before.mode == "cloudflare-proxied":
+            return _error("version_conflict", "The client-IP profile left Cloudflare proxied mode during the "
+                          "refresh; the ranges were not applied.", 409)
+        if (now is None) != (not before.stored) or (now is not None and profile.dumps(now) != profile.dumps(before)):
             return _error("version_conflict", "The Cloudflare profile changed during the refresh; try again.", 409)
         return None
     body, status = _policy_transaction(actor, "cloudflare-ranges",

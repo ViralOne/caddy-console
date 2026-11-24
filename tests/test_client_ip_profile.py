@@ -199,6 +199,7 @@ class ProfileApiTest(_bans.ApiCase):
         self.assertIsNotNone(store.read_error(), "the corrupt-state report stays")
         self.assertEqual(store.list_snapshots(), snapshots, "corrupt bytes are never kept as a good backup")
         self.assertEqual(self.get("/api/security").get_json()["recovery"]["kind"], "state_corrupt")
+        self.assertTrue(self.get("/api/security").get_json()["degraded"], "still degraded")
 
     def test_status_compares_the_live_servers(self):
         self.put({"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
