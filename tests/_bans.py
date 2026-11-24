@@ -27,7 +27,7 @@ def write_caddyfile(text):
 
 def reset(caddyfile=None):
     for name in os.listdir(env.BACKUP_DIR):
-        if name.startswith("bans") or name.startswith(".bans"):
+        if name.startswith("bans") or name.startswith(".bans") or name == "plugin-policy.json":
             path = os.path.join(env.BACKUP_DIR, name)
             if os.path.isdir(path):
                 shutil.rmtree(path, ignore_errors=True)
@@ -72,6 +72,7 @@ class FakeResponse:
 
 _IMPORT_RE = re.compile(r"(?m)^\s*import\s+(/\S+)")
 _MARKER_RE = re.compile(r"(?m)^vars (caddy_console_\w+) (\S+)$")
+_CROWDSEC_BLOCK = re.compile(r"(?m)^\s*crowdsec\s*\{")
 
 
 class FakeCaddy:
@@ -86,6 +87,7 @@ class FakeCaddy:
         self.live = {"apps": {}} if live is None else live
         self.down = False
         self.adapt_status = 200
+        self.plugin = False                       # the running build has the crowdsec module
         self.load_mode = "ok"
         self.live_after_load = None
         self.hide_imports = False
@@ -121,6 +123,8 @@ class FakeCaddy:
             self.calls.append(("adapt", text))
             if self.adapt_status != 200:
                 return FakeResponse(self.adapt_status, {"error": "fake adapt rejection"})
+            if _CROWDSEC_BLOCK.search(text) and not self.plugin:
+                return FakeResponse(400, {"error": "adapting config using caddyfile: unrecognized global option: crowdsec"})
             return FakeResponse(200, {"result": self.adapt_text(text)})
         if url.endswith("/load"):
             self.calls.append(("load", text))

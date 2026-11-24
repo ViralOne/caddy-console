@@ -20,7 +20,7 @@ from datetime import timedelta
 from .. import audit, config
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
-from . import addr, detect, fsio, lapi, protected, render, scan, store, syncstate, txn
+from . import addr, detect, fsio, lapi, plugin, protected, render, scan, store, syncstate, txn
 from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
@@ -83,8 +83,9 @@ def never_networks():
 
 
 def init_config() -> None:
-    """create_app() calls this: an invalid BANS_NEVER, CROWDSEC_URL or
-    CROWDSEC_ORIGINS refuses startup."""
+    """create_app() calls this: an invalid BANS_NEVER, CROWDSEC_URL,
+    CROWDSEC_ORIGINS, CROWDSEC_PLUGIN_BOUNCER_KEY_FILE or CADDY_ADMIN_ADDRESS
+    refuses startup."""
     try:
         never_networks()
     except protected.ConfigError as e:
@@ -93,6 +94,11 @@ def init_config() -> None:
         lapi.parse_url(config.CROWDSEC_URL)
         lapi.parse_origins(config.CROWDSEC_ORIGINS)
     except lapi.ConfigError as e:
+        raise RuntimeError(str(e)) from e
+    try:
+        plugin.parse_key_file(config.CROWDSEC_PLUGIN_BOUNCER_KEY_FILE)
+        plugin.parse_admin_address(config.CADDY_ADMIN_ADDRESS)
+    except plugin.ConfigError as e:
         raise RuntimeError(str(e)) from e
 
 

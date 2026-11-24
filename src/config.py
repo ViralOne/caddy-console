@@ -101,3 +101,12 @@ CROWDSEC_CONSOLE_BOUNCER_KEY = os.environ.get("CROWDSEC_CONSOLE_BOUNCER_KEY", ""
 CROWDSEC_CONSOLE_BOUNCER_KEY_FILE = os.environ.get("CROWDSEC_CONSOLE_BOUNCER_KEY_FILE", "").strip()
 CROWDSEC_ORIGINS = os.environ.get("CROWDSEC_ORIGINS", "crowdsec,cscli")
 CROWDSEC_POLL_INTERVAL = bounded_int("CROWDSEC_POLL_INTERVAL", 10, 5, 300)
+
+# Phase 3, CrowdSec plugin mode (docs/security.md#crowdsec-plugin). The plugin's
+# own key (CROWDSEC_PLUGIN_BOUNCER_KEY) belongs to the Caddy container and is
+# never read here: the console only needs the secret's path, if one is used, to
+# offer the matching {file.<path>} placeholder. CADDY_ADMIN_ADDRESS is the admin
+# bind health checks and recovery use; the plugin overlay sets the fixed
+# caddy-admin address. Both are validated by src/bans/plugin.py at startup.
+CROWDSEC_PLUGIN_BOUNCER_KEY_FILE = os.environ.get("CROWDSEC_PLUGIN_BOUNCER_KEY_FILE", "").strip()
+CADDY_ADMIN_ADDRESS = os.environ.get("CADDY_ADMIN_ADDRESS", "").strip() or "0.0.0.0:2019"
