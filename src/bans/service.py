@@ -705,7 +705,7 @@ def _reset_aux(source, payload, actor):
     if source == "cloudflare":
         prof = profile.Profile(mode="direct", stored=True)
         return _policy_transaction(actor, "reset", [("bans_reset", "cloudflare: direct profile, bundled ranges")],
-                                   prof=prof, force=("cloudflare",), allow_corrupt=True)
+                                   prof=prof, force=("cloudflare",), allow_corrupt=True, strict_country_shape=True)
     return _reset_country(actor)
 
 
@@ -886,9 +886,22 @@ def _country_facts():
         return policy, corrupt, None, None, e, prof
 
 
-def country_policy_info(country_facts=None) -> dict:
-    """`country_facts`: a _country_facts() result already read for this request."""
+_FETCH = object()
+
+
+def country_policy_info(country_facts=None, live=_FETCH) -> dict:
+    """`country_facts`: a _country_facts() result already read for this request.
+    `live`: the running Caddy config (None when unreachable); read here if omitted."""
     policy, corrupt, data, facts, error, prof = country_facts or _country_facts()
+    if live is _FETCH:
+        try:
+            live = caddy_admin.live_config()
+        except caddy_admin.CaddyUnavailable:
+            live = None
+    # The header and range trust only hold when the live Caddy runs the selected
+    # profile's trusted proxies; without the import client_ip is the edge peer.
+    trust = _live_trust(live, prof) if live is not None else None
+    trust_ok = None if trust is None else bool(trust) and all(t["matches"] for t in trust)
     on_disk = fsio.read_bytes(render.COUNTRY.path)
     current = data is not None and on_disk == data
     facts = facts or {"profile": None, "prefixes": policy.dataset.get("prefixes") or {}, "month": None, "warnings": []}
@@ -906,8 +919,9 @@ def country_policy_info(country_facts=None) -> dict:
         "file": render.COUNTRY.path, "import_line": render.COUNTRY.import_line,
         "present": on_disk is not None, "current": current,
         "hash": fsio.sha256_tag(on_disk)[7:19] if on_disk is not None else None,
-        "healthy": bool(enforcing and current and error is None and (shape != "cloudflare"
-                                                                      or policy.cloudflare_geolocation_confirmed)),
+        "trust_ok": trust_ok,
+        "healthy": bool(enforcing and current and error is None and trust_ok is not False
+                        and (shape != "cloudflare" or policy.cloudflare_geolocation_confirmed)),
     }
 
 
@@ -1448,15 +1462,12 @@ def _age_seconds(stamp):
 
 
 def _country_status(live, holds, country_facts=None) -> dict:
-    info = country_policy_info(country_facts)
+    info = country_policy_info(country_facts, live)
     shapes = detect.country_shapes(live) if live is not None else None
     # Healthy needs the rendered file, the confirmation (Cloudflare) and, when
     # Caddy answers, the same shape running live.
     live_ok = None if shapes is None else bool(shapes) and set(shapes) == {info["shape"] or "off"}
-    # The header and range trust only hold when the live Caddy runs the selected
-    # profile's trusted proxies; without the import client_ip is the edge peer.
-    trust = _live_trust(live, profile.load_or_default()) if live is not None else None
-    trust_ok = None if trust is None else bool(trust) and all(t["matches"] for t in trust)
+    trust_ok = info["trust_ok"]
     prefixes = info["prefixes"] if isinstance(info["prefixes"], dict) else {}
     summary = {"mode": info["shape"], "countries": info["countries"], "prefixes": prefixes,
                "cap": info["limits"]["max"], "warn": info["limits"]["warn"], "warnings": info["warnings"],

@@ -96,7 +96,10 @@ class Protected:
         return None
 
     def exclusion_tokens(self) -> list:
-        extras = [n for cat, n in self.entries if cat in DYNAMIC]
+        # An address that overlaps the Cloudflare edge never becomes an exemption,
+        # whichever category registered it.
+        edge = [n for cat, n in self.entries if cat == "profile"]
+        extras = [n for cat, n in self.entries if cat in DYNAMIC and not any(overlaps(n, e) for e in edge)]
         out = list(RENDER_BASE)
         for family in (4, 6):
             for n in ipaddress.collapse_addresses([e for e in extras if e.version == family]):

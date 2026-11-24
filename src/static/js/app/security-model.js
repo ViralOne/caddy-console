@@ -445,6 +445,7 @@ export function countryState(info) {
   if (info.error) return { tone: 'crit', title: 'Country policy cannot be rendered', detail: info.error.message };
   if (info.shape === 'cloudflare' && !info.cloudflare_geolocation_confirmed) return { tone: 'warn', title: 'Cloudflare IP geolocation is not confirmed', detail: 'Confirm that Cloudflare sends CF-IPCountry for this zone; until then the policy is not reported healthy.' };
   if (s.live_ok === false) return { tone: 'warn', title: 'Caddy runs a different country policy', detail: 'Import the policy in each site (see Sites), then Save & Reload.' };
+  if (s.trust_ok === false) return { tone: 'warn', title: 'Cloudflare trusted proxies do not match', detail: 'The running Caddy lacks the Cloudflare trusted-proxies import, or it does not match the saved profile. Import it in the global options or each site, then Save & Reload.' };
   if (!s.healthy) return { tone: 'warn', title: 'Country policy needs attention', detail: info.present ? 'geo.caddy is out of date.' : 'geo.caddy has not been generated yet.' };
   return { tone: 'ok', title: `Allowing ${(info.countries || []).length} ${(info.countries || []).length === 1 ? 'country' : 'countries'}`, detail: '' };
 }

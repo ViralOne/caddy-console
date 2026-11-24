@@ -84,6 +84,23 @@ class ParseTest(unittest.TestCase):
         self.assertIn("grows", cfranges.plausible(old, many6))
 
 
+    def test_growth_cannot_ratchet_past_the_bundled_list(self):
+        import ipaddress
+        base = cfranges.bundled()
+        size = sum(ipaddress.ip_network(x).num_addresses for x in base["v4"])
+        blocks = iter(f"{o}.0.0.0/13" for o in range(20, 120))
+
+        def grow_to(prev, factor):
+            nets = list(prev["v4"])
+            while sum(ipaddress.ip_network(x).num_addresses for x in nets) < factor * size:
+                nets.append(next(blocks))
+            return {"v4": nets, "v6": base["v6"]}
+        step1 = grow_to(base, 1.6)
+        self.assertIsNone(cfranges.plausible(base, step1))
+        step2 = grow_to(step1, 2.4)               # under 2x the previous list, over 2x the bundled one
+        self.assertIn("grows", cfranges.plausible(step1, step2))
+
+
 class RefreshTest(_bans.ApiCase):
     def setUp(self):
         super().setUp()

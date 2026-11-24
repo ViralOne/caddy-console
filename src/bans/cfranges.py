@@ -75,11 +75,13 @@ def plausible(old: dict, new: dict):
             for b in after:
                 if a.overlaps(b):
                     shared += min(a.num_addresses, b.num_addresses)
-        old_set = set(before)
+        # Anchored to the bundled list as well, so accepted refreshes cannot ratchet.
+        floor = [ipaddress.ip_network(x) for x in bundled()[family]]
+        old_set = set(before) | set(floor)
         for b in after:
             if b not in old_set and b.prefixlen < NEW_WIDEST[b.version]:
                 return f"the {family} list adds {b}, wider than /{NEW_WIDEST[b.version]}"
-        if _size(after) > MAX_GROWTH * _size(before):
+        if _size(after) > MAX_GROWTH * _size(before) or _size(after) > MAX_GROWTH * _size(floor):
             return f"the {family} list grows to more than {MAX_GROWTH:g}x the previous address space"
         if shared < MIN_SHARED * _size(before):
             return f"the {family} list keeps less than {int(MIN_SHARED * 100)}% of the previous ranges"

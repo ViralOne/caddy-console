@@ -188,7 +188,7 @@
   {
     "id": "cloudflare-origin-guard",
     "name": "Cloudflare origin guard",
-    "description": "Refuse direct connections that do not come from Cloudflare's edge or your own LAN. It checks the connecting address (remote_ip), never a forwarding header. WARNING: 192.168.1.0/24 is a placeholder; replace it with your exact LAN ranges before you save, or that subnet bypasses the guard. The guard is a matcher-specific handle placed first in the site, so it also covers sites that use handle. Only for proxied DNS: a tunnel connects from cloudflared, not from the edge.",
+    "description": "Refuse direct connections that do not come from Cloudflare's edge or your own LAN. It checks the connecting address (remote_ip), never a forwarding header. WARNING: 192.168.1.0/24 is a placeholder; replace it with your exact LAN ranges before you save, or that subnet bypasses the guard. The guard is a matcher-specific handle placed first in the site; it runs before handle and route blocks, but directives that Caddy orders earlier (forward_auth, redir, basic_auth, rewrite) still run before it. Only for proxied DNS: a tunnel connects from cloudflared, not from the edge.",
     "phase": "cloudflare",
     "scope": "site",
     "insert": "site-first",

@@ -117,6 +117,13 @@ class ProfileApiTest(_bans.ApiCase):
         info = self.get("/api/security/client-ip-profile").get_json()
         self.assertEqual((info["mode"], info["stored"], info["present"]), ("direct", False, False))
 
+    def test_registered_addresses_overlapping_the_edge_never_become_exemptions(self):
+        from src.bans import protected
+        prot = protected.build(never=("104.16.0.9/32",), management=("104.16.1.1/32", "203.0.113.7/32"),
+                               profile=("104.16.0.0/13",))
+        tokens = prot.exclusion_tokens()
+        self.assertEqual([t for t in tokens if t.startswith(("104.", "203."))], ["203.0.113.7"])
+
     def test_proxied_regenerates_trust_and_the_protected_set_in_one_transaction(self):
         self.post("/api/bans", {"value": "203.0.113.7", "duration": "4h", "reason": ""})
         before = read(render.SOURCES["manual"].path)

@@ -276,6 +276,10 @@ class CountryApiTest(_bans.ApiCase):
         self.assertEqual((info["shape"], info["current"], info["healthy"]), ("cloudflare", True, False),
                          "healthy needs the Cloudflare IP Geolocation confirmation")
         self.put({"enabled": True, "countries": ["RO", "DE"], "cloudflare_geolocation_confirmed": True})
+        self.assertFalse(self.get(URL).get_json()["healthy"], "the live Caddy does not trust the peers yet")
+        srv = self.caddy.live["apps"]["http"]["servers"]["srv0"]
+        srv["trusted_proxies"] = {"source": "static", "ranges": ["172.31.0.2/32"]}
+        srv["client_ip_headers"] = ["CF-Connecting-IP"]
         self.assertTrue(self.get(URL).get_json()["healthy"])
 
     def test_switching_to_direct_without_a_renderable_direct_shape_is_refused(self):
@@ -295,6 +299,25 @@ class CountryApiTest(_bans.ApiCase):
         self.assertEqual({p: read(p) for p in before}, before)
         self.assertEqual(super().put(prof_url, {"mode": "direct"}).status_code, 200)
         self.assertIn("vars caddy_console_country_policy direct", read(render.COUNTRY.path))
+
+    def test_cloudflare_reset_to_direct_is_refused_without_a_direct_shape(self):
+        prof_url = "/api/security/client-ip-profile"
+        super().put(prof_url, {"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
+        self.assertEqual(self.put({"enabled": True, "countries": ["RO"]}).status_code, 200)
+        before = {p: read(p) for p in (render.COUNTRY.path, render.PROFILE.path, country.PATH, profile.PATH)}
+        remove_dataset()
+        r = self.post("/api/security/reset", {"source": "cloudflare", "confirm": True})
+        self.assertEqual((r.status_code, r.get_json()["code"]), (409, "country_dataset_unavailable"))
+        self.assertEqual({p: read(p) for p in before}, before)
+
+    def test_the_country_panel_health_uses_the_same_live_trust_gate(self):
+        self.put({"enabled": True, "countries": ["RO"], "cloudflare_geolocation_confirmed": True})
+        super().put("/api/security/client-ip-profile", {"mode": "cloudflare-tunnel", "tunnel_peers": ["172.31.0.2"]})
+        self.assertFalse(self.get(URL).get_json()["healthy"], "trusted proxies not imported live")
+        srv = self.caddy.live["apps"]["http"]["servers"]["srv0"]
+        srv["trusted_proxies"] = {"source": "static", "ranges": ["172.31.0.2/32"]}
+        srv["client_ip_headers"] = ["CF-Connecting-IP"]
+        self.assertTrue(self.get(URL).get_json()["healthy"])
 
     def test_proxied_mode_puts_the_edge_ranges_in_remote_ip(self):
         self.put({"enabled": True, "countries": ["RO"]})

@@ -387,6 +387,7 @@ check('country state: off, not enabled here, unconfirmed Cloudflare, live mismat
   assert.equal(M.countryState({ ...base, effective: false }).title, 'Country policy is off');
   assert.equal(M.countryState({ ...base, shape: 'cloudflare', cloudflare_geolocation_confirmed: false, summary: { healthy: false } }).title, 'Cloudflare IP geolocation is not confirmed');
   assert.equal(M.countryState({ ...base, summary: { healthy: false, live_ok: false } }).title, 'Caddy runs a different country policy');
+  assert.equal(M.countryState({ ...base, present: true, summary: { healthy: false, trust_ok: false } }).title, 'Cloudflare trusted proxies do not match');
   assert.equal(M.countryState({ ...base, error: { message: 'dataset missing' } }).tone, 'crit');
   assert.equal(M.countryState({ ...base, corrupt: 'bad json' }).tone, 'crit');
 });
