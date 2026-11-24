@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from urllib.parse import urlsplit
 
 from .. import config
+from . import plugin
 
 MANAGEMENT_MARK = "caddy-console: management"
 _COMMENT = re.compile(r"(^|\s)#.*$")
@@ -246,7 +247,7 @@ def plugin_warnings(text, definition_path, management=frozenset(), *, snippet="p
             if d != 2 or not m:
                 continue
             value = m.group(1)
-            if not value.startswith(("{env.", "{file.")):
+            if not plugin.is_placeholder(value):
                 out.append(f"Line {ln}: the bouncer key is written into the Caddyfile, where anyone who can read "
                            f"Caddy's config sees it; use api_key {placeholder or '{env.CROWDSEC_PLUGIN_BOUNCER_KEY}'}.")
             elif placeholder and value != placeholder:

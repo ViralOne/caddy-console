@@ -194,6 +194,12 @@ class WarningTest(unittest.TestCase):
         w = self.warn(g % "{file./run/secrets/k}")
         self.assertTrue(any("{env.CROWDSEC_PLUGIN_BOUNCER_KEY}" in x for x in w), w)
 
+    def test_a_placeholder_mixed_with_a_literal_is_not_echoed(self):
+        g = "{\n\tcrowdsec {\n\t\tapi_key {env.X}3f9a1c0b7e6d5a4f\n\t}\n\torder crowdsec first\n}\n"
+        w = self.warn(g)
+        self.assertTrue(any(x.startswith("Line 3:") and "written into the Caddyfile" in x for x in w), w)
+        self.assertFalse(any("3f9a1c0b7e6d" in x for x in w), w)
+
     def test_global_app_without_order_warns(self):
         w = self.warn("{\n\tcrowdsec {\n\t\tapi_key {env.CROWDSEC_PLUGIN_BOUNCER_KEY}\n\t}\n}\n")
         self.assertTrue(any("order crowdsec first" in x for x in w), w)

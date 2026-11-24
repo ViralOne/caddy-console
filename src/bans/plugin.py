@@ -29,6 +29,13 @@ _ADMIN = re.compile(r"^(?:\[([0-9A-Fa-f:.]+)\]|([0-9.]+)|([A-Za-z0-9.-]*)):([0-9
 # A value that is exactly one placeholder and nothing else; only such a value
 # is ever shown. Same rule as caddy-plugin/preflight/check.go placeholder.
 _PLACEHOLDER = re.compile(r"^\{(?:env|file)\.[A-Za-z0-9_./-]{1,255}\}\Z")
+
+
+def is_placeholder(value) -> bool:
+    """Exactly one {env.*}/{file.*} placeholder: the only key form ever shown."""
+    return isinstance(value, str) and bool(_PLACEHOLDER.match(value))
+
+
 _UNRECOGNIZED = re.compile(r"unrecognized global option:?\s*crowdsec", re.I)
 PROBE_TEXT = ("{\n\tcrowdsec {\n\t\tapi_url http://crowdsec.invalid:8080\n"
               "\t\tapi_key caddy-console-module-probe\n\t}\n}\n")
@@ -224,7 +231,7 @@ def live_app(live):
         form = "missing"
     elif key == expected:
         form = "expected"
-    elif isinstance(key, str) and _PLACEHOLDER.match(key):
+    elif is_placeholder(key):
         form = "placeholder"
     else:
         form = "literal"
