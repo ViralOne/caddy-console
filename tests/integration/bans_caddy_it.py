@@ -142,7 +142,7 @@ def write_caddyfile(text):
 
 def reset_itest(load=True):
     for name in os.listdir(itenv.BACKUP_DIR):
-        if name.startswith(("bans", ".bans", ".policy-transactions", "audit.log")):
+        if name.startswith(("bans", ".bans", ".policy-transactions", "audit.log", "allowlist")):
             path = os.path.join(itenv.BACKUP_DIR, name)
             shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
     shutil.rmtree(D, ignore_errors=True)
@@ -279,6 +279,20 @@ class StockCaddyTest(unittest.TestCase):
         self.assertIn(b"client_ip 10.0.0.0/16 203.0.113.7", fsio.read_bytes(render.SOURCES["manual"].path))
         self.assertEqual(get("proxy.it.example.com", ip="10.0.0.5").status_code, 200)
         self.assertEqual(get("proxy.it.example.com", ip=BANNED).status_code, 403)
+
+    def test_allowlisted_ip_is_not_blocked_under_a_banned_range(self):
+        self.ban("203.0.113.0/24")
+        self.assertEqual(get("proxy.it.example.com", ip=ALLOWED).status_code, 403)
+        r = self.client.post("/api/security/allowlist", json={"value": ALLOWED, "note": "it"}, headers=self.h)
+        self.assertEqual(r.status_code, 201, r.get_data(as_text=True))
+        self.assertEqual(r.get_json()["reload_status"], "applied")
+        self.assertEqual(get("proxy.it.example.com", ip=ALLOWED).status_code, 200)
+        self.assertEqual(get("proxy.it.example.com", ip=BANNED).status_code, 403)
+        records = self.client.get("/api/bans", headers=AUTH).get_json()["records"]
+        self.assertEqual(records[0]["protected"], "allowlist")
+        r = self.client.delete(f"/api/security/allowlist/{r.get_json()['entry']['id']}", headers=self.h)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(get("proxy.it.example.com", ip=ALLOWED).status_code, 403)
 
     def test_exact_file_absence_fails_but_glob_absence_does_not(self):
         self.assertFalse(os.path.exists(render.SOURCES["manual"].path))

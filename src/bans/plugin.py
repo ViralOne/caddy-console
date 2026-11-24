@@ -247,7 +247,7 @@ ALLOWLIST = "caddy_console_protected"
 
 def allowlist_commands(prot) -> str:
     """Copy-only commands for a CrowdSec LAPI allowlist with the static
-    protected set (core ranges, BANS_NEVER, Docker networks). Defense in depth
+    protected set (core ranges, BANS_NEVER, the never-ban list, Docker networks). Defense in depth
     only (spec 3.4): allowlists stop new decisions but keep existing ones, and
     verified console addresses change at runtime, so they are left out."""
     from . import addr

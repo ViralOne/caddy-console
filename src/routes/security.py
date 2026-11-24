@@ -58,6 +58,24 @@ def reset():
     return _reply(service.reset(_payload(), _actor(), request.remote_addr))
 
 
+@security_bp.route("/api/security/allowlist", methods=["GET"])
+@login_required
+def allowlist_get():
+    return jsonify(service.allowlist_info())
+
+
+@security_bp.route("/api/security/allowlist", methods=["POST"])
+@login_required
+def allowlist_post():
+    return _reply(service.add_allowlist(_payload(), _actor()))
+
+
+@security_bp.route("/api/security/allowlist/<entry_id>", methods=["DELETE"])
+@login_required
+def allowlist_delete(entry_id):
+    return _reply(service.remove_allowlist(entry_id, _actor()))
+
+
 @security_bp.route("/api/bans", methods=["GET"])
 @login_required
 def list_bans():

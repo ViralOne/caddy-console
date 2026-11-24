@@ -14,10 +14,11 @@ import { CrowdSecSection } from './security-crowdsec.js';
 import { PluginSection } from './security-plugin.js';
 import { ClientIpSection } from './security-client-ip.js';
 import { CountrySection } from './security-country.js';
+import { AllowlistSection } from './security-allowlist.js';
 import { Alert, CodeLine, Empty, Field, KV, Mark, SectionHead, Select } from './security-ui.js';
 import {
   BAN_FILTERS, CROWDSEC_WRITE_HINT, DURATIONS, SOURCE_LABELS, banPayload, banRows, bansHeader, count, crowdsecRowAction, filterCounts, filterRows, clientIpState, createdCell, crowdsecPath, crowdsecState, errorMessage, expiryLabel,
-  outcomeText, overallState, staleNotice, HOST_RECOVERY_URL, pluginSiteActions, protectedLabel, recoveryActionLabel, siteActions, siteStatus,
+  outcomeText, overallState, staleNotice, HOST_RECOVERY_URL, pluginSiteActions, protectedLabel, protectedTagText, recoveryActionLabel, siteActions, siteStatus,
 } from './security-model.js';
 
 const html = htm.bind(h);
@@ -115,7 +116,7 @@ function AddBan({ onDone }) {
 
 /** "ignored, protected" on an address that the policy will never render. */
 export const ProtectedTag = ({ category }) => html`
-  <span class="tag tag-warn" title=${'Protected: ' + protectedLabel(category)}><${Icon} name="warning" size=${12} />ignored, protected</span>`;
+  <span class="tag tag-warn" title=${'Protected: ' + protectedLabel(category)}><${Icon} name="warning" size=${12} />${protectedTagText(category)}</span>`;
 
 function BanList({ rows, cs, stateVersion, onDone }) {
   const [filter, setFilter] = useState('all');
@@ -356,8 +357,10 @@ function App() {
       </section>
 
       <section class="sec-s" aria-labelledby="sec-prot-h">
-        <${SectionHead} id="sec-prot-h" title="Never banned" desc="Refused at input and excluded again by the generated policy." />
-        <${Protected} groups=${status.protected} />
+        <${SectionHead} id="sec-prot-h" title="Never ban" desc="Refused at input and excluded again by every generated policy. Bans already covering an entry stop being enforced." />
+        <${AllowlistSection} info=${status.allowlist} writable=${writable} onDone=${load}>
+          <${Protected} groups=${(status.protected || []).filter(g => g.category !== 'allowlist')} />
+        </${AllowlistSection}>
       </section>
 
       <section class="sec-s" aria-labelledby="sec-rec2-h">

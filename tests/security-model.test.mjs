@@ -427,4 +427,28 @@ check('CrowdSec records while CrowdSec is off are listed as not syncing', () => 
   assert.deepEqual(M.crowdsecRowAction(rows[0], { enabled: false, write_configured: true }), { kind: 'none' });
   assert.equal(M.banRows([{ id: 'c', source: 'crowdsec', value: '1.2.3.4' }], undefined)[0].sourceLabel, 'CrowdSec (not syncing)');
 });
+check('allowlistPayload trims, requires a single value and caps the note', () => {
+  assert.deepEqual(M.allowlistPayload({ value: ' 198.51.100.7 ', note: ' home ' }), { value: '198.51.100.7', note: 'home' });
+  assert.deepEqual(M.allowlistPayload({ value: '10.0.0.0/8' }), { value: '10.0.0.0/8', note: '' });
+  assert.throws(() => M.allowlistPayload({ value: '  ' }), /Enter an IP/);
+  assert.throws(() => M.allowlistPayload({ value: '1.2.3.4 5.6.7.8' }), /single/);
+  assert.throws(() => M.allowlistPayload({ value: '1.2.3.4', note: 'x'.repeat(201) }), /200 characters/);
+  assert.throws(() => M.allowlistPayload({ value: '1.2.3.4', note: 'a\nb' }), /single line/);
+});
+check('allowlistRows sorts newest first and fills defaults', () => {
+  const rows = M.allowlistRows([
+    { id: 'a', value: '1.2.3.4', note: '', actor: 'x@example.com', created_at: '2026-01-01T00:00:00Z' },
+    { id: 'b', value: '10.0.0.0/8', created_at: '2026-02-01T00:00:00Z' },
+  ], Date.parse('2026-03-01T00:00:00Z'));
+  assert.deepEqual(rows.map(r => [r.id, r.note, r.by]), [['b', '', 'unknown'], ['a', '', 'x@example.com']]);
+  assert.ok(rows[0].created.text && rows[0].created.title);
+  assert.deepEqual(M.allowlistRows(undefined), []);
+});
+check('allowlist protection: tag text, label and popover action', () => {
+  assert.equal(M.protectedTagText('allowlist'), 'protected by allowlist');
+  assert.equal(M.protectedTagText('never'), 'ignored, protected');
+  assert.equal(M.protectedLabel('allowlist'), 'never-ban list');
+  assert.equal(M.banState({ records: [], exact_ids: [], protected: 'allowlist' }).canNeverBan, false);
+  assert.equal(M.banState({ records: [], exact_ids: [], protected: null }).canNeverBan, true);
+});
 console.log(`\n${passed} passed`);

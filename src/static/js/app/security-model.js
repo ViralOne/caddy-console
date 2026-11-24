@@ -15,7 +15,7 @@ export const REASON_MAX = 500;
 const PROTECTED = {
   loopback: 'loopback', private: 'private network', link_local: 'link-local', cgnat: 'carrier-grade NAT',
   ula: 'IPv6 unique local', special: 'reserved or multicast', docker: 'Docker network', never: 'BANS_NEVER',
-  operator: 'your verified console address', profile: 'client-IP profile',
+  operator: 'your verified console address', profile: 'client-IP profile', allowlist: 'never-ban list',
 };
 export const protectedLabel = (category) => PROTECTED[category] || 'protected range';
 export const durationLabel = (id) => (DURATIONS.find(d => d.id === id) || {}).label || '';
@@ -90,8 +90,32 @@ export function banState(lookup) {
     protectedText: prot ? `Protected (${protectedLabel(prot)}), cannot be banned` : '',
     canBan: !prot && exact.length === 0,
     canUnban: exact.length > 0,
+    canNeverBan: !prot,
   };
 }
+
+export const ALLOWLIST_NOTE_MAX = 200;
+
+/** The body of POST /api/security/allowlist; the server re-validates everything. */
+export function allowlistPayload({ value, note } = {}) {
+  const v = String(value ?? '').trim();
+  if (!v) throw new Error('Enter an IP address or CIDR range.');
+  if (/\s/.test(v)) throw new Error('Enter a single IP address or CIDR range.');
+  const n = String(note ?? '').trim();
+  if ([...n].length > ALLOWLIST_NOTE_MAX) throw new Error(`Keep the note to ${ALLOWLIST_NOTE_MAX} characters.`);
+  if (/[\u0000-\u001f]/.test(n)) throw new Error('The note must be a single line.');
+  return { value: v, note: n };
+}
+
+/** Table rows for the operator's never-ban entries, newest first. */
+export function allowlistRows(entries, now = Date.now()) {
+  return [...(entries || [])]
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+    .map(e => ({ id: e.id, value: e.value, note: e.note || '', by: e.actor || 'unknown', created: createdCell(e.created_at, now) }));
+}
+
+/** The tag text on a ban the policy no longer enforces because a protected entry covers it. */
+export const protectedTagText = (category) => (category === 'allowlist' ? 'protected by allowlist' : 'ignored, protected');
 
 export const SOURCE_LABELS = { manual: 'Manual', crowdsec: 'CrowdSec', plugin: 'CrowdSec plugin', country: 'Country policy' };
 export const LIST_ORIGIN_WARNING = 'CAPI and list origins can hold tens of thousands of decisions. Stock Caddy file mode has a finite matcher budget (BANS_MAX); prefer plugin mode for them (docs/security.md#crowdsec-plugin).';

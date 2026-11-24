@@ -479,7 +479,7 @@ def apply_locked(changes, *, actor: str, source: str, audit_events=(), force_rel
 # Hidden temps, plus the availability probe (service._probe) left by a crash.
 _ORPHAN_BANS_DIR = re.compile(r"^(\..+\.caddy\.[A-Za-z0-9_]+\.tmp|\.console-probe-[0-9a-z]+\.probe)$")
 _ORPHAN_BACKUP_DIR = re.compile(
-    r"^\.(bans\.json|bans-transaction\.json|plugin-policy\.json|cloudflare-ranges\.json|country-policy\.json)"
+    r"^\.(bans\.json|bans-transaction\.json|plugin-policy\.json|cloudflare-ranges\.json|country-policy\.json|allowlist\.json)"
     r"\.[A-Za-z0-9_]+\.tmp$")
 
 

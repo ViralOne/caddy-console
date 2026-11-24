@@ -27,7 +27,7 @@ def write_caddyfile(text):
 
 def reset(caddyfile=None):
     for name in os.listdir(env.BACKUP_DIR):
-        if name.startswith(("bans", ".bans", "cloudflare-ranges", "country-policy")) or name == "plugin-policy.json":
+        if name.startswith(("bans", ".bans", "cloudflare-ranges", "country-policy", "allowlist")) or name == "plugin-policy.json":
             path = os.path.join(env.BACKUP_DIR, name)
             if os.path.isdir(path):
                 shutil.rmtree(path, ignore_errors=True)

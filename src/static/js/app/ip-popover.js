@@ -8,6 +8,8 @@ import { setTermState } from './explore-query.js';
 import { Icon } from './icons.js';
 import { banAddress, unbanRecords } from './ban-dialog.js';
 import { requestJson } from './security-api.js';
+import { neverBan } from './security-allowlist.js';
+import { confirmDialog } from './ui/dialog.js';
 import { banState, errorMessage } from './security-model.js';
 import { asnLine, kindLabel, kindNote, placeLine, placement, sourceLine } from './ip-info.js';
 
@@ -22,6 +24,11 @@ function stamp(ts) {
 const chipClass = (v) => ({ '2xx': 's2', '3xx': 's3', '4xx': 's4', '5xx': 's5' }[v] || 'so');
 
 const bansOn = () => typeof document !== 'undefined' && document.body?.dataset.bans === 'on';
+
+async function neverBanIp(ip, refresh) {
+  const ok = await confirmDialog({ title: `Never ban ${ip}?`, body: 'It is added to the never-ban list in Security: new bans are refused and existing bans covering it stop being enforced. Caddy reloads.', confirmLabel: 'Never ban' });
+  if (ok) refresh(await neverBan(ip));
+}
 
 function BanSection({ ip }) {
   const [look, setLook] = useState(null);
@@ -44,6 +51,7 @@ function BanSection({ ip }) {
       ${s.protectedText && html`<span class="muted small">${s.protectedText}</span>`}
       ${s.canBan && html`<button class="btn sm" type="button" onClick=${async () => refresh(await banAddress(ip))}><${Icon} name="shield" size=${14} />Ban…</button>`}
       ${s.canUnban && html`<button class="btn sm" type="button" onClick=${async () => refresh(await unbanRecords(s.exact, ip))}>Unban</button>`}
+      ${s.canNeverBan && html`<button class="btn sm btn-quiet" type="button" onClick=${() => neverBanIp(ip, refresh)}>Never ban this IP</button>`}
     </div>`;
 }
 

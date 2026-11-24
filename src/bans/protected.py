@@ -21,7 +21,7 @@ LABELS = {
     "loopback": "Loopback", "private": "Private (RFC 1918)", "link_local": "Link-local",
     "cgnat": "Carrier-grade NAT", "ula": "IPv6 unique local",
     "special": "Unspecified, multicast and reserved", "docker": "Docker networks",
-    "never": "BANS_NEVER", "operator": "Verified console addresses", "profile": "Client-IP profile",
+    "never": "BANS_NEVER", "allowlist": "Never-ban list", "operator": "Verified console addresses", "profile": "Client-IP profile",
 }
 # What the rendered exclusion always starts with. Caddy's private_ranges is
 # 127/8, 10/8, 172.16/12, 192.168/16, fd00::/8 and ::1/128.
@@ -33,7 +33,7 @@ _RENDER_BASE_NETS = tuple(_n(x) for x in (
 # refusal (overlap) but never in a rendered `not client_ip` exclusion, because a
 # request whose client_ip is an edge address (a Worker subrequest, or a site
 # without the trusted-proxies import) must not skip bans or the country policy.
-DYNAMIC = ("docker", "never", "operator")
+DYNAMIC = ("docker", "never", "allowlist", "operator")
 
 
 class ConfigError(ValueError):
@@ -114,8 +114,8 @@ class Protected:
         return [{"category": c, "label": LABELS[c], "values": v} for c, v in groups.items()]
 
 
-def build(*, never=(), management=(), docker=(), profile=()) -> Protected:
+def build(*, never=(), allowlist=(), management=(), docker=(), profile=()) -> Protected:
     entries = [(cat, _n(v)) for cat, values in CORE for v in values]
-    for category, nets in (("never", never), ("operator", management), ("docker", docker), ("profile", profile)):
+    for category, nets in (("never", never), ("allowlist", allowlist), ("operator", management), ("docker", docker), ("profile", profile)):
         entries.extend((category, addr.unmap(_n(x, strict=False))) for x in nets)
     return Protected(tuple(entries))

@@ -23,7 +23,7 @@ import requests as http_client
 from .. import audit, config, locks
 from ..geoip import geoip
 from ..routes.editor import caddyfile_lock
-from . import addr, cfranges, country, countrydata, detect, fsio, lapi, lapimachine, plugin, pluginpolicy, profile, protected, render, scan, store, syncstate, txn
+from . import addr, allowlist, cfranges, country, countrydata, detect, fsio, lapi, lapimachine, plugin, pluginpolicy, profile, protected, render, scan, store, syncstate, txn
 from . import caddy as caddy_admin
 
 AVAILABLE_TTL = 300.0
@@ -217,14 +217,16 @@ def _verified_client(remote_addr):
     return ip
 
 
-def protected_for(state, client=None, prof=None):
+def protected_for(state, client=None, prof=None, allow=None):
     """prof: the profile a transaction is about to commit; default the stored one.
+    allow: the never-ban entries about to be committed; default the stored ones.
     Proxied mode adds the Cloudflare edge to the protected set (spec 4.1)."""
     management = store.management_networks(state)
     if client is not None:
         management.append(ipaddress.ip_network(client))
     prof = prof if prof is not None else profile.load_or_default()
-    return protected.build(never=never_networks(), management=management,
+    entries = allow if allow is not None else allowlist.load_or_default()
+    return protected.build(never=never_networks(), allowlist=allowlist.networks(entries), management=management,
                            docker=protected.read_docker_networks(), profile=prof.protected_networks())
 
 
@@ -423,7 +425,7 @@ class _Plan:
 @dataclass(frozen=True)
 class _Refused:
     """A gate of the shared write path refused before anything was written."""
-    gate: str                       # unavailable | degraded | corrupt
+    gate: str                       # unavailable | degraded | corrupt | allowlist_corrupt
     message: str
     reason: object = None
 
@@ -453,6 +455,9 @@ def _locked_transaction(prepare, *, background=False, allow_corrupt=False):
             if not allow_corrupt:
                 return _Refused("corrupt", str(e)), None, None
             corrupt, state = e, store.State()
+        problem = allowlist_problem()
+        if problem is not None:
+            return _Refused("allowlist_corrupt", problem), None, None
         plan = prepare(state, corrupt)
         if not isinstance(plan, _Plan):
             return None, plan, None
@@ -468,6 +473,16 @@ def _locked_transaction(prepare, *, background=False, allow_corrupt=False):
                 and fsio.read_bytes(store.STATE_PATH) == state_change.data):
             _after_commit(corrupt)
     return None, plan, outcome
+
+
+def allowlist_problem():
+    """Why allowlist.json cannot be used, or None. While it is corrupt the last
+    generated policies stay in place: every policy write is refused."""
+    try:
+        allowlist.load()
+    except allowlist.Corrupt as e:
+        return f"{e}. The last generated policies stay enforced; fix or remove the file to resume changes"
+    return None
 
 
 def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt=False, force_reload=False,
@@ -500,6 +515,8 @@ def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt
 
     refused, plan, outcome = _locked_transaction(prepare, allow_corrupt=allow_corrupt)
     if refused is not None:
+        if refused.gate == "allowlist_corrupt":
+            return _refused_error(refused)
         if refused.gate == "unavailable":
             return _error("bans_unavailable", refused.message, 503, reason=refused.reason)
         if refused.gate == "corrupt":
@@ -686,6 +703,8 @@ def _country_active() -> bool:
 
 
 def _refused_error(refused):
+    if refused.gate == "allowlist_corrupt":
+        return _error("allowlist_degraded", refused.message + ".", 503)
     if refused.gate == "unavailable":
         return _error("bans_unavailable", refused.message, 503, reason=refused.reason)
     if refused.gate == "corrupt":
@@ -737,6 +756,73 @@ def _policy_transaction(actor, source, events, *, prof=None, check=None, force=(
     if outcome is None:
         return plan
     return _outcome_body(outcome), (200 if outcome.ok else outcome.http_status)
+
+
+def allowlist_info() -> dict:
+    """GET /api/security/allowlist: the operator's never-ban entries."""
+    problem = allowlist_problem()
+    entries = [] if problem else allowlist.load()
+    return {"entries": [dataclasses.asdict(e) for e in entries], "max_entries": allowlist.MAX_ENTRIES,
+            "note_max": allowlist.NOTE_MAX, "corrupt": problem, "file": allowlist.PATH}
+
+
+def _allowlist_transaction(actor, change, event):
+    """Add or remove a never-ban entry: change(entries) -> (new_entries, detail)
+    runs under the lock on the entries read there, and the new list is expanded
+    through every policy file repeating the protected set (the ban sources, the
+    plugin route, the country policy) in one journal and one reload."""
+    def prepare(state, corrupt):
+        try:
+            entries, body = change(allowlist.load())
+        except allowlist.InputError as e:
+            return _error(e.code, str(e), e.status)
+        holds = {k: v for k, v in _holds(state).items()}
+        prot = protected_for(state, allow=entries)
+        try:
+            changes = _candidates(state, prot, holds, store.utc_now(), bans=_bans_present(state))
+        except country.CountryError as e:
+            return _error(e.code, str(e), e.status, **e.extra)
+        except render.CapacityError as e:
+            return _error("capacity_exceeded", f"The ban files would render {e.count} prefixes; the limit "
+                          f"(BANS_MAX) is {e.limit}. Remove bans first.", 409, count=e.count, limit=e.limit)
+        changes.append(txn.Change(allowlist.PATH, "state", allowlist.dumps(entries)))
+        return _Plan(changes, actor, "allowlist", [(event, body["entry"]["value"])],
+                     context=(body, holds))
+
+    refused, plan, outcome = _locked_transaction(prepare)
+    if refused is not None:
+        return _refused_error(refused)
+    if outcome is None:
+        return plan
+    body, holds = plan.context
+    out = {**_outcome_body(outcome), **body}
+    if outcome.ok and holds:
+        out["held"] = sorted(holds)
+    return out, ((201 if event == "allowlist_added" else 200) if outcome.ok else outcome.http_status)
+
+
+def add_allowlist(payload, actor):
+    if not isinstance(payload, dict):
+        return _error("invalid_request", "Send a JSON object.", 400)
+    try:
+        net = allowlist.validate_value(payload.get("value"))
+        note = allowlist.validate_note(payload.get("note"))
+    except (addr.AddressError, allowlist.InputError) as e:
+        return _error(e.code, str(e), getattr(e, "status", 400))
+
+    def change(entries):
+        entries, entry = allowlist.add(entries, net, note, actor, store.iso(store.utc_now()))
+        return entries, {"entry": dataclasses.asdict(entry)}
+    return _allowlist_transaction(actor, change, "allowlist_added")
+
+
+def remove_allowlist(entry_id, actor):
+    def change(entries):
+        found = next((e for e in entries if e.id == entry_id), None)
+        if found is None:
+            raise allowlist.InputError("not_found", "That never-ban entry no longer exists.", 404)
+        return [e for e in entries if e.id != entry_id], {"entry": dataclasses.asdict(found)}
+    return _allowlist_transaction(actor, change, "allowlist_removed")
 
 
 def _reset_aux(source, payload, actor):
@@ -1466,7 +1552,8 @@ def _plugin_status(live, state, holds, text) -> dict:
         return {"enabled": False}
     problem = plugin.admin_problem(live) if live is not None else None
     data = fsio.read_bytes(render.PLUGIN.path)
-    static = protected.build(never=never_networks(), docker=protected.read_docker_networks())
+    static = protected.build(never=never_networks(), allowlist=allowlist.networks(allowlist.load_or_default()),
+                             docker=protected.read_docker_networks())
     return {
         "enabled": True, "module": module, "refused": problem is not None,
         "admin": None if problem is None else {"code": problem.code, "message": problem.message},
@@ -1560,6 +1647,7 @@ def status(remote_addr) -> dict:
         "state_version": info["state_version"], "degraded": degraded, "recovery": info,
         "sources": sources,
         "protected": protected_for(state or store.State(), _verified_client(remote_addr)).summary(),
+        "allowlist": allowlist_info(),
         "sites": _site_rows(live, text, state, now, holds, country_facts),
         "plugin": _plugin_status(live, state, holds, text),
         "client_ip_profile": _profile_status(live, holds, text),
@@ -1583,6 +1671,8 @@ def expire_tick(now=None) -> str:
         except store.StateCorrupt as e:
             store.quarantine(e.raw, str(e))
             return "corrupt"
+        if allowlist_problem() is not None:
+            return "allowlist_corrupt"
         now = now or store.utc_now()
         holds = _holds(state)
         removed = store.prune_expired(state, now, sources=[n for n in render.active_sources(state) if n not in holds])

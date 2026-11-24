@@ -126,7 +126,11 @@ or `/48` (IPv6) are refused.
 The console verifies your address only from the TCP connection. Behind
 Cloudflare Tunnel or a front proxy that is a private Docker address, so the
 console cannot see your real address: **put your stable WAN address in
-`BANS_NEVER`.**
+`BANS_NEVER`** (or add it under **Never ban** in Security).
+
+**Never ban** in Security (or "Never ban this IP" in the Explore IP popover) manages a list in `BACKUP_DIR/allowlist.json` (at most 500 IPs/CIDRs, no wider than `/8` or `/32` for IPv6; `GET`/`POST /api/security/allowlist`, `DELETE /api/security/allowlist/<id>`).
+Each change regenerates every policy that repeats the exclusion (manual, CrowdSec, plugin route, country policy) in one transaction and one reload; new bans and CrowdSec decisions overlapping an entry are refused, and existing bans it covers are marked "protected by allowlist" and stop being enforced.
+Entries overlapping the Cloudflare edge are accepted but never rendered into an exclusion. A corrupt `allowlist.json` keeps the last generated policies and pauses every policy change until you fix or remove it.
 
 ## Durations and expiry
 
