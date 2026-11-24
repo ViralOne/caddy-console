@@ -3,19 +3,21 @@
 //   /          dashboard (site health)
 //   /editor    the Caddyfile editor
 //   /explore   log explorer — its full state lives in the query string
+//   /security  IP bans (only when BANS_ENABLED)
 //
 // Flask serves the same document for all three; this decides what to show.
 // Explore keeps its state in the URL rather than in component state alone, so a
 // pasted link reproduces exactly what the sender was looking at, timestamps
 // included.
 
-const VIEWS = ['dashboard', 'editor', 'explore'];
-const PATHS = { dashboard: '/', editor: '/editor', explore: '/explore' };
+const VIEWS = ['dashboard', 'editor', 'explore', 'security'];
+const PATHS = { dashboard: '/', editor: '/editor', explore: '/explore', security: '/security' };
 
 export function viewFromPath(pathname = location.pathname) {
   const clean = (pathname || '/').replace(/\/+$/, '') || '/';
   if (clean === '/editor') return 'editor';
   if (clean === '/explore') return 'explore';
+  if (clean === '/security') return 'security';
   return 'dashboard';
 }
 

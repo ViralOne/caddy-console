@@ -27,3 +27,18 @@ def when_ready(server):
     updater_log.setLevel(logging.INFO)
     updater_log.propagate = False
     start_background()
+
+
+def post_worker_init(worker):
+    # Before any job starts: does flock on BACKUP_DIR exclude across processes?
+    # Mutations and sync leadership are decided by the container-local lock in
+    # LOCK_DIR either way; a failure here only means a second console container
+    # on the same BACKUP_DIR is not excluded (src/locks.py logs the warning).
+    import logging
+    from src import config, locks
+    if getattr(worker, "log", None) is not None:
+        logging.getLogger("src.locks").handlers = worker.log.error_log.handlers
+    locks.self_test(config.BACKUP_DIR)
+    # Per worker, after fork; see src/bans/jobs.py for why never in the master.
+    from src.bans.jobs import start_background as start_bans_jobs
+    start_bans_jobs()

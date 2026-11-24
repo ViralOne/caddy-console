@@ -1,20 +1,23 @@
-import fcntl
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
 import stat
 import tempfile
-from contextlib import contextmanager
+import threading
 from datetime import datetime
 from urllib.parse import urlparse
 
 import requests as http_client
 from flask import Blueprint, jsonify, render_template, request, session
 
+from .. import config, locks
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
+from ..bans import lapi as bans_lapi, render as bans_render, scan as bans_scan, txn as bans_txn
+from ..bans import cfranges as bans_cfranges, plugin as bans_plugin, profile as bans_profile, protected as bans_protected
 from ..caddy_api import get_servers, invalidate_servers_cache
 from ..config import (
     APP_VERSION,
@@ -47,43 +50,29 @@ def _current_file_version() -> str:
 
 # --- Caddyfile write lock ---------------------------------------------------------
 #
-# Save requests can land on different gunicorn workers, so a threading.Lock is not
-# enough: the version check and the write have to happen under a file lock or two
-# editors can both pass the check and both write.
-
+# Save requests can land on different gunicorn workers and threads, so the
+# version check and the write have to happen under one lock or two editors can
+# both pass the check and both write. src/locks.py: a threading.Lock, then a
+# container-local flock (decides), then the BACKUP_DIR flock (best effort
+# across containers; on some bind mounts it does not exclude).
 
 
 class CaddyfileLockError(RuntimeError):
-    """The required cross-process mutation lock is unavailable."""
+    """The required mutation lock is unavailable."""
+
+
 _LOCK_PATH = os.path.join(BACKUP_DIR, ".lock")
+_THREAD_LOCK = threading.Lock()
 
 
-@contextmanager
 def caddyfile_lock():
-    """Cross-process lock for every Caddyfile mutation.
+    """Lock for every Caddyfile mutation. Not re-entrant: never nest it.
 
     Correctness depends on this lock spanning the disk write, Caddy reload and
-    any rollback. If it cannot be created or acquired, fail closed instead of
-    degrading to a process-local lock that cannot protect multiple workers.
+    any rollback. If the container-local lock cannot be created or acquired,
+    fail closed.
     """
-    try:
-        fd = os.open(_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o600)
-    except OSError as e:
-        raise CaddyfileLockError(f"Cannot open Caddyfile lock {_LOCK_PATH}: {e}") from e
-    locked = False
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-            locked = True
-        except OSError as e:
-            raise CaddyfileLockError(f"Cannot acquire Caddyfile lock {_LOCK_PATH}: {e}") from e
-        yield
-    finally:
-        try:
-            if locked:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-        finally:
-            os.close(fd)
+    return locks.mutation_lock("caddyfile.lock", _LOCK_PATH, _THREAD_LOCK, CaddyfileLockError)
 
 
 def ensure_caddyfile_lock_available() -> None:
@@ -221,6 +210,19 @@ def _backup_path(name: str) -> str | None:
     return path if os.path.isfile(path) else None
 
 
+def _reconcile_bans() -> None:
+    """A successful /load of the on-disk Caddyfile also loaded the managed ban
+    policy on disk; settle a pending ban transaction to match (src/bans/txn.py).
+    Runs inside _apply_config's caddyfile_lock() section, which is not
+    re-entrant, so nothing here may take the lock again."""
+    if not config.BANS_ENABLED:
+        return
+    try:
+        bans_txn.reconcile_after_external_reload()
+    except Exception:  # noqa: BLE001 - ban bookkeeping must never fail a save
+        logging.getLogger(__name__).exception("IP bans: reconciling after a reload failed")
+
+
 def _apply_config(content: str, user: str, source: str, expected_version: str | None = None, detail: str = ""):
     """Atomically persist and reload one Caddyfile change under one lock.
 
@@ -306,6 +308,7 @@ def _apply_config(content: str, user: str, source: str, expected_version: str | 
             invalidate_servers_cache()
 
         if resp.status_code == 200:
+            _reconcile_bans()
             log_action(f"{source}_reload", user, f"backup={backup_name}{extra}")
             return jsonify({
                 "ok": True,
@@ -352,7 +355,7 @@ def _apply_config(content: str, user: str, source: str, expected_version: str | 
 @editor_bp.route("/explore")
 @login_required
 def index():
-    return render_template("index.html", csrf_token=get_or_create_csrf())
+    return render_template("index.html", csrf_token=get_or_create_csrf(), bans_enabled=config.BANS_ENABLED)
 
 
 @editor_bp.route("/health")
@@ -427,6 +430,27 @@ def validate():
     warnings = [w for w in (fmt_warning(content, formatted),) if w]
     warnings += smart_validate(content)
     warnings += upstream_resolve_warnings(content)
+    if config.BANS_ENABLED:
+        mgmt = bans_scan.management_hosts(content, bans_scan.console_host())
+        manual_path = bans_render.SOURCES["manual"].path
+        warnings += bans_scan.bans_warnings(content, manual_path, mgmt)
+        if bans_lapi.url():
+            warnings += bans_scan.bans_warnings(content, bans_render.SOURCES["crowdsec"].path, mgmt,
+                                                label="CrowdSec ban list", short="the CrowdSec ban list",
+                                                after=tuple(bans_render.SOURCES[n].path for n in bans_render.AFTER["crowdsec"]),
+                                                reserved=False)
+        try:
+            prof = bans_profile.load()
+        except bans_profile.Corrupt:
+            prof = bans_profile.default()
+        warnings += bans_scan.trust_warnings(content, prof.mode, prof.tunnel_only)
+        warnings += bans_scan.bans_warnings(content, bans_render.COUNTRY.path, mgmt, label="country policy",
+                                            short="the country policy", reserved=False,
+                                            after=tuple(bans_render.SOURCES[n].path for n in bans_render.COUNTRY_AFTER))
+        if "crowdsec" in content.lower():
+            warnings += bans_scan.plugin_warnings(
+                content, bans_render.PLUGIN.path, mgmt, placeholder=bans_plugin.api_key_placeholder(),
+                crowdsec_path=bans_render.SOURCES["crowdsec"].path)
 
     return jsonify({"valid": True,
                     "message": "Caddyfile check passed, but review warnings" if warnings else message,
@@ -463,6 +487,10 @@ def save():
     if not is_valid:
         log_action("save_failed", user, message[:200])
         return jsonify({"ok": False, "message": f"Invalid config: {message}"}), 400
+    exposed = bans_plugin.admin_guard(content)
+    if exposed:
+        log_action("save_refused", user, "admin bind would expose the Caddy admin API")
+        return jsonify({"ok": False, "code": "admin_exposed", "message": f"Not saved: {exposed}"}), 409
 
     return _apply_config(content, user, "save", expected_version=client_version)
 
@@ -514,6 +542,10 @@ def restore_backup(name):
     if not is_valid:
         log_action("restore_failed", user, f"{safe_name}: {message[:160]}")
         return jsonify({"ok": False, "message": f"Backup is not valid, not restored: {message}"}), 400
+    exposed = bans_plugin.admin_guard(content)
+    if exposed:
+        log_action("save_refused", user, f"{safe_name}: admin bind")
+        return jsonify({"ok": False, "code": "admin_exposed", "message": f"Not saved: {exposed}"}), 409
 
     data = request.get_json(silent=True) or {}
     expected_version = data.get("version") if isinstance(data, dict) else None
@@ -563,4 +595,45 @@ def get_snippets():
     snippets_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "snippets.json")
     with open(snippets_path) as f:
         snippets = json.load(f)
-    return jsonify({"snippets": snippets})
+    if not config.BANS_ENABLED:
+        return jsonify({"snippets": [s for s in snippets if "BANS_ENABLED" not in s.get("prerequisites", [])],
+                        "context": {}})
+    try:
+        with open(CADDYFILE, encoding="utf-8", newline="") as f:
+            text = f.read()
+    except (OSError, UnicodeError):
+        text = ""
+    crowdsec = bool(bans_lapi.url())
+    from ..bans import service as bans_service           # service imports this module; keep it lazy
+    plugin_ctx = bans_service.plugin_snippet_context(text) if crowdsec else None
+    mode = bans_plugin.key_mode()
+
+    def offered(s):
+        pre = s.get("prerequisites", [])
+        if "CROWDSEC_URL" in pre and not crowdsec:
+            return False
+        if "CROWDSEC_PLUGIN" in pre and plugin_ctx is None:
+            return False
+        return s.get("key_mode") in (None, mode)
+    snippets = [s for s in snippets if offered(s)]
+    client_ip = bans_service.client_ip_snippet_context()
+    bans_dir = config.BANS_DIR.rstrip("/")
+    for s in snippets:
+        if s.get("phase"):
+            s["code"] = s["code"].replace("/etc/caddy/console/", bans_dir + "/")
+        if s.get("id") == "crowdsec-plugin-global-file":
+            s["code"] = s["code"].replace(bans_plugin.DEFAULT_KEY_FILE, bans_plugin.key_file())
+        elif s.get("id") == "cloudflare-origin-guard":
+            s["code"] = s["code"].replace(" ".join(bans_cfranges.BUNDLED["v4"] + bans_cfranges.BUNDLED["v6"]),
+                                          " ".join(client_ip["ranges"]) or " ".join(bans_cfranges.BUNDLED["v4"]
+                                                                                    + bans_cfranges.BUNDLED["v6"]))
+        elif s.get("id") == "crowdsec-plugin-allowlist":
+            s["code"] = bans_plugin.allowlist_commands(
+                bans_protected.build(never=bans_service.never_networks(), docker=bans_protected.read_docker_networks()))
+    return jsonify({"snippets": snippets, "context": {
+        "bans_dir": bans_dir,
+        "crowdsec": crowdsec,
+        "management_hosts": sorted(bans_scan.management_hosts(text, bans_scan.console_host())),
+        "plugin": plugin_ctx,
+        "client_ip": client_ip,
+    }})

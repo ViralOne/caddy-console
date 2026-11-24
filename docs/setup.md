@@ -444,6 +444,17 @@ copy) when you open an event's original line. Paste the Ray ID into the
 Cloudflare dashboard to see what Cloudflare did with that request. Without these
 lines nothing changes: no facet, no extra fields.
 
+## IP bans (optional)
+
+Ban an IP or range from the **Security** view or the Explore IP popover; stock
+Caddy enforces it on the sites that import the managed file. Setup, the
+protected ranges, capacity and host recovery are in
+[docs/security.md](security.md). No extra service is required. For automatic
+bans from CrowdSec, add the optional overlay described in
+[CrowdSec file sync](security.md#crowdsec-file-sync-optional); the quick start
+above needs nothing from it. For enforcement without reloads, see
+[CrowdSec plugin](security.md#crowdsec-plugin).
+
 ## Environment variables
 
 | Variable | Required | Default | Description |
@@ -463,13 +474,23 @@ lines nothing changes: no facet, no extra fields.
 | `SESSION_TIMEOUT_HOURS` | no | `8` | Session lifetime in Google mode |
 | `CADDY_API_URL` | no | `http://caddy:2019` | Caddy admin API address |
 | `CADDYFILE_PATH` | no | `/etc/caddy/Caddyfile` | Path to Caddyfile |
-| `BACKUP_DIR` | no | `/backups` | Backup storage directory |
+| `BACKUP_DIR` | no | `/backups` | Backup storage directory: a local disk or a Docker named volume used by one console container |
+| `LOCK_DIR` | no | `/tmp/caddy-console-locks` | Container-local lock files; must not be a shared mount |
 | `BACKUP_KEEP` | no | `50` | Pre-save backups to keep; oldest are pruned after each save (`0` = keep all) |
 | `AUDIT_LOG_MAX_BYTES` | no | `5242880` | Rotate the audit log past this size; one rotated file is kept |
 | `CADDY_LOG_FILE` | no | `/var/log/caddy/access.log` | Path to Caddy access log (must match Caddyfile) |
 | `CADDY_EXPLORE_MAX_EVENTS` | no | `200000` | Events held in memory per range; ~38 B each |
 | `GEOIP_DIR` | no | `/data/geoip` | Where the DB-IP Lite databases live |
 | `GEOIP_AUTO_UPDATE` | no | `true` | Download a new DB-IP release monthly. `false` for air-gapped hosts |
+| `BANS_ENABLED` | no | `true` | IP bans: Security API, background job and view. Sites are unchanged until they import the file |
+| `BANS_DIR` | no | `/etc/caddy/console` | Generated Caddy files; inside the Caddyfile directory |
+| `BANS_MAX` | no | `10000` | Maximum prefixes rendered into Caddy |
+| `BANS_NEVER` | no | empty | Extra protected IPs/CIDRs, comma or space separated; invalid entry stops startup |
+| `BANS_SYNC_INTERVAL` | no | `30` | Minimum seconds between CrowdSec-driven reloads (10-3600). |
+| `CROWDSEC_URL` | no | empty | LAPI URL; empty disables CrowdSec. The overlay sets `http://crowdsec:8080`. |
+| `CROWDSEC_CONSOLE_BOUNCER_KEY` | no | empty | Read-only bouncer key used only by the console. `CROWDSEC_CONSOLE_BOUNCER_KEY_FILE` reads it from a mounted file instead. |
+| `CROWDSEC_ORIGINS` | no | `crowdsec,cscli` | LAPI origins synced and shown. |
+| `CROWDSEC_POLL_INTERVAL` | no | `10` | Seconds between decision-stream polls (5-300). |
 | `GUNICORN_WORKERS` / `GUNICORN_THREADS` | no | `2` / `4` | Server process/thread counts |
 | `GUNICORN_PRELOAD` | no | `true` | Load the app once in the master. Set `false` when using `--reload` (the dev stack does) |
 

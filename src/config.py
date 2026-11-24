@@ -7,6 +7,12 @@ APP_VERSION = "0.7.0"
 
 CADDYFILE = os.environ.get("CADDYFILE_PATH", "/etc/caddy/Caddyfile")
 BACKUP_DIR = os.environ.get("BACKUP_DIR", "/backups")
+# Container-local lock files (the console's private tmpfs /tmp, shared by every
+# gunicorn worker and `docker compose exec` tool in the container). They decide
+# mutation and sync-leader exclusion; the BACKUP_DIR locks are best-effort
+# cross-container protection only, because flock on a bind mount (Docker
+# Desktop virtiofs, NFS, SMB, FUSE) does not always exclude (src/locks.py).
+LOCK_DIR = os.environ.get("LOCK_DIR", "/tmp/caddy-console-locks")
 AUDIT_LOG = os.environ.get("AUDIT_LOG", "/backups/audit.log")
 ALLOWED_DOMAIN = os.environ.get("ALLOWED_DOMAIN", "")
 ALLOWED_EMAILS = [
@@ -64,3 +70,70 @@ EXPLORE_MAX_EVENTS = int(os.environ.get("CADDY_EXPLORE_MAX_EVENTS", "200000"))
 # host without egress and drop the .mmdb files into GEOIP_DIR by hand.
 GEOIP_DIR = os.environ.get("GEOIP_DIR", "/data/geoip")
 GEOIP_AUTO_UPDATE = os.environ.get("GEOIP_AUTO_UPDATE", "true").lower() not in ("0", "false", "no")
+
+
+def bounded_int(name: str, default: int, low: int, high: int) -> int:
+    """An integer setting with server-side bounds; anything else stops startup."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError(f"{name} must be an integer between {low} and {high}, got {raw!r}") from None
+    if not low <= value <= high:
+        raise RuntimeError(f"{name} must be between {low} and {high}, got {value}")
+    return value
+
+
+# IP bans (docs/security.md). Sites are unchanged until one imports the managed
+# file, so this defaults on. BANS_DIR must be inside the Caddyfile directory and
+# visible at the same absolute path in the Caddy container.
+BANS_ENABLED = os.environ.get("BANS_ENABLED", "true").lower() not in ("0", "false", "no")
+BANS_DIR = os.environ.get("BANS_DIR", "/etc/caddy/console").rstrip("/") or "/etc/caddy/console"
+# Measured by tests/integration/bans_benchmark.py; see docs/security.md.
+BANS_MAX = bounded_int("BANS_MAX", 10000, 1, 100000)
+# Extra protected IPs/CIDRs, comma or space separated. Parsed by src/bans/protected.py
+# at app start; one invalid token refuses startup.
+BANS_NEVER = os.environ.get("BANS_NEVER", "")
+
+# CrowdSec file sync (docs/security.md#crowdsec-file-sync). Only the optional
+# docker-compose.crowdsec.yaml sets CROWDSEC_URL; empty means no CrowdSec at all.
+# src/bans/lapi.py validates the URL and origins; service.init_config() refuses
+# startup on an invalid value. The key is read at poll time, never logged.
+BANS_SYNC_INTERVAL = bounded_int("BANS_SYNC_INTERVAL", 30, 10, 3600)
+CROWDSEC_URL = os.environ.get("CROWDSEC_URL", "")
+CROWDSEC_CONSOLE_BOUNCER_KEY = os.environ.get("CROWDSEC_CONSOLE_BOUNCER_KEY", "")
+CROWDSEC_CONSOLE_BOUNCER_KEY_FILE = os.environ.get("CROWDSEC_CONSOLE_BOUNCER_KEY_FILE", "").strip()
+CROWDSEC_ORIGINS = os.environ.get("CROWDSEC_ORIGINS", "crowdsec,cscli")
+CROWDSEC_POLL_INTERVAL = bounded_int("CROWDSEC_POLL_INTERVAL", 10, 5, 300)
+# Optional machine (watcher) login, only for deleting CrowdSec decisions from
+# Security (src/bans/lapimachine.py). Unset means read-only. The password is
+# read at use time, never logged, returned or audited.
+CROWDSEC_MACHINE_ID = os.environ.get("CROWDSEC_MACHINE_ID", "")
+CROWDSEC_MACHINE_ID_FILE = os.environ.get("CROWDSEC_MACHINE_ID_FILE", "").strip()
+CROWDSEC_MACHINE_PASSWORD = os.environ.get("CROWDSEC_MACHINE_PASSWORD", "")
+CROWDSEC_MACHINE_PASSWORD_FILE = os.environ.get("CROWDSEC_MACHINE_PASSWORD_FILE", "").strip()
+
+# Phase 3, CrowdSec plugin mode (docs/security.md#crowdsec-plugin). The plugin's
+# own key (CROWDSEC_PLUGIN_BOUNCER_KEY) belongs to the Caddy container and is
+# never read here: the console only needs the secret's path, if one is used, to
+# offer the matching {file.<path>} placeholder. CADDY_ADMIN_ADDRESS is the admin
+# bind health checks and recovery use; the plugin overlay sets the fixed
+# caddy-admin address. Both are validated by src/bans/plugin.py at startup.
+CROWDSEC_PLUGIN_BOUNCER_KEY_FILE = os.environ.get("CROWDSEC_PLUGIN_BOUNCER_KEY_FILE", "").strip()
+CADDY_ADMIN_ADDRESS = os.environ.get("CADDY_ADMIN_ADDRESS", "").strip() or "0.0.0.0:2019"
+
+# Phase 4, Cloudflare trust profiles (docs/security.md#client-ip-profiles).
+# CLIENT_IP_MODE is the default profile until an operator saves one in Security;
+# src/bans/profile.py validates it at startup. Direct mode never contacts Cloudflare.
+CLIENT_IP_MODE = os.environ.get("CLIENT_IP_MODE", "direct").strip().lower() or "direct"
+CLOUDFLARE_RANGES_AUTO_UPDATE = os.environ.get(
+    "CLOUDFLARE_RANGES_AUTO_UPDATE", "true").lower() not in ("0", "false", "no")
+
+# Phase 4 country allowlist (docs/security.md, spec 4.3). Off until enabled in Security.
+# Measured against stock Caddy (docs/security.md, tests/integration/country_benchmark.py):
+# 20000 direct prefixes stay inside the budget (adapt 2 s, reload 3 s, +150 MiB, +2 ms p95),
+# so it is both the default and the highest accepted value. The warning threshold (10000)
+# lives in src/bans/country.py.
+COUNTRY_MAX_PREFIXES = bounded_int("COUNTRY_MAX_PREFIXES", 20000, 1, 20000)

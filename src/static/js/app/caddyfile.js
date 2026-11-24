@@ -4,6 +4,7 @@ import {
 } from './core.js';
 import { mountExplore } from './explore.js';
 import { mountDashboard } from './dashboard.js';
+import { mountSecurity } from './security.js';
 import { closeAllPanels } from './panels.js';
 import { navigate, pathFor, viewFromPath } from './router.js';
 import { initUserMenu } from './usermenu.js';
@@ -34,7 +35,10 @@ export async function loadCaddyfile() {
 
 /** Show a view. `push` is false when responding to the URL (initial load, Back). */
 export function showView(name, { push = true } = {}) {
-  const view = ['dashboard', 'editor', 'explore'].includes(name) ? name : 'dashboard';
+  const known = ['dashboard', 'editor', 'explore'];
+  // The Security view exists only when the server rendered it (BANS_ENABLED).
+  if (document.getElementById('tab-security')) known.push('security');
+  const view = known.includes(name) ? name : 'dashboard';
   document.querySelectorAll('.tab').forEach(t => {
     if (t.dataset.view === view) t.setAttribute('aria-current', 'page');
     else t.removeAttribute('aria-current');
@@ -51,6 +55,7 @@ export function showView(name, { push = true } = {}) {
   if (push) navigate(view, view === 'explore' ? location.search : '');
   if (view === 'dashboard') mountDashboard();
   if (view === 'explore') mountExplore();
+  if (view === 'security') mountSecurity();
 }
 
 export function syncViewFromUrl() {

@@ -1,0 +1,74 @@
+# Optional CrowdSec plugin add-on (docs/security.md#crowdsec-plugin). Needs the
+# CrowdSec overlay first:
+#
+#   docker compose -f docker-compose.prod.yaml -f docker-compose.crowdsec.yaml \
+#     -f docker-compose.crowdsec-plugin.yaml up -d
+#   crowdsec/check-plugin-isolation.sh -- -f docker-compose.prod.yaml \
+#     -f docker-compose.crowdsec.yaml -f docker-compose.crowdsec-plugin.yaml
+#
+# Works with the prod, internal and tunnel stacks; the NAS stack uses
+# docker-compose.nas.crowdsec-plugin.yaml. It replaces only the Caddy image,
+# puts Caddy on crowdsec-lapi so the plugin can poll LAPI, and pins Caddy to
+# 172.30.250.2 on caddy-admin. Before the first start, the Caddyfile must bind
+# the admin API there and nowhere else:
+#
+#   {
+#       admin 172.30.250.2:2019 {
+#           origins caddy:2019 172.30.250.2:2019
+#       }
+#   }
+#
+# The image's entrypoint refuses to start Caddy otherwise. No port is
+# published; CrowdSec and cloudflared never join caddy-admin and run without
+# capabilities (no raw frames or routes towards the admin address). A stack whose
+# caddy-admin network already exists without this subnet must be taken down
+# once (docker compose ... down, without -v) so Compose can recreate it.
+services:
+  caddy:
+    # An immutable reference: ghcr.io/viralone/caddy-crowdsec@sha256:<digest>
+    # or ghcr.io/viralone/caddy-crowdsec:sha-<commit>.
+    image: ${CADDY_PLUGIN_IMAGE:?Set CADDY_PLUGIN_IMAGE to ghcr.io/viralone/caddy-crowdsec@sha256:<digest> or :sha-<commit>}
+    environment:
+      CADDY_ADMIN_ADDRESS: 172.30.250.2:2019
+      CADDY_ADMIN_SUBNET: 172.30.250.0/29
+      # A key of its own, never the console's: LAPI stream cursors belong to a
+      # bouncer identity. Registered below as the bouncer "caddy_plugin".
+      CROWDSEC_PLUGIN_BOUNCER_KEY: ${CROWDSEC_PLUGIN_BOUNCER_KEY:?Set CROWDSEC_PLUGIN_BOUNCER_KEY (python -c "import secrets; print(secrets.token_hex(32))"), different from CROWDSEC_CONSOLE_BOUNCER_KEY}
+      CROWDSEC_PLUGIN_BOUNCER_KEY_FILE: ""
+    networks:
+      caddy-admin:
+        ipv4_address: 172.30.250.2
+      crowdsec-lapi: {}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://172.30.250.2:2019/config/"]
+
+  caddy-console:
+    environment:
+      CADDY_API_URL: http://172.30.250.2:2019
+      CADDY_ADMIN_ADDRESS: 172.30.250.2:2019
+      # Environment-key mode. For a file secret see docs/security.md.
+      CROWDSEC_PLUGIN_BOUNCER_KEY_FILE: ""
+
+  crowdsec:
+    # Caddy now shares crowdsec-lapi with CrowdSec. Linux accepts a packet for
+    # any local address on any interface, so a peer that can write raw frames
+    # (NET_RAW) or routes (NET_ADMIN) could address 172.30.250.2:2019 through
+    # Caddy's crowdsec-lapi interface. CrowdSec needs no capability at all;
+    # crowdsec/check-plugin-isolation.sh checks its bounding set.
+    cap_drop: [ALL]
+    environment:
+      BOUNCER_KEY_caddy_plugin: ${CROWDSEC_PLUGIN_BOUNCER_KEY:?Set CROWDSEC_PLUGIN_BOUNCER_KEY}
+
+networks:
+  # Caddy <-> console only. The fixed address lets the Caddyfile bind the
+  # admin API to this network alone.
+  caddy-admin:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.250.0/29
+          # Dynamic leases (the console) come from .4-.7 only, so they
+          # never take Caddy's fixed .2 before Caddy starts.
+          ip_range: 172.30.250.4/30
+  crowdsec-lapi:
+    internal: true

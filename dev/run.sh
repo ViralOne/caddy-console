@@ -43,7 +43,7 @@ case "${1:-up}" in
     exit 1
     ;;
   down)
-    "${COMPOSE[@]}" down -v
+    "${COMPOSE[@]}" down -v --remove-orphans
     rm -rf dev/run
     ;;
   logs)

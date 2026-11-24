@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 
 const SRC = path.join(import.meta.dirname, '..', 'src', 'static', 'js', 'app', 'ip-info.js');
-const { asnLine, flagOf, kindLabel, kindNote, placeLine, placement, sourceLine } = await import(SRC);
+const { inDialog, keepsIpPopover, asnLine, flagOf, kindLabel, kindNote, placeLine, placement, sourceLine } = await import(SRC);
 
 let passed = 0;
 const check = (name, fn) => { fn(); passed++; console.log(`  ok  ${name}`); };
@@ -55,6 +55,22 @@ check('flips above near the bottom of the screen', () => {
 check('never runs off the right edge', () => {
   const p = placement({ top: 100, bottom: 120, left: 1300 }, { width: 1400, height: 900 });
   assert.equal(p.left, 1400 - 340 - 8);
+});
+
+// A fake event target: closest(selector) finds an ancestor matching any listed selector.
+const at = (...ancestors) => ({ closest: (sel) => (sel.split(',').map(s => s.trim()).some(s => ancestors.includes(s)) ? {} : null) });
+check('clicks inside the popover, its trigger or a modal dialog keep the IP popover open', () => {
+  assert.equal(keepsIpPopover(at('.ip-pop')), true);
+  assert.equal(keepsIpPopover(at('.field-value-click')), true);
+  assert.equal(keepsIpPopover(at('dialog')), true);        // Ban/Unban dialogs live under <body>
+  assert.equal(keepsIpPopover(at('.stream')), false);
+  assert.equal(keepsIpPopover(null), false);
+  assert.equal(keepsIpPopover({}), false);                 // document or window: no closest()
+});
+check('Esc and scroll inside a dialog belong to the dialog', () => {
+  assert.equal(inDialog(at('dialog')), true);
+  assert.equal(inDialog(at('.ip-pop')), false);
+  assert.equal(inDialog(undefined), false);
 });
 
 console.log(`\n${passed} checks passed\n`);

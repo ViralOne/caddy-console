@@ -1,0 +1,238 @@
+# NAS + CrowdSec (file sync) in ONE self-contained file (no repo
+# checkout; acquisition and parser are inline `configs`). Can be pasted as a single stack.
+# Env vars: CADDY_CONSOLE_IMAGE (e.g. ghcr.io/viralone/caddy-console:pr-14),
+# CROWDSEC_CONSOLE_BOUNCER_KEY (python -c "import secrets; print(secrets.token_hex(32))"),
+# plus the NAS vars (CLOUDFLARE_*, AUTH_MODE, SECRET_KEY, SERVER_URL, ...).
+# Optional: CROWDSEC_MACHINE_ID/_PASSWORD, CROWDSEC_ORIGINS, CROWDSEC_POLL_INTERVAL.
+# UI unban (once): docker exec <crowdsec> cscli machines add caddy-console-writer --password '<pw>' -f /dev/null
+#   then set CROWDSEC_MACHINE_ID=caddy-console-writer and CROWDSEC_MACHINE_PASSWORD=<pw>.
+services:
+  caddy:
+    image: ghcr.io/caddybuilds/caddy-cloudflare:2.11.9-alpine
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+
+    environment:
+      CLOUDFLARE_API_TOKEN: "${CLOUDFLARE_API_TOKEN}"
+
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+      - "8443:8443"
+
+    volumes:
+      - /volume2/docker/caddy/caddy:/etc/caddy:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - /volume2/docker/caddy/cloudflare:/cloudflare
+      - caddy-logs:/var/log/caddy
+
+    networks:
+      - caddy-public
+      - caddy-admin
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy-editor:
+    image: ${CADDY_CONSOLE_IMAGE:?Set CADDY_CONSOLE_IMAGE, e.g. ghcr.io/viralone/caddy-console:pr-14}
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+
+    environment:
+      AUTH_MODE: "${AUTH_MODE}"
+      SECRET_KEY: "${SECRET_KEY}"
+      GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID}"
+      GOOGLE_CLIENT_SECRET: "${GOOGLE_CLIENT_SECRET}"
+      SERVER_URL: "${SERVER_URL}"
+      CF_ACCESS_TEAM_DOMAIN: "${CF_ACCESS_TEAM_DOMAIN}"
+      CF_ACCESS_AUD: "${CF_ACCESS_AUD}"
+      ALLOWED_DOMAIN: "${ALLOWED_DOMAIN}"
+      ALLOWED_EMAILS: "${ALLOWED_EMAILS}"
+      SESSION_TIMEOUT_HOURS: "8"
+      SESSION_COOKIE_SECURE: "true"
+      CADDY_API_URL: "http://caddy:2019"
+      CADDYFILE_PATH: "/etc/caddy/Caddyfile"
+      CADDY_LOG_FILE: "/var/log/caddy/access.log"
+      BACKUP_DIR: "/backups"
+      BACKUP_KEEP: "50"
+      AUDIT_LOG: "/backups/audit.log"
+      AUDIT_LOG_MAX_BYTES: "5242880"
+      GEOIP_DIR: "/data/geoip"
+      GEOIP_AUTO_UPDATE: "true"
+      BANS_ENABLED: "true"
+      BANS_DIR: "/etc/caddy/console"
+      BANS_MAX: "10000"
+      BANS_NEVER: ""
+      CLIENT_IP_MODE: "direct"
+      CLOUDFLARE_RANGES_AUTO_UPDATE: "true"
+      COUNTRY_MAX_PREFIXES: "20000"
+      CADDY_EXPLORE_MAX_EVENTS: "200000"
+      GUNICORN_WORKERS: "2"
+      GUNICORN_THREADS: "4"
+      GUNICORN_TIMEOUT: "90"
+      GUNICORN_PRELOAD: "true"
+      CROWDSEC_URL: http://crowdsec:8080
+      CROWDSEC_CONSOLE_BOUNCER_KEY: ${CROWDSEC_CONSOLE_BOUNCER_KEY:?Set CROWDSEC_CONSOLE_BOUNCER_KEY}
+      CROWDSEC_ORIGINS: ${CROWDSEC_ORIGINS:-crowdsec,cscli}
+      CROWDSEC_POLL_INTERVAL: ${CROWDSEC_POLL_INTERVAL:-10}
+      BANS_SYNC_INTERVAL: ${BANS_SYNC_INTERVAL:-30}
+      # Optional CrowdSec machine login so Security can unban decisions.
+      CROWDSEC_MACHINE_ID: ${CROWDSEC_MACHINE_ID:-}
+      CROWDSEC_MACHINE_PASSWORD: ${CROWDSEC_MACHINE_PASSWORD:-}
+
+    volumes:
+      - /volume2/docker/caddy/caddy:/etc/caddy
+      - caddy-backups:/backups
+      - /volume2/docker/caddy/cloudflare:/cloudflare:ro
+      - caddy-logs:/var/log/caddy:ro
+      - caddy-geoip:/data/geoip
+
+    networks:
+      - caddy-admin
+      - console-ui
+      - crowdsec-lapi
+
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://localhost:9090/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  cloudflared-caddy:
+    image: cloudflare/cloudflared:2026.11.1
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${CLOUDFLARE_TUNNEL_TOKEN}"
+
+    networks:
+      - console-ui
+
+    depends_on:
+      caddy-editor:
+        condition: service_healthy
+
+  crowdsec:
+    # Reviewed tag plus its immutable multi-arch index digest.
+    image: crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    environment:
+      COLLECTIONS: crowdsecurity/caddy
+      PARSERS: crowdsecurity/whitelists
+      DISABLE_ONLINE_API: "true"
+      BOUNCER_KEY_caddy_console: ${CROWDSEC_CONSOLE_BOUNCER_KEY:?Set CROWDSEC_CONSOLE_BOUNCER_KEY}
+    volumes:
+      - crowdsec-config:/etc/crowdsec
+      - crowdsec-data:/var/lib/crowdsec/data
+      - caddy-logs:/var/log/caddy:ro
+    configs:
+      - source: crowdsec-acquis-caddy
+        target: /etc/crowdsec/acquis.d/caddy.yaml
+        mode: 0444
+      - source: crowdsec-parser-safe-fields
+        target: /etc/crowdsec/parsers/s02-enrich/caddy-console-safe-fields.yaml
+        mode: 0444
+    networks:
+      - crowdsec-lapi
+      - crowdsec-egress
+    healthcheck:
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+configs:
+  crowdsec-acquis-caddy:
+    content: |
+      # Caddy Console's CrowdSec acquisition (docs/security.md#crowdsec-file-sync).
+      # Only the live file: rotated archives (access-*.log) are never replayed.
+      filenames:
+        - /var/log/caddy/access.log
+      labels:
+        type: caddy
+
+  crowdsec-parser-safe-fields:
+    content: |
+      # Caddy Console deletes request>headers and resp_headers from the access log
+      # (they carry cookies and tokens), so crowdsecurity/caddy-logs finds no
+      # User-Agent and no Www-Authenticate header. The console's "CrowdSec: log
+      # fields for detection" snippet appends two safe top-level fields instead:
+      #   user_agent      the request's User-Agent
+      #   auth_challenge  the response's Www-Authenticate (set by basic_auth on a 401)
+      # This enricher maps them to what the shipped scenarios read:
+      #   crowdsecurity/http-bad-user-agent  evt.Parsed.http_user_agent
+      #   crowdsecurity/http-generic-bf      evt.Meta.sub_type == 'auth_fail'
+      # (the same rule caddy-logs applies to the unfiltered Www-Authenticate header).
+      # It never sees Cookie, Authorization or a body: those are not in the log.
+      name: caddy-console/caddy-safe-fields
+      description: "Safe User-Agent and Basic auth failure fields from Caddy Console's filtered access log"
+      filter: "evt.Meta.log_type == 'http_access-log' && evt.Unmarshaled.caddy != nil && evt.Unmarshaled.caddy.request != nil"
+      statics:
+        - parsed: http_user_agent
+          expression: "evt.Parsed.http_user_agent not in ['', nil] ? evt.Parsed.http_user_agent : get(evt.Unmarshaled.caddy, 'user_agent')"
+        - meta: http_user_agent
+          expression: evt.Parsed.http_user_agent
+        - meta: sub_type
+          expression: "evt.Meta.sub_type not in ['', nil] ? evt.Meta.sub_type : (evt.Meta.http_status == '401' && get(evt.Unmarshaled.caddy, 'auth_challenge') != nil && evt.Unmarshaled.caddy.auth_challenge startsWith 'Basic' ? 'auth_fail' : nil)"
+
+
+networks:
+  caddy-public:
+  caddy-admin:
+    internal: true
+  console-ui:
+  crowdsec-lapi:
+    internal: true
+  crowdsec-egress:
+
+volumes:
+  caddy-data:
+  caddy-config:
+  caddy-backups:
+  caddy-logs:
+  caddy-geoip:
+  crowdsec-config:
+  crowdsec-data:

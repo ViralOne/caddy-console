@@ -15,6 +15,8 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # caddy-crowdsec-bouncer version in the plugin image tags; must equal caddy-plugin/*/go.mod.
+  PLUGIN_VERSION: "0.15.0"
 
 jobs:
   test-python:
@@ -57,8 +59,109 @@ jobs:
             exit 1
           }
 
+  test-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Baseline Compose files render without CrowdSec
+        run: ./dev/check-compose.sh
+
+      - name: Stock Caddy integration (IP bans)
+        run: ./dev/bans-it.sh
+
+      - name: CrowdSec overlay integration (file sync)
+        run: ./dev/crowdsec-it.sh
+
+      - name: Logs on failure
+        if: failure()
+        # The overlay file needs a bouncer key to render; any value does for
+        # reading logs. crowdsec-it.sh also prints the crowdsec and console
+        # logs itself before it removes the crowdsec container.
+        env:
+          CROWDSEC_CONSOLE_BOUNCER_KEY: logs-only-placeholder
+        run: |
+          docker compose -f docker-compose.dev.yaml logs --tail 200
+          docker compose -f docker-compose.dev.yaml -f docker-compose.crowdsec.yaml \
+            logs --tail 200 crowdsec caddy-console || true
+
+      - name: Stop the dev stack
+        if: always()
+        run: ./dev/run.sh down
+
+  test-plugin:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [crowdsec, crowdsec-cloudflare]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Plugin version in the tags matches go.mod
+        run: |
+          grep -Eq "^\s*github.com/hslatman/caddy-crowdsec-bouncer v${PLUGIN_VERSION}$" "caddy-plugin/${{ matrix.variant }}/go.mod" || {
+            echo "::error::PLUGIN_VERSION ${PLUGIN_VERSION} is not the version in caddy-plugin/${{ matrix.variant }}/go.mod"
+            exit 1
+          }
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the plugin image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: caddy-plugin
+          file: caddy-plugin/Dockerfile
+          build-args: VARIANT=${{ matrix.variant }}
+          load: true
+          push: false
+          tags: caddy-${{ matrix.variant }}:ci
+          cache-from: type=gha,scope=plugin-${{ matrix.variant }}
+          cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=plugin-{0}', matrix.variant) || '' }}
+
+      - name: Record and check the modules
+        run: |
+          docker run --rm caddy-${{ matrix.variant }}:ci caddy list-modules --json --skip-standard > modules.json
+          python3 dev/check-plugin-modules.py ${{ matrix.variant }} < modules.json
+          docker run --rm caddy-${{ matrix.variant }}:ci caddy version
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plugin-modules-${{ matrix.variant }}
+          path: modules.json
+
+      - name: Adapt every shipped plugin snippet with the built binary
+        run: ./dev/adapt-plugin-snippets.sh caddy-${{ matrix.variant }}:ci
+
+      - name: SBOM
+        uses: anchore/sbom-action@dfcb83b97731532d72be422cbc51ee64adb6fd56 # v0.24.4
+        with:
+          image: caddy-${{ matrix.variant }}:ci
+          format: spdx-json
+          output-file: sbom-${{ matrix.variant }}.spdx.json
+          artifact-name: plugin-sbom-${{ matrix.variant }}
+
+      - name: Vulnerability scan
+        uses: anchore/scan-action@11983a512817154c80a9db660c1a184be7513ed6 # v7.4.3
+        with:
+          image: caddy-${{ matrix.variant }}:ci
+          fail-build: true
+          severity-cutoff: critical
+          only-fixed: true
+          output-format: table
+
+      - name: Plugin overlay integration
+        if: matrix.variant == 'crowdsec'
+        env:
+          PLUGIN_IMAGE: caddy-crowdsec:ci
+        run: ./dev/crowdsec-plugin-it.sh
+
   build-and-push:
-    needs: [test-python, test-js]
+    needs: [test-python, test-js, test-integration, test-plugin]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -72,7 +175,7 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GHCR
-        if: github.event_name == 'push'
+        if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
@@ -86,14 +189,66 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=sha
-            type=raw,value=latest
+            type=ref,event=pr
+            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
 
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          push: ${{ github.event_name == 'push' }}
+          push: ${{ (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max' || '' }}
+
+  publish-plugin:
+    # Pushes and same-repo PRs publish; PRs from forks never get registry access.
+    if: (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
+    needs: [test-python, test-js, test-integration, test-plugin]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        variant: [crowdsec, crowdsec-cloudflare]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Image name
+        run: echo "PLUGIN_IMAGE=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/caddy-${{ matrix.variant }}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.PLUGIN_IMAGE }}
+          tags: |
+            type=raw,value=2.11.9-crowdsec-${{ env.PLUGIN_VERSION }},enable=${{ github.event_name == 'push' }}
+            type=ref,event=pr
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: caddy-plugin
+          file: caddy-plugin/Dockerfile
+          build-args: VARIANT=${{ matrix.variant }}
+          push: true
+          sbom: true
+          provenance: mode=max
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=plugin-${{ matrix.variant }}
+          cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope=plugin-{0}', matrix.variant) || '' }}

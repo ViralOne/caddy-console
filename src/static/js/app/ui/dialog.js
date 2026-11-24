@@ -77,3 +77,60 @@ export function alertDialog({ title, body = '', detail = null, okLabel = 'OK' })
   ft.append(ok);
   return show(d, ok, (finish) => { ok.addEventListener('click', () => finish(undefined)); }, undefined);
 }
+
+/** A small form in a dialog. Resolves to {name: value} on confirm, or null.
+ *  `validate(values)` returns an error message to show, or null to accept. */
+export function formDialog({ title, body = '', fields, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false, validate = null }) {
+  const { d, ft } = build({ title, body });
+  const bd = el('div', 'dlg-bd dlg-form');
+  const inputs = {};
+  for (const f of fields) {
+    const id = 'fld-' + Math.random().toString(36).slice(2, 9);
+    const label = el('label', 'dlg-label', f.label);
+    label.htmlFor = id;
+    let input;
+    if (f.type === 'select') {
+      input = el('select');
+      for (const o of f.options) {
+        const opt = el('option', '', o.label);
+        opt.value = o.value;
+        input.append(opt);
+      }
+    } else if (f.type === 'textarea') {
+      input = el('textarea');
+      input.rows = 3;
+    } else {
+      input = el('input');
+      input.type = 'text';
+      input.spellcheck = false;
+      input.autocomplete = 'off';
+    }
+    input.id = id;
+    input.name = f.name;
+    if (f.value != null) input.value = f.value;
+    inputs[f.name] = input;
+    bd.append(label, input);
+    if (f.hint) bd.append(el('p', 'dlg-hint', f.hint));
+  }
+  const error = el('p', 'dlg-error');
+  error.setAttribute('role', 'alert');
+  error.hidden = true;
+  bd.append(error);
+  d.insertBefore(bd, ft);
+  const cancel = button(cancelLabel, 'btn-quiet');
+  const ok = button(confirmLabel, danger ? 'btn-danger-solid' : 'btn-primary');
+  ft.append(cancel, ok);
+  return show(d, inputs[fields[0].name], (finish) => {
+    const submit = () => {
+      const values = Object.fromEntries(Object.entries(inputs).map(([k, v]) => [k, v.value]));
+      const problem = validate ? validate(values) : null;
+      if (problem) { error.textContent = problem; error.hidden = false; return; }
+      finish(values);
+    };
+    ok.addEventListener('click', submit);
+    cancel.addEventListener('click', () => finish(null));
+    d.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); submit(); }
+    });
+  }, null);
+}

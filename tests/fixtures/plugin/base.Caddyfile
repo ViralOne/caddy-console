@@ -1,0 +1,16 @@
+{
+	admin 172.30.250.2:2019 {
+		origins caddy:2019 172.30.250.2:2019
+	}
+}
+
+plugin.example.com {
+	import /etc/caddy/console/bans-manual*.caddy
+	respond "ok" 200
+}
+
+file.example.com {
+	import /etc/caddy/console/bans-manual*.caddy
+	import /etc/caddy/console/bans-crowdsec*.caddy
+	respond "ok" 200
+}

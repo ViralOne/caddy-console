@@ -67,3 +67,15 @@ export function placement(anchor, viewport) {
   if (below >= 420 || below >= above) return { left, top: anchor.bottom + GAP, maxHeight: below };
   return { left, bottom: viewport.height - anchor.top + GAP, maxHeight: above };
 }
+
+/** Whether a document-level click should leave the IP popover open: it landed
+ * inside the popover, on its trigger, or inside one of the app's modal dialogs
+ * (Ban/Unban), which ui/dialog.js appends to <body>, outside the popover. */
+export function keepsIpPopover(target) {
+  return !!(target && typeof target.closest === 'function' && target.closest('.ip-pop, .field-value-click, dialog'));
+}
+
+/** Whether a key or scroll event came from inside a modal dialog. */
+export function inDialog(target) {
+  return !!(target && typeof target.closest === 'function' && target.closest('dialog'));
+}

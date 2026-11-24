@@ -58,6 +58,56 @@ No Caddy binary and no network needed: the admin API is faked and `caddy fmt` /
 `caddy validate` are patched out. GeoIP tests build tiny `.mmdb` fixtures with
 `tests/_mmdb.py` and fake the DB-IP download.
 
+The IP-ban integration suite needs Docker and runs against the stock Caddy in
+the dev stack (CI runs it too):
+
+```bash
+./dev/bans-it.sh   # brings the stack up, runs tests/integration/bans_caddy_it.py
+                   # inside the console container, then checks host recovery
+```
+
+It loads its own Caddyfile from `dev/run/itest/` and restores the dev one when
+it finishes.
+
+The CrowdSec overlay has its own suite:
+
+```bash
+./dev/crowdsec-it.sh   # dev stack + docker-compose.crowdsec.yaml, runs tests/integration/crowdsec_it.py
+```
+
+It needs network access to the CrowdSec Hub and generates its own bouncer key.
+
+### Plugin images
+
+The optional CrowdSec plugin images (`caddy-plugin/`, see
+[CrowdSec plugin](security.md#crowdsec-plugin)) have their own tools. All of
+them need Docker; the Go commands run inside the pinned `caddy:2.11.9-builder`
+image, so no local Go is needed. Set `GOPROXY` (for example `GOPROXY=direct`)
+if `proxy.golang.org` is not reachable from your network; CI uses the default.
+
+```bash
+./dev/plugin-go.sh test                       # entrypoint preflight tests (go vet, go test)
+./dev/plugin-go.sh tidy crowdsec              # refresh go.mod/go.sum of a variant after a version bump
+./dev/build-plugin-image.sh crowdsec          # -> caddy-crowdsec:local, then checks its modules
+./dev/build-plugin-image.sh crowdsec-cloudflare
+tests/integration/make_plugin_fixtures.sh     # regenerate tests/fixtures/bans/adapted-plugin-layouts.json
+./dev/adapt-plugin-snippets.sh caddy-crowdsec:local   # adapt every shipped plugin snippet, both key modes
+./dev/crowdsec-plugin-it.sh                   # plugin overlay end to end (builds caddy-crowdsec:local if missing)
+```
+
+`./dev/crowdsec-plugin-it.sh` runs its own Compose project
+(`caddy-console-plugin-it`) with a fake LAPI, the console image and client
+containers at documentation addresses (direct, proxied and tunnel peers). It
+uses throwaway keys and removes its containers and `dev/run/plugin-it*` on
+exit. `PLUGIN_IMAGE=<image>` tests another build.
+
+Run `make_plugin_fixtures.sh` after a plugin or Caddy bump. A plugin version
+change updates both `caddy-plugin/*/go.mod` files, `PLUGIN_VERSION` in
+`.github/workflows/docker-publish.yml` and the tag examples in
+`docs/security.md`. It must pass the plugin integration suite before merge,
+because that suite proves the plugin uses Caddy's resolved client IP in the
+direct, proxied and tunnel fixtures.
+
 ## Front-end build
 
 App code is plain ES modules loaded straight by the browser — **no build step**,

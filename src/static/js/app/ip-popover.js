@@ -6,6 +6,11 @@
 import { h, htm, useEffect, useState } from '../explore-vendor.js';
 import { setTermState } from './explore-query.js';
 import { Icon } from './icons.js';
+import { banAddress, unbanRecords } from './ban-dialog.js';
+import { requestJson } from './security-api.js';
+import { neverBan } from './security-allowlist.js';
+import { confirmDialog } from './ui/dialog.js';
+import { banState, errorMessage } from './security-model.js';
 import { asnLine, kindLabel, kindNote, placeLine, placement, sourceLine } from './ip-info.js';
 
 const html = htm.bind(h);
@@ -17,6 +22,38 @@ function stamp(ts) {
 }
 
 const chipClass = (v) => ({ '2xx': 's2', '3xx': 's3', '4xx': 's4', '5xx': 's5' }[v] || 'so');
+
+const bansOn = () => typeof document !== 'undefined' && document.body?.dataset.bans === 'on';
+
+async function neverBanIp(ip, refresh) {
+  const ok = await confirmDialog({ title: `Never ban ${ip}?`, body: 'It is added to the never-ban list in Security: new bans are refused and existing bans covering it stop being enforced. Caddy reloads.', confirmLabel: 'Never ban' });
+  if (ok) refresh(await neverBan(ip));
+}
+
+function BanSection({ ip }) {
+  const [look, setLook] = useState(null);
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    let live = true;
+    requestJson('/api/bans?covering=' + encodeURIComponent(ip)).then(res => {
+      if (live) setLook(res.ok ? res.body : { error: errorMessage(res.body, res.status) });
+    });
+    return () => { live = false; };
+  }, [ip, tick]);
+  if (!look) return null;
+  if (look.error) return html`<div class="sect muted small">${look.error}</div>`;
+  const s = banState(look);
+  const refresh = (body) => { if (body) setTick(t => t + 1); };
+  return html`
+    <div class="sect ban-sect">
+      ${s.banned && html`<span class="ban-badge"><${Icon} name="shield" size=${12} />Banned</span>`}
+      ${s.coveredText && html`<span class="muted small">${s.coveredText}</span>`}
+      ${s.protectedText && html`<span class="muted small">${s.protectedText}</span>`}
+      ${s.canBan && html`<button class="btn sm" type="button" onClick=${async () => refresh(await banAddress(ip))}><${Icon} name="shield" size=${14} />Ban…</button>`}
+      ${s.canUnban && html`<button class="btn sm" type="button" onClick=${async () => refresh(await unbanRecords(s.exact, ip))}>Unban</button>`}
+      ${s.canNeverBan && html`<button class="btn sm btn-quiet" type="button" onClick=${() => neverBanIp(ip, refresh)}>Never ban this IP</button>`}
+    </div>`;
+}
 
 export function IpPopover({ ip, anchor, from, to, query, onQuery, onCopy, onClose }) {
   const [info, setInfo] = useState(null);
@@ -100,6 +137,7 @@ export function IpPopover({ ip, anchor, from, to, query, onQuery, onCopy, onClos
                         onClick=${() => only({ key, value: r.value })}><span>${r.value}</span><span>${r.count.toLocaleString()}</span></button></li>`)}</ol>
                 </div>`)}
           </div>`}`}
+      ${bansOn() && info && info.kind === 'public' && html`<${BanSection} ip=${ip} />`}
       <div class="sect acts">
         <button class="btn btn-primary sm" type="button" onClick=${() => only(null)}><${Icon} name="filter" size=${14} />Only this IP</button>
         <button class="btn sm" type="button" onClick=${() => onQuery(setTermState(query, 'client', ip, 'exclude'))}><${Icon} name="minus-circle" size=${14} />Exclude</button>

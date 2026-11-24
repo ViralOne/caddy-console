@@ -13,4 +13,6 @@ if __name__ == "__main__":
     debug = os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
     from src.geoip_update import start_background
     start_background()
+    from src.bans.jobs import start_background as start_bans_jobs
+    start_bans_jobs()
     app.run(host="127.0.0.1", port=9090, debug=debug)
