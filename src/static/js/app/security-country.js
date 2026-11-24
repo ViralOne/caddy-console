@@ -56,7 +56,7 @@ export function CountrySection({ info, onDone, onCopy }) {
       ${(info.warnings || []).map(w => html`<${Alert} tone="warn" key=${w}>${w}</${Alert}>`)}
       <form class="sec-country-form" onSubmit=${save} aria-label="Country policy">
         <div class="form-row">
-          <${Check} checked=${enabled} disabled=${!info.env_enabled} onChange=${e => setEnabled(e.currentTarget.checked)}>Enable country policy</${Check}>
+          <${Check} checked=${enabled} onChange=${e => setEnabled(e.currentTarget.checked)}>Enable country policy</${Check}>
           ${cloudflare && html`
             <${Check} checked=${confirmed} onChange=${e => setConfirmed(e.currentTarget.checked)}>I confirmed that IP geolocation is on for this Cloudflare zone (it sends CF-IPCountry)</${Check}>`}
         </div>

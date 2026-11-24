@@ -440,7 +440,6 @@ export function countryState(info) {
   const s = info.summary || {};
   if (info.corrupt) return { tone: 'crit', title: 'Country policy file is unreadable', detail: info.corrupt };
   if (info.hold) return { tone: 'warn', title: 'geo.caddy differs from state', detail: 'The file was changed outside the console. Save the policy again to regenerate it.' };
-  if (!info.env_enabled) return { tone: 'none', title: 'Country policy is disabled for this deployment', detail: 'Set COUNTRY_POLICY_ENABLED=true to enforce it.' };
   if (!info.effective) return { tone: 'none', title: 'Country policy is off', detail: '' };
   if (info.error) return { tone: 'crit', title: 'Country policy cannot be rendered', detail: info.error.message };
   if (info.shape === 'cloudflare' && !info.cloudflare_geolocation_confirmed) return { tone: 'warn', title: 'Cloudflare IP geolocation is not confirmed', detail: 'Confirm that Cloudflare sends CF-IPCountry for this zone; until then the policy is not reported healthy.' };

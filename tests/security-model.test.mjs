@@ -380,10 +380,11 @@ check('prefix counts, warning and cap wording', () => {
   assert.match(M.countryPrefixText({ ...s, prefixes: { v4: 9000, v6: 2000, total: 11000 } }), /Above 10000.*Cloudflare WAF/);
   assert.equal(M.countryPrefixText({ prefixes: {} }), '');
 });
-check('country state: off, not enabled here, unconfirmed Cloudflare, live mismatch, healthy', () => {
-  const base = { env_enabled: true, effective: true, shape: 'direct', countries: ['RO'], present: true, summary: { healthy: true, live_ok: true } };
+check('country state: off, unconfirmed Cloudflare, live mismatch, healthy', () => {
+  const base = { effective: true, shape: 'direct', countries: ['RO'], present: true, summary: { healthy: true, live_ok: true } };
   assert.deepEqual([M.countryState(base).tone, M.countryState(base).title], ['ok', 'Allowing 1 country']);
-  assert.equal(M.countryState({ ...base, env_enabled: false }).tone, 'none');
+  // The UI toggle is the only switch now: a stray env_enabled: false no longer reads as "disabled for this deployment".
+  assert.equal(M.countryState({ ...base, env_enabled: false }).tone, 'ok');
   assert.equal(M.countryState({ ...base, effective: false }).title, 'Country policy is off');
   assert.equal(M.countryState({ ...base, shape: 'cloudflare', cloudflare_geolocation_confirmed: false, summary: { healthy: false } }).title, 'Cloudflare IP geolocation is not confirmed');
   assert.equal(M.countryState({ ...base, summary: { healthy: false, live_ok: false } }).title, 'Caddy runs a different country policy');
