@@ -222,13 +222,12 @@ def _expired_events(removed) -> list:
     return events
 
 
-def _after_commit(previous_raw, corrupt) -> None:
-    """Under the lock, once a change committed: keep the replaced state as a
-    restore choice (spec 1.6) and clear a corrupt-state report it replaced.
-    A transaction that left bans.json as it was adds no snapshot."""
+def _after_commit(corrupt) -> None:
+    """Under the lock, once a change committed: keep the bans.json just
+    committed as a restore choice (spec 1.6), so a later corruption loses
+    nothing, and clear a corrupt-state report it replaced."""
     try:
-        if previous_raw != fsio.read_bytes(store.STATE_PATH):
-            store.save_snapshot(previous_raw)
+        store.save_snapshot(fsio.read_bytes(store.STATE_PATH))
     except OSError as e:
         log.warning("Could not keep a bans.json snapshot: %s", e)
     if corrupt:
@@ -256,7 +255,6 @@ def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt
                 return _error("state_degraded", f"{e}. The last generated policy stays enforced; "
                               "open Security to recover.", 503, recovery=True)
             corrupt, state = e, store.State()
-        previous_raw = state.raw
         version = _corrupt_version(corrupt) if corrupt else state.version
         holds = {} if corrupt else {k: v for k, v in _holds(state).items() if k not in force}
         now = store.utc_now()
@@ -276,7 +274,7 @@ def _transact(actor, client, mutate, *, source="manual", force=(), allow_corrupt
         outcome = txn.apply_locked(changes, actor=actor, source=source,
                                    audit_events=_expired_events(expired) + result.audit)
         if outcome.ok:
-            _after_commit(previous_raw, corrupt)
+            _after_commit(corrupt)
     body = {**_outcome_body(outcome), **result.body}
     if outcome.ok and holds:
         body["enforcement"] = "held"
@@ -579,7 +577,6 @@ def expire_tick(now=None) -> str:
             return "corrupt"
         now = now or store.utc_now()
         holds = _holds(state)
-        previous_raw = state.raw
         removed = store.prune_expired(state, now, sources=[n for n in render.SOURCES if n not in holds])
         aged = store.prune_management(state, now)
         if not removed and not aged:
@@ -590,5 +587,5 @@ def expire_tick(now=None) -> str:
             return "capacity_exceeded"      # BANS_MAX was lowered below the stored bans; never drop one to fit
         outcome = txn.apply_locked(changes, actor="system", source="expiry", audit_events=_expired_events(removed))
         if outcome.ok:
-            _after_commit(previous_raw, None)
+            _after_commit(None)
     return "applied" if outcome.ok else outcome.code

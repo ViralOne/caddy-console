@@ -200,23 +200,54 @@ class CorruptStateTest(ServiceCase):
         self.assertEqual(service.list_bans()[1], 503)
         self.assertEqual(policy(), before)
 
-    def test_restore_backup_then_reapply(self):
-        self.ban("203.0.113.7")
-        self.ban("192.0.2.1")                       # snapshot of the one-ban state is kept
-        self.corrupt()
+    def restore(self, backup_id):
         info = service.recovery_info()
         self.assertEqual((info["kind"], info["actions"]), ("state_corrupt", ["restore_backup"]))
-        body, status = service.recovery_post({"recovery_id": info["recovery_id"], "action": "restore_backup",
-                                              "backup_id": info["backups"][0]["id"]}, "op@example.com")
+        return service.recovery_post({"recovery_id": info["recovery_id"], "action": "restore_backup",
+                                      "backup_id": backup_id}, "op@example.com")
+
+    def test_restoring_the_newest_backup_keeps_every_committed_ban(self):
+        self.ban("203.0.113.7")
+        self.ban("192.0.2.1")
+        before = policy()
+        self.corrupt()
+        backups = service.recovery_info()["backups"]
+        self.assertEqual([b["records"] for b in backups], [2, 1])     # newest first; the older one is offered too
+        body, status = self.restore(backups[0]["id"])
         self.assertEqual(status, 200, body)
         self.assertIsNone(store.read_error())
+        self.assertEqual(sorted(r.value for r in store.load().records), ["192.0.2.1", "203.0.113.7"])
+        self.assertFalse(service.recovery_info()["required"])        # matches the enforced policy: no hold
+        self.assertEqual(policy(), before)
+        self.assertIn("bans_recovered", actions())
+
+    def test_restoring_an_older_backup_then_reapply(self):
+        self.ban("203.0.113.7")
+        self.ban("192.0.2.1")
+        self.corrupt()
+        body, status = self.restore(service.recovery_info()["backups"][1]["id"])
+        self.assertEqual(status, 200, body)
         self.assertEqual([r.value for r in store.load().records], ["203.0.113.7"])
-        info = service.recovery_info()
-        self.assertEqual(info["kind"], "policy_hold")
+        self.assertEqual(service.recovery_info()["kind"], "policy_hold")
         body, status = service.reapply({"source": "manual"}, "op@example.com", None)
         self.assertEqual(status, 200, body)
         self.assertFalse(service.recovery_info()["required"])
         self.assertNotIn(b"192.0.2.1", policy())
+
+    def test_restore_rejects_unknown_backup_ids(self):
+        self.ban()
+        self.ban("192.0.2.1")
+        self.corrupt()
+        self.assertEqual(self.restore("../../bans.json")[0]["code"], "invalid_backup")
+
+    def test_recovery_stays_reachable_when_bans_are_unavailable(self):
+        self.ban()
+        self.ban("192.0.2.1")
+        self.corrupt()
+        self.caddy.hide_imports = True
+        self.assertEqual(service.availability(force=True).code, "caddy_cannot_see_bans_dir")
+        body, status = self.restore(service.recovery_info()["backups"][0]["id"])
+        self.assertEqual(status, 200, body)
 
     def test_reset_contract(self):
         self.ban()

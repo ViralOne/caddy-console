@@ -298,32 +298,46 @@ def _snapshot_id(name: str) -> str:
     return hashlib.sha256(name.encode()).hexdigest()[:16]
 
 
+_SNAPSHOT_RE = re.compile(r"^bans-(\d{8}T\d{6}Z)-(\d{8})-[0-9a-f]{12}\.json\.bak$")
+
+
+def _snapshot_names() -> list:
+    """Snapshot file names, newest first by their sequence number (timestamps
+    are per second, so they cannot order snapshots taken in the same second)."""
+    try:
+        names = os.listdir(SNAPSHOT_DIR)
+    except OSError:
+        return []
+    found = [(int(m.group(2)), n) for n in names for m in [_SNAPSHOT_RE.match(n)] if m]
+    return [n for _, n in sorted(found, reverse=True)]
+
+
 def save_snapshot(raw) -> None:
     """Keep the last few committed bans.json versions as restore choices for a
-    later corrupt file (spec 1.6 'restore a valid backup')."""
+    later corrupt file (spec 1.6 'restore a valid backup'). The caller passes
+    the bytes it just committed; a repeat of the newest snapshot is skipped."""
     if not raw:
         return
     os.makedirs(SNAPSHOT_DIR, mode=0o700, exist_ok=True)
+    names = _snapshot_names()
+    if names and fsio.read_bytes(os.path.join(SNAPSHOT_DIR, names[0])) == raw:
+        return
+    seq = int(_SNAPSHOT_RE.match(names[0]).group(2)) + 1 if names else 1
     stamp = utc_now().strftime("%Y%m%dT%H%M%SZ")
-    name = f"bans-{stamp}-{fsio.sha256_tag(raw)[7:19]}.json.bak"
+    name = f"bans-{stamp}-{seq % 10 ** 8:08d}-{fsio.sha256_tag(raw)[7:19]}.json.bak"
     fsio.atomic_write(os.path.join(SNAPSHOT_DIR, name), raw, 0o600)
-    names = sorted(n for n in os.listdir(SNAPSHOT_DIR) if n.endswith(".json.bak"))
-    for old in names[:-SNAPSHOT_KEEP]:
+    for old in _snapshot_names()[SNAPSHOT_KEEP:]:
         os.remove(os.path.join(SNAPSHOT_DIR, old))
 
 
 def list_snapshots() -> list:
-    try:
-        names = sorted((n for n in os.listdir(SNAPSHOT_DIR) if n.endswith(".json.bak")), reverse=True)
-    except OSError:
-        return []
     out = []
-    for name in names:
+    for name in _snapshot_names():
         try:
             state = load(os.path.join(SNAPSHOT_DIR, name))
         except StateCorrupt:
             continue
-        stamp = name.split("-")[1]
+        stamp = _SNAPSHOT_RE.match(name).group(1)
         out.append({"id": _snapshot_id(name),
                     "created_at": f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}T{stamp[9:11]}:{stamp[11:13]}:{stamp[13:15]}Z",
                     "records": len(state.records)})
@@ -331,11 +345,7 @@ def list_snapshots() -> list:
 
 
 def snapshot_bytes(snapshot_id):
-    try:
-        names = os.listdir(SNAPSHOT_DIR)
-    except OSError:
-        return None
-    for name in names:
-        if name.endswith(".json.bak") and _snapshot_id(name) == snapshot_id:
+    for name in _snapshot_names():
+        if _snapshot_id(name) == snapshot_id:
             return fsio.read_bytes(os.path.join(SNAPSHOT_DIR, name))
     return None

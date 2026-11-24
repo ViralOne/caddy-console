@@ -156,6 +156,15 @@ class QuarantineAndSnapshotTest(unittest.TestCase):
             self.assertIsNotNone(store.snapshot_bytes(s["id"]))
         self.assertIsNone(store.snapshot_bytes("../../etc/passwd"))
 
+    def test_snapshots_list_newest_first_within_one_second_and_skip_duplicates(self):
+        raws = [store.dumps(store.State(records=[rec(f"203.0.113.{j}") for j in range(n)])) for n in (1, 2, 3)]
+        for raw in raws:
+            store.save_snapshot(raw)
+        store.save_snapshot(raws[-1])
+        snaps = store.list_snapshots()
+        self.assertEqual([s["records"] for s in snaps], [3, 2, 1])
+        self.assertEqual(store.snapshot_bytes(snaps[0]["id"]), raws[-1])
+
 
 if __name__ == "__main__":
     unittest.main()
