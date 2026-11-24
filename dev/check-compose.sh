@@ -33,3 +33,30 @@ for combo in "docker-compose.prod.yaml docker-compose.crowdsec.yaml caddy caddy-
     || { echo "$base + $overlay: CrowdSec overlay check failed" >&2; exit 1; }
   echo "$base + $overlay: ok"
 done
+
+# Phase 3 gate: the plugin overlay keeps CrowdSec and cloudflared off caddy-admin,
+# pins the fixed admin address and uses a key of its own. It is checked on top
+# of the CrowdSec overlay, as it is used.
+export CROWDSEC_PLUGIN_BOUNCER_KEY=dummy-plugin-key
+export CADDY_PLUGIN_IMAGE=ghcr.io/viralone/caddy-crowdsec:sha-0000000
+for combo in "docker-compose.prod.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
+             "docker-compose.internal.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
+             "docker-compose.tunnel.yaml docker-compose.crowdsec.yaml docker-compose.crowdsec-plugin.yaml caddy caddy-console crowdsec" \
+             "docker-compose.nas.yaml docker-compose.crowdsec.nas.yaml docker-compose.crowdsec-plugin.nas.yaml caddy caddy-editor crowdsec-cloudflare"; do
+  read -r base cs plug caddy console variant <<<"$combo"
+  image="ghcr.io/viralone/caddy-$variant:sha-0000000"
+  out=$(CADDY_PLUGIN_IMAGE="$image" docker compose -f "$base" -f "$cs" -f "$plug" config --format json)
+  python3 dev/check-crowdsec-overlay.py "$caddy" "$console" --plugin <<<"$out" \
+    || { echo "$base + $plug: CrowdSec overlay check failed" >&2; exit 1; }
+  python3 dev/check-plugin-overlay.py "$caddy" "$console" "$variant" <<<"$out" \
+    || { echo "$base + $plug: plugin overlay check failed" >&2; exit 1; }
+  # The same key for both bouncers must be caught.
+  if CADDY_PLUGIN_IMAGE="$image" CROWDSEC_PLUGIN_BOUNCER_KEY="$CROWDSEC_CONSOLE_BOUNCER_KEY" \
+      docker compose -f "$base" -f "$cs" -f "$plug" config --format json \
+      | python3 dev/check-plugin-overlay.py "$caddy" "$console" "$variant" 2>/dev/null; then
+    echo "$base + $plug: a shared bouncer key was not detected" >&2; exit 1
+  fi
+  echo "$base + $plug: ok"
+done
+# The baseline files still render without any plugin variable.
+unset CROWDSEC_PLUGIN_BOUNCER_KEY CADDY_PLUGIN_IMAGE

@@ -1,6 +1,8 @@
 """Check the CrowdSec overlay's isolation rules on `docker compose config --format json` (stdin).
 
-  docker compose -f BASE -f OVERLAY config --format json | python3 dev/check-crowdsec-overlay.py CADDY CONSOLE
+  docker compose -f BASE -f OVERLAY config --format json | python3 dev/check-crowdsec-overlay.py CADDY CONSOLE [--plugin]
+
+--plugin (the plugin overlay is on top) allows Caddy on crowdsec-lapi.
 """
 import json
 import re
@@ -16,7 +18,7 @@ def nets(service):
     return set(service.get("networks") or {})
 
 
-def main(caddy, console):
+def main(caddy, console, plugin=False):
     cfg = json.load(sys.stdin)
     services, problems = cfg["services"], []
     cs = services.get("crowdsec")
@@ -31,9 +33,9 @@ def main(caddy, console):
     if not (cfg.get("networks", {}).get("crowdsec-lapi") or {}).get("internal"):
         problems.append("crowdsec-lapi is not internal")
     for name, svc in services.items():
-        if name not in ("crowdsec", console) and "crowdsec-lapi" in nets(svc):
+        if name not in ("crowdsec", console) + ((caddy,) if plugin else ()) and "crowdsec-lapi" in nets(svc):
             problems.append(f"{name} joins crowdsec-lapi")
-    if "crowdsec-lapi" in nets(services[caddy]):
+    if not plugin and "crowdsec-lapi" in nets(services[caddy]):
         problems.append("Caddy joins crowdsec-lapi")
     if "crowdsec-lapi" not in nets(services[console]):
         problems.append("the console does not join crowdsec-lapi")
@@ -50,4 +52,4 @@ def main(caddy, console):
         sys.exit("\n".join(problems))
 
 
-main(*sys.argv[1:3])
+main(sys.argv[1], sys.argv[2], "--plugin" in sys.argv[3:])
