@@ -427,7 +427,8 @@ def apply_locked(changes, *, actor: str, source: str, audit_events=()) -> Outcom
 # ---------------------------------------------------------------------------
 # Recovery (spec 1.5 "At startup", 1.6). The caller holds caddyfile_lock().
 
-_ORPHAN_BANS_DIR = re.compile(r"^\..+\.caddy\.[A-Za-z0-9_]+\.tmp$")
+# Hidden temps, plus the availability probe (service._probe) left by a crash.
+_ORPHAN_BANS_DIR = re.compile(r"^(\..+\.caddy\.[A-Za-z0-9_]+\.tmp|\.console-probe-[0-9a-z]+\.probe)$")
 _ORPHAN_BACKUP_DIR = re.compile(r"^\.(bans\.json|bans-transaction\.json)\.[A-Za-z0-9_]+\.tmp$")
 
 
