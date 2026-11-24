@@ -20,11 +20,12 @@ the candidate. A change that rolls back is never audited as made.
 import json
 import logging
 import os
+import re
 import shutil
 import uuid
 from dataclasses import dataclass
 
-from .. import audit
+from .. import audit, config
 from ..caddy_api import invalidate_servers_cache
 from ..config import BACKUP_DIR, CADDYFILE
 from . import caddy as caddy_admin
@@ -421,3 +422,209 @@ def apply_locked(changes, *, actor: str, source: str, audit_events=()) -> Outcom
                                                 "A managed file changed during the reload.", 504))
     _audit_quietly("bans_policy_applied", actor, applied_detail)
     return Outcome(True, None, "applied", "enforced", "Applied; Caddy reloaded.")
+
+
+# ---------------------------------------------------------------------------
+# Recovery (spec 1.5 "At startup", 1.6). The caller holds caddyfile_lock().
+
+_ORPHAN_BANS_DIR = re.compile(r"^\..+\.caddy\.[A-Za-z0-9_]+\.tmp$")
+_ORPHAN_BACKUP_DIR = re.compile(r"^\.(bans\.json|bans-transaction\.json)\.[A-Za-z0-9_]+\.tmp$")
+
+
+@dataclass
+class Pending:
+    reason: str           # journal_corrupt | hash_mismatch | caddy_unreachable | live_mismatch | rollback_failed
+    message: str
+    journal: object = None
+
+
+def _sweep_orphans(journal=None) -> None:
+    """Remove hidden temps and transaction directories the current journal (if
+    any) does not reference: debris from a crash before a journal was written.
+    Only files written under caddyfile_lock() match, and none of them can match
+    an import glob, so removing them never changes what Caddy loads."""
+    keep_temps = {e.get("temp_path") for e in (journal or {}).get("entries", [])}
+    keep_dir = (journal or {}).get("id")
+    for directory, pattern in ((config.BANS_DIR, _ORPHAN_BANS_DIR), (BACKUP_DIR, _ORPHAN_BACKUP_DIR)):
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        for name in names:
+            path = os.path.join(directory, name)
+            if pattern.match(name) and path not in keep_temps:
+                try:
+                    _remove_quietly(path)
+                except OSError as e:
+                    log.warning("Could not remove leftover temp file %s: %s", path, e)
+    try:
+        names = os.listdir(TXN_ROOT)
+    except OSError:
+        return
+    for name in names:
+        if name != keep_dir:
+            shutil.rmtree(os.path.join(TXN_ROOT, name), ignore_errors=True)
+
+
+def _verify_files(journal):
+    """Spec startup step 1. Returns a problem message, or None if every current,
+    backup and candidate hash named by the journal checks out."""
+    try:
+        for e in journal["entries"]:
+            name = os.path.basename(e["path"])
+            if fsio.sha256_tag(fsio.read_bytes(e["path"])) not in (e["previous_hash"], e["candidate_hash"]):
+                return f"{name} changed outside the console while a transaction was pending."
+            if e["backup_path"] and fsio.sha256_tag(fsio.read_bytes(e["backup_path"])) != e["previous_hash"]:
+                return f"The backup of {name} is missing or damaged."
+            if fsio.sha256_tag(fsio.read_bytes(e["candidate_path"])) != e["candidate_hash"]:
+                return f"The saved new version of {name} is missing or damaged."
+    except (OSError, KeyError, TypeError) as e:
+        return f"The files named by the transaction journal cannot be checked ({e})."
+    return None
+
+
+def _recovered(journal, how: str) -> None:
+    _audit_quietly("bans_recovered", "system", f"{journal['source']}: {how}")
+
+
+def resolve_pending():
+    """Settle an unfinished journal from what Caddy is actually running.
+
+    Runs before every mutation and on every expiry tick, so the first tick after
+    a restart is the startup recovery. Never POSTs /load and never guesses:
+    live == candidate finishes, live == previous restores, anything else waits
+    for an operator action. A journal already marked committed is only cleaned
+    up: its audit events were emitted when it was marked.
+    """
+    try:
+        journal = read_journal()
+    except JournalCorrupt as e:
+        return Pending("journal_corrupt", f"{e}. Restore the managed files by hand; see docs/security.md.")
+    _sweep_orphans(journal)
+    if journal is None:
+        return None
+    if journal.get("phase") == "committed":
+        _cleanup(journal)
+        return None
+    problem = _verify_files(journal)
+    if problem:
+        return Pending("hash_mismatch", problem, journal)
+    try:
+        live_hash = caddy_admin.config_hash(caddy_admin.live_config())
+    except caddy_admin.CaddyUnavailable as e:
+        return Pending("caddy_unreachable",
+                       f"A {journal['source']} change is pending and the Caddy admin API is unreachable ({e}). "
+                       "It is settled automatically once Caddy answers.", journal)
+    try:
+        if journal.get("candidate_live_hash") and live_hash == journal["candidate_live_hash"]:
+            _finish_candidate(journal)
+            if not _commit(journal):
+                return Pending("hash_mismatch", "A managed file changed while finishing the pending change.", journal)
+            _recovered(journal, "Caddy runs the new policy; finished it")
+            return None
+        if live_hash == journal["previous_live_hash"]:
+            _restore_files(journal)
+            _cleanup(journal)
+            _recovered(journal, "Caddy runs the previous policy; restored it")
+            return None
+    except (OSError, ValueError) as e:
+        return Pending("rollback_failed", f"Settling the pending change failed: {e}", journal)
+    return Pending("live_mismatch",
+                   "Caddy's running configuration matches neither the previous nor the new policy. "
+                   "Choose which files to keep; the console then reloads Caddy.", journal)
+
+
+RECOVERY_ACTIONS = ("use_candidate", "use_previous")
+
+
+def recovery_action(action: str, actor: str) -> Outcome:
+    """Operator choice for a pending journal: keep the candidate or the previous
+    files, then adapt, /load and verify the on-disk Caddyfile. The journal is
+    removed only after Caddy confirms; the caller audits the action itself.
+
+    Before /load the journal records the adapted hash as the chosen side's live
+    hash, so a crash after /load is settled by the next resolve_pending()."""
+    if action not in RECOVERY_ACTIONS:
+        return Outcome(False, "invalid_action", "not_attempted", "unknown",
+                       f"Unknown recovery action {action!r}.", 400)
+    try:
+        journal = read_journal()
+    except JournalCorrupt as e:
+        return Outcome(False, "recovery_blocked", "not_attempted", "unknown",
+                       f"{e}. Restore the managed files by hand; see docs/security.md.", 409)
+    if journal is None:
+        return Outcome(True, None, "not_required", "unchanged", "Nothing to recover.")
+    if journal.get("phase") == "committed":
+        _cleanup(journal)
+        return Outcome(True, None, "not_required", "unchanged", "Nothing to recover.")
+    problem = _verify_files(journal)
+    if problem:
+        return Outcome(False, "recovery_blocked", "not_attempted", "unknown",
+                       problem + " Restore the files by hand; see docs/security.md.", 409)
+    try:
+        if action == "use_candidate":
+            _finish_candidate(journal)
+        else:
+            _restore_files(journal)
+        with open(CADDYFILE, encoding="utf-8", newline="") as f:
+            text = f.read()
+    except (OSError, UnicodeError, ValueError) as e:
+        return Outcome(False, "write_failed", "not_attempted", "unknown", f"Could not prepare the files: {e}", 500)
+
+    hash_key = "candidate_live_hash" if action == "use_candidate" else "previous_live_hash"
+
+    def record_adapted(expected):
+        journal[hash_key] = expected
+        journal["phase"] = f"recovery_{action}"
+        try:
+            _write_journal(journal)
+        except OSError as e:
+            return Outcome(False, "write_failed", "not_attempted", "unknown", f"Could not update the journal: {e}.", 500)
+        return None
+
+    failure, _ = _adapt_load_verify(text, on_adapted=record_adapted)
+    if failure is not None:
+        return failure
+    if action == "use_previous":
+        _cleanup(journal)
+        return Outcome(True, None, "applied", "unchanged", "Recovered the previous files; Caddy reloaded.")
+    try:
+        committed = _commit(journal)
+    except OSError as e:
+        return Outcome(True, None, "applied", "enforced",
+                       f"Recovered; Caddy reloaded. Recording the commit failed ({e}); "
+                       "it is settled before the next change.")
+    if not committed:
+        return Outcome(False, "reload_unknown", "unknown", "unknown",
+                       "A managed file changed during the recovery reload.", 504)
+    return Outcome(True, None, "applied", "enforced", "Recovered the new files; Caddy reloaded.")
+
+
+def reconcile_after_external_reload() -> None:
+    """The editor just loaded the on-disk Caddyfile successfully, which also
+    loaded whatever managed policy is on disk. Settle a pending journal to match
+    so Security is not left degraded. Mixed states wait for the operator."""
+    try:
+        journal = read_journal()
+    except JournalCorrupt:
+        return
+    if journal is None:
+        return
+    if journal.get("phase") == "committed":
+        _cleanup(journal)
+        return
+    if _verify_files(journal):
+        return
+    policies = [e for e in journal["entries"] if e["kind"] == "policy"]
+    current = {e["path"]: fsio.sha256_tag(fsio.read_bytes(e["path"])) for e in policies}
+    try:
+        if all(current[e["path"]] == e["candidate_hash"] for e in policies):
+            _finish_candidate(journal)
+            if _commit(journal):
+                _recovered(journal, "a Caddyfile reload loaded the new policy")
+        elif all(current[e["path"]] == e["previous_hash"] for e in policies):
+            _restore_files(journal)
+            _cleanup(journal)
+            _recovered(journal, "a Caddyfile reload kept the previous policy")
+    except (OSError, ValueError) as e:
+        log.warning("Could not settle ban transaction %s after a reload: %s", journal.get("id"), e)

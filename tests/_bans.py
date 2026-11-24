@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import unittest
 from unittest import mock
 
 import requests
@@ -181,3 +182,48 @@ def apply(changes, audit=()):
     from src.routes.editor import caddyfile_lock
     with caddyfile_lock():
         return txn.apply_locked(changes, actor="t@example.com", source="manual", audit_events=audit)
+
+
+AUTH = {"Cf-Access-Authenticated-User-Email": "admin@example.com"}
+
+
+class ApiCase(unittest.TestCase):
+    """Flask test client plus FakeCaddy. No test methods, so never collected itself."""
+    app = None
+
+    @classmethod
+    def setUpClass(cls):
+        from src import create_app
+        if ApiCase.app is None:
+            ApiCase.app = create_app()
+            ApiCase.app.testing = True
+
+    def setUp(self):
+        from src.routes import editor as editor_mod
+        reset()
+        fresh_audit(self)
+        self.caddy = FakeCaddy().install(self)
+        for name, value in (("caddy_fmt", lambda c: c),
+                            ("caddy_validate", lambda c: (True, "ok")),
+                            ("caddy_check", lambda c: (True, "ok", "adapted"))):
+            p = mock.patch.object(editor_mod, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        self.client = self.app.test_client()
+        html = self.client.get("/", headers=AUTH).get_data(as_text=True)
+        self.csrf = re.search(r'name="csrf-token" content="([^"]+)"', html).group(1)
+
+    def _h(self, kw):
+        return {**AUTH, "X-CSRF-Token": self.csrf, **kw.pop("headers", {})}
+
+    def get(self, url, **kw):
+        return self.client.get(url, headers={**AUTH, **kw.pop("headers", {})}, **kw)
+
+    def post(self, url, payload=None, **kw):
+        return self.client.post(url, json=payload, headers=self._h(kw), **kw)
+
+    def put(self, url, payload=None, **kw):
+        return self.client.put(url, json=payload, headers=self._h(kw), **kw)
+
+    def delete(self, url, **kw):
+        return self.client.delete(url, headers=self._h(kw), **kw)

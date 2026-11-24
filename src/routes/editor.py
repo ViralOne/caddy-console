@@ -1,6 +1,7 @@
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
@@ -13,8 +14,10 @@ from urllib.parse import urlparse
 import requests as http_client
 from flask import Blueprint, jsonify, render_template, request, session
 
+from .. import config
 from ..audit import log_action
 from ..auth import get_or_create_csrf, login_required
+from ..bans import txn as bans_txn
 from ..caddy_api import get_servers, invalidate_servers_cache
 from ..config import (
     APP_VERSION,
@@ -221,6 +224,19 @@ def _backup_path(name: str) -> str | None:
     return path if os.path.isfile(path) else None
 
 
+def _reconcile_bans() -> None:
+    """A successful /load of the on-disk Caddyfile also loaded the managed ban
+    policy on disk; settle a pending ban transaction to match (src/bans/txn.py).
+    Runs inside _apply_config's caddyfile_lock() section, which is not
+    re-entrant, so nothing here may take the lock again."""
+    if not config.BANS_ENABLED:
+        return
+    try:
+        bans_txn.reconcile_after_external_reload()
+    except Exception:  # noqa: BLE001 - ban bookkeeping must never fail a save
+        logging.getLogger(__name__).exception("IP bans: reconciling after a reload failed")
+
+
 def _apply_config(content: str, user: str, source: str, expected_version: str | None = None, detail: str = ""):
     """Atomically persist and reload one Caddyfile change under one lock.
 
@@ -306,6 +322,7 @@ def _apply_config(content: str, user: str, source: str, expected_version: str | 
             invalidate_servers_cache()
 
         if resp.status_code == 200:
+            _reconcile_bans()
             log_action(f"{source}_reload", user, f"backup={backup_name}{extra}")
             return jsonify({
                 "ok": True,
