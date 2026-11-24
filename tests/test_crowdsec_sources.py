@@ -176,15 +176,33 @@ class CapacityPriorityTest(SourcesCase):
                 store.new_manual_record(addr.canonical("203.0.113.1"), "24h", "", "a", now)]
         self.assertEqual(render.capacity_counts(recs, now), {"manual": 1, "crowdsec": 3})
 
-    def test_non_local_crowdsec_origins_never_refuse_a_manual_ban(self):
+    def _capi_flood(self):
+        """Four non-collapsible non-local prefixes: more than BANS_MAX=2 on their own."""
         _crowdsec.enable(self)
         now = store.utc_now()
         put_records(*[store.new_crowdsec_record(str(i), addr.canonical(f"198.51.100.{i}"), "CAPI", "x",
-                                                now, now + timedelta(hours=4)) for i in range(1, 4)])
+                                                now, now + timedelta(hours=1)) for i in (4, 8, 12, 16)])
+        return now
+
+    def test_non_local_crowdsec_origins_never_refuse_a_manual_ban(self):
+        self._capi_flood()
         with mock.patch.object(config, "BANS_MAX", 2):
             self.assertEqual(self.ban("203.0.113.7")[1], 201)
+            self.assertEqual(self.ban("203.0.113.20")[1], 201)
+            body, status = self.ban("203.0.113.40")
+        self.assertEqual((status, body["code"]), (409, "capacity_exceeded"))
+        self.assertEqual(body["by_source"], {"manual": 3, "crowdsec": 0})
+
+    def test_non_local_origins_never_block_remove_or_expiry(self):
+        now = self._capi_flood()
+        with mock.patch.object(config, "BANS_MAX", 2):
+            body, status = self.ban("203.0.113.7")
+            self.assertEqual(status, 201)
+            self.assertEqual(service.remove_ban(body["record"]["id"], "op", None)[1], 200)
             self.assertEqual(self.ban("203.0.113.8")[1], 201)
-            self.assertEqual(self.ban("203.0.113.20")[1], 409)
+            self.assertEqual(service.expire_tick(now + timedelta(days=2)), "applied")
+            self.assertEqual(service.reset({"source": "manual", "version": store.load().version,
+                                            "confirm": True}, "op", None)[1], 200)
 
 
 if __name__ == "__main__":

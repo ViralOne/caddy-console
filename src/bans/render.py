@@ -90,9 +90,11 @@ def effective_prefixes(records, now, source_name: str) -> list:
             + list(ipaddress.collapse_addresses([n for n in nets if n.version == 6])))
 
 
-def render_policy(source: PolicySource, prefixes, exclusion_tokens, limit: int) -> bytes:
-    if len(prefixes) > limit:
-        raise CapacityError(len(prefixes), limit)
+def render_policy(source: PolicySource, prefixes, exclusion_tokens, limit=None) -> bytes:
+    """limit=None skips the per-file check: the service gates capacity with
+    check_capacity, which knows about every source (spec 2.5)."""
+    if limit is not None and len(prefixes) > limit:
+        raise CapacityError(len(prefixes), limit, {source.name: len(prefixes)})
     out = [HEADER, f"vars {source.marker} 1\n"]
     if prefixes:
         out += [

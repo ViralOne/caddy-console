@@ -20,7 +20,7 @@ SNAPSHOT_KEEP = 5
 STATE_MAX_BYTES = 32 * 1024 * 1024
 QUARANTINE_MAX_BYTES = 1024 * 1024
 SCHEMA_VERSION = 1
-SOURCES = ("manual", "crowdsec")          # crowdsec records arrive in Phase 2
+SOURCES = ("manual", "crowdsec")
 TRUST_PROFILES = ("direct", "cloudflare-proxied", "cloudflare-tunnel")
 DURATIONS = {"4h": timedelta(hours=4), "24h": timedelta(hours=24),
              "7d": timedelta(days=7), "permanent": None}

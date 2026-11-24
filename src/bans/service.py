@@ -231,7 +231,7 @@ def _candidates(state, prot, holds, now) -> list:
         if name in holds:
             continue
         data = render.render_policy(src, render.effective_prefixes(state.records, now, name),
-                                    prot.exclusion_tokens(), config.BANS_MAX)
+                                    prot.exclusion_tokens())
         state.last_rendered_hashes[src.filename] = fsio.sha256_tag(data)
         changes.append(txn.Change(src.path, "policy", data, marker=src.marker))
         owns.append(src.filename)
