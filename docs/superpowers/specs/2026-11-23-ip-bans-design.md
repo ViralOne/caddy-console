@@ -385,7 +385,7 @@ sudo sh -c ': > /opt/caddy/console/cloudflare-trusted-proxies.caddy'
 
 docker compose -f docker-compose.prod.yaml exec caddy sh -c \
   'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
-   --address "${CADDY_ADMIN_ADDRESS:-localhost:2019}"'
+   --address "${CADDY_ADMIN_ADDRESS:-0.0.0.0:2019}"'
 
 docker compose -f docker-compose.prod.yaml start caddy-console
 ```
@@ -403,8 +403,9 @@ no active transaction journal is treated as an out-of-band recovery override:
 - Re-apply creates a normal journaled transaction and clears the recovery hold
   only after confirmed `/load` success.
 
-The plugin overlay documents its fixed `CADDY_ADMIN_ADDRESS`; the standard stacks
-use `localhost:2019` inside the Caddy container. Documentation substitutes the
+The plugin overlay documents its fixed `CADDY_ADMIN_ADDRESS`, which must appear in
+that bind's `origins` list; the standard wildcard-bound stacks use `0.0.0.0:2019`
+inside the Caddy container (a wildcard bind rejects `localhost:2019` as the CLI's origin). Documentation substitutes the
 actual Compose file and host path for NAS, internal and tunnel deployments and
 verifies the recovery commands in integration tests. Recovery never publishes
 port 2019.
@@ -1277,7 +1278,7 @@ rather than unsafe automatic modification.
 | `CROWDSEC_POLL_INTERVAL` | `10` | 2 | Seconds between decision-stream polls |
 | `CROWDSEC_PLUGIN_BOUNCER_KEY` | empty | 3 | Environment key dedicated to the Caddy plugin |
 | `CROWDSEC_PLUGIN_BOUNCER_KEY_FILE` | empty | 3 | Mounted file-secret path used instead of the environment key |
-| `CADDY_ADMIN_ADDRESS` | `localhost:2019` | 3 | Admin address used by health checks/recovery; plugin overlays set the fixed internal address |
+| `CADDY_ADMIN_ADDRESS` | `0.0.0.0:2019` | 3 | Admin address used by health checks/recovery; plugin overlays set the fixed internal address |
 | `CLIENT_IP_MODE` | `direct` | 4 | Direct, Cloudflare proxied DNS or Cloudflare Tunnel guidance |
 | `CLOUDFLARE_RANGES_AUTO_UPDATE` | `true` | 4 | Refresh the bundled edge list separately from GeoIP |
 | `COUNTRY_POLICY_ENABLED` | `false` | 4 | Enables generated country enforcement after configuration |

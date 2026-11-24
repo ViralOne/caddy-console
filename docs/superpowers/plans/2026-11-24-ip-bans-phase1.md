@@ -4749,13 +4749,13 @@ The recovery snippet's host path `/opt/caddy/console/` is not touched by the rep
   {
     "id": "manual-bans-recovery",
     "name": "Manual bans: host recovery",
-    "description": "Shell commands to clear manual bans from the host if you lock yourself out. Copy only.",
+    "description": "Shell commands to clear manual bans from the host if you lock yourself out. With a fixed admin bind, set CADDY_ADMIN_ADDRESS to that address; it must be in the bind's origins list. Copy only.",
     "phase": "manual",
     "scope": "host",
     "insert": "copy-only",
     "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
     "prerequisites": ["BANS_ENABLED"],
-    "code": "docker compose -f docker-compose.prod.yaml stop caddy-console\nsudo sh -c ': > /opt/caddy/console/bans-manual.caddy'\ndocker compose -f docker-compose.prod.yaml exec caddy sh -c \\\n  'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \\\n   --address \"${CADDY_ADMIN_ADDRESS:-localhost:2019}\"'\ndocker compose -f docker-compose.prod.yaml start caddy-console\n"
+    "code": "docker compose -f docker-compose.prod.yaml stop caddy-console\nsudo sh -c ': > /opt/caddy/console/bans-manual.caddy'\ndocker compose -f docker-compose.prod.yaml exec caddy sh -c \\\n  'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \\\n   --address \"${CADDY_ADMIN_ADDRESS:-0.0.0.0:2019}\"'\ndocker compose -f docker-compose.prod.yaml start caddy-console\n"
   }
 ```
 
@@ -6432,7 +6432,7 @@ code() { curl -s -o /dev/null -w '%{http_code}' -H 'Host: proxy.it.example.com' 
 
 # Host recovery exactly as documented: stop the console, truncate the policy,
 # reload through the admin address inside the Caddy container, start again.
-for address in localhost:2019 127.0.0.1:2019; do
+for address in 0.0.0.0:2019; do
   "${COMPOSE[@]}" exec -T caddy-console "${PY[@]}" -m tests.integration.bans_recovery_prep
   test "$(code)" = 403
   "${COMPOSE[@]}" stop caddy-console
@@ -6445,7 +6445,7 @@ for address in localhost:2019 127.0.0.1:2019; do
   echo "host recovery via $address: ok"
 done
 
-"${COMPOSE[@]}" exec -T caddy-target caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --address localhost:2019
+"${COMPOSE[@]}" exec -T caddy-target caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --address 0.0.0.0:2019
 echo "bans integration: all passed"
 ```
 
@@ -6797,16 +6797,22 @@ docker compose -f docker-compose.prod.yaml stop caddy-console
 sudo sh -c ': > /opt/caddy/console/bans-manual.caddy'
 docker compose -f docker-compose.prod.yaml exec caddy sh -c \
   'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \
-   --address "${CADDY_ADMIN_ADDRESS:-localhost:2019}"'
+   --address "${CADDY_ADMIN_ADDRESS:-0.0.0.0:2019}"'
 docker compose -f docker-compose.prod.yaml start caddy-console
 ```
 
 | Stack | Compose file | Host directory | Admin address for `--address` |
 |---|---|---|---|
-| Production | `docker-compose.prod.yaml` | `/opt/caddy` | `localhost:2019` |
-| Internal | `docker-compose.internal.yaml` | `/opt/caddy` | `localhost:2019` |
-| Tunnel | `docker-compose.tunnel.yaml` | `/opt/caddy` | `172.30.250.2:2019` (the fixed `admin` bind) |
-| NAS | `docker-compose.nas.yaml` | `/volume2/docker/caddy/caddy` | `localhost:2019` |
+| Production | `docker-compose.prod.yaml` | `/opt/caddy` | `0.0.0.0:2019` |
+| Internal | `docker-compose.internal.yaml` | `/opt/caddy` | `0.0.0.0:2019` |
+| Tunnel | `docker-compose.tunnel.yaml` | `/opt/caddy` | `172.30.250.2:2019` (the fixed `admin` bind, listed in its `origins`) |
+| NAS | `docker-compose.nas.yaml` | `/volume2/docker/caddy/caddy` | `0.0.0.0:2019` |
+
+A wildcard `admin 0.0.0.0:2019` only accepts its own listen address as the
+CLI's origin, so `localhost:2019` and `127.0.0.1:2019` are rejected with 403.
+A fixed bind such as the tunnel stack's needs an `origins` list that includes
+that address (`admin 172.30.250.2:2019 { origins caddy:2019 172.30.250.2:2019 }`);
+set `CADDY_ADMIN_ADDRESS` to it.
 
 When the console starts again, Security shows **Policy differs from state**.
 Remove or correct the record that caused the lockout, then use **Re-apply**.
@@ -6922,6 +6928,6 @@ Where the spec is silent or leaves a choice, the plan picks one. Reviewers shoul
 6. **`invoke`, a responder or an unknown handler** before the ban route make a site "Enforcement not verified"; `redir`, `rewrite`, `basic_auth`, `forward_auth`, `request_header` make it "Protected, pre-handler present". A custom `order` is judged by the live result, not by its presence.
 7. **The editor's successful Save & Reload settles a pending ban journal** when every policy file is wholly at its candidate or previous version.
 8. **Startup check and recovery are lazy and per worker**: the availability probe is cached (5 min ok, 30 s failure), and every worker's first expiry tick runs journal recovery. No thread runs in the gunicorn master.
-9. **Host recovery is integration-tested** with `--address localhost:2019` and `127.0.0.1:2019` against the dev stack's wildcard listener; the tunnel stack's fixed `172.30.250.2:2019` is documented, and fixed-bind testing belongs to the Phase 3 plugin overlay.
+9. **Host recovery is integration-tested** with `--address 0.0.0.0:2019` against the dev stack's wildcard listener (stock Caddy 2.11.9 rejects `localhost:2019` and `127.0.0.1:2019` there with an origin 403) and with a fixed bind to caddy-target's own admin-network IP plus an `origins` list, the shape of the tunnel stack's `172.30.250.2:2019`.
 10. **Benchmark budgets** (2 s adapt, 3 s reload, +150 MiB RSS, +2 ms p95) are this plan's numbers; the released `BANS_MAX` never exceeds the spec's 10,000 candidate.
 11. **Error HTTP statuses**: input problems 400, capacity and version conflicts 409, adapt rejection 422, reload rejection 502, reload failed or degraded or unavailable 503, reload unknown 504, write or rollback failure 500.

@@ -68,12 +68,12 @@
   {
     "id": "manual-bans-recovery",
     "name": "Manual bans: host recovery",
-    "description": "Shell commands to clear manual bans from the host if you lock yourself out. Copy only.",
+    "description": "Shell commands to clear manual bans from the host if you lock yourself out. With a fixed admin bind, set CADDY_ADMIN_ADDRESS to that address; it must be in the bind's origins list. Copy only.",
     "phase": "manual",
     "scope": "host",
     "insert": "copy-only",
     "supported_modes": ["direct", "cloudflare-proxied", "cloudflare-tunnel"],
     "prerequisites": ["BANS_ENABLED"],
-    "code": "docker compose -f docker-compose.prod.yaml stop caddy-console\nsudo sh -c ': > /opt/caddy/console/bans-manual.caddy'\ndocker compose -f docker-compose.prod.yaml exec caddy sh -c \\\n  'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \\\n   --address \"${CADDY_ADMIN_ADDRESS:-localhost:2019}\"'\ndocker compose -f docker-compose.prod.yaml start caddy-console\n"
+    "code": "docker compose -f docker-compose.prod.yaml stop caddy-console\nsudo sh -c ': > /opt/caddy/console/bans-manual.caddy'\ndocker compose -f docker-compose.prod.yaml exec caddy sh -c \\\n  'caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile \\\n   --address \"${CADDY_ADMIN_ADDRESS:-0.0.0.0:2019}\"'\ndocker compose -f docker-compose.prod.yaml start caddy-console\n"
   }
 ]

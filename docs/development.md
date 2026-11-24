@@ -58,6 +58,17 @@ No Caddy binary and no network needed: the admin API is faked and `caddy fmt` /
 `caddy validate` are patched out. GeoIP tests build tiny `.mmdb` fixtures with
 `tests/_mmdb.py` and fake the DB-IP download.
 
+The IP-ban integration suite needs Docker and runs against the stock Caddy in
+the dev stack (CI runs it too):
+
+```bash
+./dev/bans-it.sh   # brings the stack up, runs tests/integration/bans_caddy_it.py
+                   # inside the console container, then checks host recovery
+```
+
+It loads its own Caddyfile from `dev/run/itest/` and restores the dev one when
+it finishes.
+
 ## Front-end build
 
 App code is plain ES modules loaded straight by the browser — **no build step**,
