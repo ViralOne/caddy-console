@@ -105,7 +105,20 @@ def self_test(directory: str) -> bool:
     path = os.path.join(directory, f".lock-selftest-{os.getpid()}")
     a = b = None
     try:
-        a, b = _open(path), _open(path)
+        a = _open(path)
+        b = _open(path)
+    except OSError as e:
+        log.warning("Lock self-test: %s cannot be opened or written (%s). Check that BACKUP_DIR exists and is "
+                    "writable by the console user.", directory, e)
+        for fd in (a, b):
+            if fd is not None:
+                os.close(fd)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return False
+    try:
         fcntl.flock(a, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             fcntl.flock(b, fcntl.LOCK_EX | fcntl.LOCK_NB)
